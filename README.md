@@ -2,10 +2,8 @@
 Patches to integrate the Marlin renderer into OpenJDK 8 Updates
 
 
-------------------------------------------------
-# Marlin renderer patches history (jdk/client) |
-------------------------------------------------
-
+# Marlin renderer patches history (jdk/client)
+```̀
 * 2015
 34419:14108cfd0823			m01.8143849.patch			8143849: Integrate Marlin renderer per JEP 265
 35979:4462913d471a			NEW m01b.8149896.patch		8149896: Remove unnecessary values in FloatConsts and DoubleConsts		=> Merge with m01.8143849.patch
@@ -41,5 +39,6 @@ Patches to integrate the Marlin renderer into OpenJDK 8 Updates
 * 2019
 55816:13178f7e75d5			NEW m20.8228711.patch		8228711: Path rendered incorrectly when it goes outside the clipping region
 56131:7f55aad34ac4			NEW m21.8230728.patch		8230728: Thin stroked shapes are not rendered if affine transform has flip bit
+```̀
 
 
