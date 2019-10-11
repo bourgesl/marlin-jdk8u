@@ -1,0 +1,254 @@
+# HG changeset patch
+# User lbourges
+# Date 1449791881 28800
+#      Thu Dec 10 15:58:01 2015 -0800
+# Node ID 5ff696b1bbace2c84b6c881e94d426922fe0d1a9
+# Parent  81e87daa987689b040df5ec89a21c2f3b31cd090
+8144654: Improve Marlin logging
+Reviewed-by: prr, flar
+
+diff --git a/src/share/classes/sun/java2d/marlin/ByteArrayCache.java b/src/share/classes/sun/java2d/marlin/ByteArrayCache.java
+--- a/src/share/classes/sun/java2d/marlin/ByteArrayCache.java
++++ b/src/share/classes/sun/java2d/marlin/ByteArrayCache.java
+@@ -74,7 +74,7 @@
+     void putDirtyArray(final byte[] array, final int length) {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+@@ -98,7 +98,7 @@
+     {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+diff --git a/src/share/classes/sun/java2d/marlin/FloatArrayCache.java b/src/share/classes/sun/java2d/marlin/FloatArrayCache.java
+--- a/src/share/classes/sun/java2d/marlin/FloatArrayCache.java
++++ b/src/share/classes/sun/java2d/marlin/FloatArrayCache.java
+@@ -75,7 +75,7 @@
+     void putDirtyArray(final float[] array, final int length) {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+@@ -99,7 +99,7 @@
+     {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+diff --git a/src/share/classes/sun/java2d/marlin/IntArrayCache.java b/src/share/classes/sun/java2d/marlin/IntArrayCache.java
+--- a/src/share/classes/sun/java2d/marlin/IntArrayCache.java
++++ b/src/share/classes/sun/java2d/marlin/IntArrayCache.java
+@@ -74,7 +74,7 @@
+     void putDirtyArray(final int[] array, final int length) {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+@@ -98,7 +98,7 @@
+     {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+diff --git a/src/share/classes/sun/java2d/marlin/MarlinConst.java b/src/share/classes/sun/java2d/marlin/MarlinConst.java
+--- a/src/share/classes/sun/java2d/marlin/MarlinConst.java
++++ b/src/share/classes/sun/java2d/marlin/MarlinConst.java
+@@ -30,8 +30,8 @@
+  */
+ interface MarlinConst {
+     // enable Logs (logger or stdout)
+-    static final boolean enableLogs = false;
+-    // enable Logger
++    static final boolean enableLogs = MarlinProperties.isLoggingEnabled();
++    // use Logger instead of stdout
+     static final boolean useLogger = enableLogs && MarlinProperties.isUseLogger();
+ 
+     // log new RendererContext
+@@ -47,9 +47,10 @@
+     static final boolean doStats = enableLogs && MarlinProperties.isDoStats();
+     // do monitors
+     // disabled to reduce byte-code size a bit...
+-    static final boolean doMonitors = enableLogs && false; // MarlinProperties.isDoMonitors();
++    static final boolean doMonitors = false;
++//    static final boolean doMonitors = enableLogs && MarlinProperties.isDoMonitors();
+     // do checks
+-    static final boolean doChecks = false; // MarlinProperties.isDoChecks();
++    static final boolean doChecks = enableLogs && MarlinProperties.isDoChecks();
+ 
+     // do AA range checks: disable when algorithm / code is stable
+     static final boolean DO_AA_RANGE_CHECK = false;
+diff --git a/src/share/classes/sun/java2d/marlin/MarlinProperties.java b/src/share/classes/sun/java2d/marlin/MarlinProperties.java
+--- a/src/share/classes/sun/java2d/marlin/MarlinProperties.java
++++ b/src/share/classes/sun/java2d/marlin/MarlinProperties.java
+@@ -136,6 +136,10 @@
+ 
+     // logging parameters
+ 
++    public static boolean isLoggingEnabled() {
++        return getBoolean("sun.java2d.renderer.log", "false");
++    }
++
+     public static boolean isUseLogger() {
+         return getBoolean("sun.java2d.renderer.useLogger", "false");
+     }
+diff --git a/src/share/classes/sun/java2d/marlin/MarlinUtils.java b/src/share/classes/sun/java2d/marlin/MarlinUtils.java
+--- a/src/share/classes/sun/java2d/marlin/MarlinUtils.java
++++ b/src/share/classes/sun/java2d/marlin/MarlinUtils.java
+@@ -27,12 +27,12 @@
+ 
+ 
+ public final class MarlinUtils {
+-    // TODO: use sun.util.logging.PlatformLogger once in JDK9
+-    private static final java.util.logging.Logger log;
++    // Marlin logger
++    private static final sun.util.logging.PlatformLogger log;
+ 
+     static {
+         if (MarlinConst.useLogger) {
+-            log = java.util.logging.Logger.getLogger("sun.java2d.marlin");
++            log = sun.util.logging.PlatformLogger.getLogger("sun.java2d.marlin");
+         } else {
+             log = null;
+         }
+@@ -53,25 +53,11 @@
+ 
+     public static void logException(final String msg, final Throwable th) {
+         if (MarlinConst.useLogger) {
+-//            log.warning(msg, th);
+-            log.log(java.util.logging.Level.WARNING, msg, th);
++            log.warning(msg, th);
+         } else if (MarlinConst.enableLogs) {
+             System.out.print("WARNING: ");
+             System.out.println(msg);
+             th.printStackTrace(System.err);
+         }
+     }
+-
+-    // Returns the caller's class and method's name; best effort
+-    // if cannot infer, return the logger's name.
+-    static String getCallerInfo(String className) {
+-        String sourceClassName = null;
+-        String sourceMethodName = null;
+-
+-        if (sourceClassName != null) {
+-            return sourceClassName + " " + sourceMethodName;
+-        } else {
+-            return "unknown";
+-        }
+-    }
+ }
+diff --git a/src/share/classes/sun/java2d/marlin/RendererContext.java b/src/share/classes/sun/java2d/marlin/RendererContext.java
+--- a/src/share/classes/sun/java2d/marlin/RendererContext.java
++++ b/src/share/classes/sun/java2d/marlin/RendererContext.java
+@@ -31,7 +31,6 @@
+ import java.util.concurrent.atomic.AtomicInteger;
+ import static sun.java2d.marlin.ArrayCache.*;
+ import sun.java2d.marlin.MarlinRenderingEngine.NormalizingPathIterator;
+-import static sun.java2d.marlin.MarlinUtils.getCallerInfo;
+ import static sun.java2d.marlin.MarlinUtils.logInfo;
+ 
+ /**
+@@ -39,7 +38,6 @@
+  */
+ final class RendererContext implements MarlinConst {
+ 
+-    private static final String className = RendererContext.class.getName();
+     // RendererContext creation counter
+     private static final AtomicInteger contextCount = new AtomicInteger(1);
+     // RendererContext statistics
+@@ -214,8 +212,7 @@
+         }
+ 
+         if (doLogOverSize) {
+-            logInfo("getDirtyByteArray[oversize]: length=\t" + length
+-                    + "\tfrom=\t" + getCallerInfo(className));
++            logInfo("getDirtyByteArray[oversize]: length=\t" + length);
+         }
+ 
+         return new byte[length];
+@@ -254,7 +251,7 @@
+         if (doLogWidenArray) {
+             logInfo("widenDirtyByteArray[" + res.length + "]: usedSize=\t"
+                     + usedSize + "\tlength=\t" + length + "\tneeded length=\t"
+-                    + needSize + "\tfrom=\t" + getCallerInfo(className));
++                    + needSize);
+         }
+         return res;
+     }
+@@ -275,8 +272,7 @@
+         }
+ 
+         if (doLogOverSize) {
+-            logInfo("getIntArray[oversize]: length=\t" + length + "\tfrom=\t"
+-                    + getCallerInfo(className));
++            logInfo("getIntArray[oversize]: length=\t" + length);
+         }
+ 
+         return new int[length];
+@@ -306,7 +302,7 @@
+         if (doLogWidenArray) {
+             logInfo("widenIntArray[" + res.length + "]: usedSize=\t"
+                     + usedSize + "\tlength=\t" + length + "\tneeded length=\t"
+-                    + needSize + "\tfrom=\t" + getCallerInfo(className));
++                    + needSize);
+         }
+         return res;
+     }
+@@ -338,8 +334,7 @@
+         }
+ 
+         if (doLogOverSize) {
+-            logInfo("getDirtyIntArray[oversize]: length=\t" + length
+-                    + "\tfrom=\t" + getCallerInfo(className));
++            logInfo("getDirtyIntArray[oversize]: length=\t" + length);
+         }
+ 
+         return new int[length];
+@@ -369,7 +364,7 @@
+         if (doLogWidenArray) {
+             logInfo("widenDirtyIntArray[" + res.length + "]: usedSize=\t"
+                     + usedSize + "\tlength=\t" + length + "\tneeded length=\t"
+-                    + needSize + "\tfrom=\t" + getCallerInfo(className));
++                    + needSize);
+         }
+         return res;
+     }
+@@ -399,8 +394,7 @@
+         }
+ 
+         if (doLogOverSize) {
+-            logInfo("getDirtyFloatArray[oversize]: length=\t" + length
+-                    + "\tfrom=\t" + getCallerInfo(className));
++            logInfo("getDirtyFloatArray[oversize]: length=\t" + length);
+         }
+ 
+         return new float[length];
+@@ -430,7 +424,7 @@
+         if (doLogWidenArray) {
+             logInfo("widenDirtyFloatArray[" + res.length + "]: usedSize=\t"
+                     + usedSize + "\tlength=\t" + length + "\tneeded length=\t"
+-                    + needSize + "\tfrom=\t" + getCallerInfo(className));
++                    + needSize);
+         }
+         return res;
+     }

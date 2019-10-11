@@ -1,0 +1,1076 @@
+# HG changeset patch
+# User lbourges
+# Date 1537817017 -7200
+#      Mon Sep 24 21:23:37 2018 +0200
+# Branch zulu8-default
+# Node ID ea8b9c1a99821eb20a65276e0866cc4ac56180af
+# Parent  f6b60e32b9c8f7e7571bd412011466599bd93789
+8210335: Clipping problems with complex affine transforms: negative scaling factors or small scaling factors
+Summary: fixed clipping rectangle to take into account the inverse transform (scale/shear)
+Reviewed-by: prr, serb
+
+diff --git a/src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java b/src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java
+--- a/src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java
++++ b/src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java
+@@ -31,6 +31,7 @@
+ import java.awt.geom.Path2D;
+ import java.awt.geom.PathIterator;
+ import java.security.AccessController;
++import java.util.Arrays;
+ import sun.awt.geom.PathConsumer2D;
+ import static sun.java2d.marlin.MarlinUtils.logInfo;
+ import sun.java2d.ReentrantContextProvider;
+@@ -334,7 +335,6 @@
+ 
+         int dashLen = -1;
+         boolean recycleDashes = false;
+-        double scale = 1.0d;
+         double[] dashesD = null;
+ 
+         // Ensure converting dashes to double precision:
+@@ -375,7 +375,7 @@
+             // a*b == -c*d && a*a+c*c == b*b+d*d. In the actual check below, we
+             // leave a bit of room for error.
+             if (nearZero(a*b + c*d) && nearZero(a*a + c*c - (b*b + d*d))) {
+-                scale =  Math.sqrt(a*a + c*c);
++                final double scale = Math.sqrt(a*a + c*c);
+ 
+                 if (dashesD != null) {
+                     for (int i = 0; i < dashLen; i++) {
+@@ -427,7 +427,7 @@
+         pc2d = transformerPC2D.deltaTransformConsumer(pc2d, strokerat);
+ 
+         // stroker will adjust the clip rectangle (width / miter limit):
+-        pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit, scale,
++        pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit,
+                 (dashesD == null));
+ 
+         // Curve Monotizer:
+@@ -834,10 +834,26 @@
+                 // Define the initial clip bounds:
+                 final double[] clipRect = rdrCtx.clipRect;
+ 
+-                clipRect[0] = clip.getLoY();
+-                clipRect[1] = clip.getLoY() + clip.getHeight();
+-                clipRect[2] = clip.getLoX();
+-                clipRect[3] = clip.getLoX() + clip.getWidth();
++                // Adjust the clipping rectangle with the renderer offsets
++                final double rdrOffX = DRenderer.RDR_OFFSET_X;
++                final double rdrOffY = DRenderer.RDR_OFFSET_Y;
++
++                // add a small rounding error:
++                final double margin = 1e-3d;
++
++                clipRect[0] = clip.getLoY()
++                                - margin + rdrOffY;
++                clipRect[1] = clip.getLoY() + clip.getHeight()
++                                + margin + rdrOffY;
++                clipRect[2] = clip.getLoX()
++                                - margin + rdrOffX;
++                clipRect[3] = clip.getLoX() + clip.getWidth()
++                                + margin + rdrOffX;
++
++                if (MarlinConst.DO_LOG_CLIP) {
++                    MarlinUtils.logInfo("clipRect (clip): "
++                                        + Arrays.toString(rdrCtx.clipRect));
++                }
+ 
+                 // Enable clipping:
+                 rdrCtx.doClip = true;
+diff --git a/src/share/classes/sun/java2d/marlin/DRendererContext.java b/src/share/classes/sun/java2d/marlin/DRendererContext.java
+--- a/src/share/classes/sun/java2d/marlin/DRendererContext.java
++++ b/src/share/classes/sun/java2d/marlin/DRendererContext.java
+@@ -85,6 +85,8 @@
+     boolean closedPath = false;
+     // clip rectangle (ymin, ymax, xmin, xmax):
+     final double[] clipRect = new double[4];
++    // clip inverse scale (mean) to adjust length checks
++    double clipInvScale = 0.0d;
+     // CurveBasicMonotonizer instance
+     final CurveBasicMonotonizer monotonizer;
+     // CurveClipSplitter instance
+@@ -105,7 +107,6 @@
+ 
+     final PathConsumer2DAdapter p2dAdapter = new PathConsumer2DAdapter();
+ 
+-
+     /**
+      * Constructor
+      *
+@@ -162,6 +163,7 @@
+         stroking   = 0;
+         doClip     = false;
+         closedPath = false;
++        clipInvScale = 0.0d;
+ 
+         // if context is maked as DIRTY:
+         if (dirty) {
+diff --git a/src/share/classes/sun/java2d/marlin/DStroker.java b/src/share/classes/sun/java2d/marlin/DStroker.java
+--- a/src/share/classes/sun/java2d/marlin/DStroker.java
++++ b/src/share/classes/sun/java2d/marlin/DStroker.java
+@@ -139,7 +139,6 @@
+      * <code>JOIN_MITER</code>, <code>JOIN_ROUND</code> or
+      * <code>JOIN_BEVEL</code>.
+      * @param miterLimit the desired miter limit
+-     * @param scale scaling factor applied to clip boundaries
+      * @param subdivideCurves true to indicate to subdivide curves, false if dasher does
+      * @return this instance
+      */
+@@ -148,7 +147,6 @@
+                   final int capStyle,
+                   final int joinStyle,
+                   final double miterLimit,
+-                  final double scale,
+                   final boolean subdivideCurves)
+     {
+         this.out = pc2d;
+@@ -169,7 +167,6 @@
+ 
+         if (rdrCtx.doClip) {
+             // Adjust the clipping rectangle with the stroker margin (miter limit, width)
+-            double rdrOffX = 0.0d, rdrOffY = 0.0d;
+             double margin = lineWidth2;
+ 
+             if (capStyle == CAP_SQUARE) {
+@@ -178,23 +175,21 @@
+             if ((joinStyle == JOIN_MITER) && (margin < limit)) {
+                 margin = limit;
+             }
+-            if (scale != 1.0d) {
+-                margin *= scale;
+-                rdrOffX = scale * DRenderer.RDR_OFFSET_X;
+-                rdrOffY = scale * DRenderer.RDR_OFFSET_Y;
+-            }
+-            // add a small rounding error:
+-            margin += 1e-3d;
+ 
+             // bounds as half-open intervals: minX <= x < maxX and minY <= y < maxY
+             // adjust clip rectangle (ymin, ymax, xmin, xmax):
+             final double[] _clipRect = rdrCtx.clipRect;
+-            _clipRect[0] -= margin - rdrOffY;
+-            _clipRect[1] += margin + rdrOffY;
+-            _clipRect[2] -= margin - rdrOffX;
+-            _clipRect[3] += margin + rdrOffX;
++            _clipRect[0] -= margin;
++            _clipRect[1] += margin;
++            _clipRect[2] -= margin;
++            _clipRect[3] += margin;
+             this.clipRect = _clipRect;
+ 
++            if (MarlinConst.DO_LOG_CLIP) {
++                MarlinUtils.logInfo("clipRect (stroker): "
++                                    + Arrays.toString(rdrCtx.clipRect));
++            }
++
+             // initialize curve splitter here for stroker & dasher:
+             if (DO_CLIP_SUBDIVIDER) {
+                 subdivide = subdivideCurves;
+@@ -304,13 +299,9 @@
+         // If it is >=0, we know that abs(ext) is <= 90 degrees, so we only
+         // need 1 curve to approximate the circle section that joins omx,omy
+         // and mx,my.
+-        final int numCurves = (cosext >= 0.0d) ? 1 : 2;
+-
+-        switch (numCurves) {
+-        case 1:
++        if (cosext >= 0.0d) {
+             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+-            break;
+-        case 2:
++        } else {
+             // we need to split the arc into 2 arcs spanning the same angle.
+             // The point we want will be one of the 2 intersections of the
+             // perpendicular bisector of the chord (omx,omy)->(mx,my) and the
+@@ -339,8 +330,6 @@
+             }
+             drawBezApproxForArc(cx, cy, omx, omy, mmx, mmy, rev);
+             drawBezApproxForArc(cx, cy, mmx, mmy, mx, my, rev);
+-            break;
+-        default:
+         }
+     }
+ 
+diff --git a/src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java b/src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java
+--- a/src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java
++++ b/src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java
+@@ -119,44 +119,56 @@
+                 // Scale only
+                 if (rdrCtx.doClip) {
+                     // adjust clip rectangle (ymin, ymax, xmin, xmax):
+-                    adjustClipScale(rdrCtx.clipRect, mxx, myy);
++                    rdrCtx.clipInvScale = adjustClipScale(rdrCtx.clipRect,
++                        mxx, myy);
+                 }
+                 return dt_DeltaScaleFilter.init(out, mxx, myy);
+             }
+         } else {
+             if (rdrCtx.doClip) {
+                 // adjust clip rectangle (ymin, ymax, xmin, xmax):
+-                adjustClipInverseDelta(rdrCtx.clipRect, mxx, mxy, myx, myy);
++                rdrCtx.clipInvScale = adjustClipInverseDelta(rdrCtx.clipRect,
++                    mxx, mxy, myx, myy);
+             }
+             return dt_DeltaTransformFilter.init(out, mxx, mxy, myx, myy);
+         }
+     }
+ 
+-    private static void adjustClipOffset(final double[] clipRect) {
+-        clipRect[0] += Renderer.RDR_OFFSET_Y;
+-        clipRect[1] += Renderer.RDR_OFFSET_Y;
+-        clipRect[2] += Renderer.RDR_OFFSET_X;
+-        clipRect[3] += Renderer.RDR_OFFSET_X;
++    private static double adjustClipScale(final double[] clipRect,
++                                          final double mxx, final double myy)
++    {
++        // Adjust the clipping rectangle (iv_DeltaScaleFilter):
++        final double scaleY = 1.0d / myy;
++        clipRect[0] *= scaleY;
++        clipRect[1] *= scaleY;
++
++        if (clipRect[1] < clipRect[0]) {
++            double tmp = clipRect[0];
++            clipRect[0] = clipRect[1];
++            clipRect[1] = tmp;
++        }
++
++        final double scaleX = 1.0d / mxx;
++        clipRect[2] *= scaleX;
++        clipRect[3] *= scaleX;
++
++        if (clipRect[3] < clipRect[2]) {
++            double tmp = clipRect[2];
++            clipRect[2] = clipRect[3];
++            clipRect[3] = tmp;
++        }
++
++        if (MarlinConst.DO_LOG_CLIP) {
++                MarlinUtils.logInfo("clipRect (ClipScale): "
++                                    + Arrays.toString(clipRect));
++        }
++        return 0.5d * (Math.abs(scaleX) + Math.abs(scaleY));
+     }
+ 
+-    private static void adjustClipScale(final double[] clipRect,
+-                                        final double mxx, final double myy)
++    private static double adjustClipInverseDelta(final double[] clipRect,
++                                                 final double mxx, final double mxy,
++                                                 final double myx, final double myy)
+     {
+-        adjustClipOffset(clipRect);
+-
+-        // Adjust the clipping rectangle (iv_DeltaScaleFilter):
+-        clipRect[0] /= myy;
+-        clipRect[1] /= myy;
+-        clipRect[2] /= mxx;
+-        clipRect[3] /= mxx;
+-    }
+-
+-    private static void adjustClipInverseDelta(final double[] clipRect,
+-                                               final double mxx, final double mxy,
+-                                               final double myx, final double myy)
+-    {
+-        adjustClipOffset(clipRect);
+-
+         // Adjust the clipping rectangle (iv_DeltaTransformFilter):
+         final double det = mxx * myy - mxy * myx;
+         final double imxx =  myy / det;
+@@ -198,6 +210,16 @@
+         clipRect[1] = ymax;
+         clipRect[2] = xmin;
+         clipRect[3] = xmax;
++
++        if (MarlinConst.DO_LOG_CLIP) {
++                MarlinUtils.logInfo("clipRect (ClipInverseDelta): "
++                                    + Arrays.toString(clipRect));
++        }
++
++        final double scaleX = Math.sqrt(imxx * imxx + imxy * imxy);
++        final double scaleY = Math.sqrt(imyx * imyx + imyy * imyy);
++
++        return 0.5d * (scaleX + scaleY);
+     }
+ 
+     DPathConsumer2D inverseDeltaTransformConsumer(DPathConsumer2D out,
+@@ -215,7 +237,7 @@
+             if (mxx == 1.0d && myy == 1.0d) {
+                 return out;
+             } else {
+-                return iv_DeltaScaleFilter.init(out, 1.0d/mxx, 1.0d/myy);
++                return iv_DeltaScaleFilter.init(out, 1.0d / mxx, 1.0d / myy);
+             }
+         } else {
+             final double det = mxx * myy - mxy * myx;
+@@ -532,19 +554,6 @@
+         PathClipFilter init(final DPathConsumer2D out) {
+             this.out = out;
+ 
+-            // Adjust the clipping rectangle with the renderer offsets
+-            final double rdrOffX = DRenderer.RDR_OFFSET_X;
+-            final double rdrOffY = DRenderer.RDR_OFFSET_Y;
+-
+-            // add a small rounding error:
+-            final double margin = 1e-3d;
+-
+-            final double[] _clipRect = this.clipRect;
+-            _clipRect[0] -= margin - rdrOffY;
+-            _clipRect[1] += margin + rdrOffY;
+-            _clipRect[2] -= margin - rdrOffX;
+-            _clipRect[3] += margin + rdrOffX;
+-
+             if (MarlinConst.DO_CLIP_SUBDIVIDER) {
+                 // adjust padded clip rectangle:
+                 curveSplitter.init();
+@@ -867,6 +876,11 @@
+ 
+         private static final int MAX_N_CURVES = 3 * 4;
+ 
++        private final DRendererContext rdrCtx;
++
++        // scaled length threshold:
++        private double minLength;
++
+         // clip rectangle (ymin, ymax, xmin, xmax):
+         final double[] clipRect;
+ 
+@@ -884,12 +898,23 @@
+         private final DCurve curve;
+ 
+         CurveClipSplitter(final DRendererContext rdrCtx) {
++            this.rdrCtx = rdrCtx;
+             this.clipRect = rdrCtx.clipRect;
+             this.curve = rdrCtx.curve;
+         }
+ 
+         void init() {
+             this.init_clipRectPad = true;
++
++            if (DO_CHECK_LENGTH) {
++                this.minLength = (this.rdrCtx.clipInvScale == 0.0d) ? LEN_TH
++                                    : (LEN_TH * this.rdrCtx.clipInvScale);
++
++                if (MarlinConst.DO_LOG_CLIP) {
++                    MarlinUtils.logInfo("CurveClipSplitter.minLength = "
++                                            + minLength);
++                }
++            }
+         }
+ 
+         private void initPaddedClip() {
+@@ -906,7 +931,7 @@
+ 
+             if (TRACE) {
+                 MarlinUtils.logInfo("clip: X [" + _clipRectPad[2] + " .. " + _clipRectPad[3] +"] "
+-                                        + "Y ["+ _clipRectPad[0] + " .. " + _clipRectPad[1] +"]");
++                                        + "Y [" + _clipRectPad[0] + " .. " + _clipRectPad[1] +"]");
+             }
+         }
+ 
+@@ -919,7 +944,7 @@
+                 MarlinUtils.logInfo("divLine P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ")");
+             }
+ 
+-            if (DO_CHECK_LENGTH && DHelpers.fastLineLen(x0, y0, x1, y1) <= LEN_TH) {
++            if (DO_CHECK_LENGTH && DHelpers.fastLineLen(x0, y0, x1, y1) <= minLength) {
+                 return false;
+             }
+ 
+@@ -940,7 +965,7 @@
+                 MarlinUtils.logInfo("divQuad P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ")");
+             }
+ 
+-            if (DO_CHECK_LENGTH && DHelpers.fastQuadLen(x0, y0, x1, y1, x2, y2) <= LEN_TH) {
++            if (DO_CHECK_LENGTH && DHelpers.fastQuadLen(x0, y0, x1, y1, x2, y2) <= minLength) {
+                 return false;
+             }
+ 
+@@ -963,7 +988,7 @@
+                 MarlinUtils.logInfo("divCurve P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ") P3(" + x3 + ", " + y3 + ")");
+             }
+ 
+-            if (DO_CHECK_LENGTH && DHelpers.fastCurvelen(x0, y0, x1, y1, x2, y2, x3, y3) <= LEN_TH) {
++            if (DO_CHECK_LENGTH && DHelpers.fastCurvelen(x0, y0, x1, y1, x2, y2, x3, y3) <= minLength) {
+                 return false;
+             }
+ 
+@@ -991,8 +1016,8 @@
+                                                         outCodeOR, clipRectPad);
+ 
+             if (TRACE) {
+-                MarlinUtils.logInfo("nSplits: "+ nSplits);
+-                MarlinUtils.logInfo("subTs: "+Arrays.toString(Arrays.copyOfRange(subTs, 0, nSplits)));
++                MarlinUtils.logInfo("nSplits: " + nSplits);
++                MarlinUtils.logInfo("subTs: " + Arrays.toString(Arrays.copyOfRange(subTs, 0, nSplits)));
+             }
+             if (nSplits == 0) {
+                 // only curve support shortcut
+@@ -1010,7 +1035,7 @@
+ 
+             for (int i = 0, off = 0; i <= nSplits; i++, off += type) {
+                 if (TRACE) {
+-                    MarlinUtils.logInfo("Part Curve "+Arrays.toString(Arrays.copyOfRange(mid, off, off + type)));
++                    MarlinUtils.logInfo("Part Curve " + Arrays.toString(Arrays.copyOfRange(mid, off, off + type)));
+                 }
+                 emitCurrent(type, mid, off, out);
+             }
+diff --git a/src/share/classes/sun/java2d/marlin/MarlinConst.java b/src/share/classes/sun/java2d/marlin/MarlinConst.java
+--- a/src/share/classes/sun/java2d/marlin/MarlinConst.java
++++ b/src/share/classes/sun/java2d/marlin/MarlinConst.java
+@@ -82,11 +82,11 @@
+ 
+     static final boolean DO_CLIP_SUBDIVIDER = MarlinProperties.isDoClipSubdivider();
+ 
+-    // flag to enable logs related bounds checks
++    // flag to enable logs related to bounds checks
+     static final boolean DO_LOG_BOUNDS = ENABLE_LOGS && false;
+ 
+-    // flag to enable float precision correction
+-    static final boolean DO_FIX_FLOAT_PREC = true;
++    // flag to enable logs related to clip rect
++    static final boolean DO_LOG_CLIP = ENABLE_LOGS && false;
+ 
+     // Initial Array sizing (initial context capacity) ~ 450K
+ 
+diff --git a/src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java b/src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java
+--- a/src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java
++++ b/src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java
+@@ -31,6 +31,7 @@
+ import java.awt.geom.Path2D;
+ import java.awt.geom.PathIterator;
+ import java.security.AccessController;
++import java.util.Arrays;
+ import static sun.java2d.marlin.MarlinUtils.logInfo;
+ import sun.awt.geom.PathConsumer2D;
+ import sun.java2d.ReentrantContextProvider;
+@@ -333,7 +334,6 @@
+ 
+         int dashLen = -1;
+         boolean recycleDashes = false;
+-        float scale = 1.0f;
+ 
+         if (at != null && !at.isIdentity()) {
+             final double a = at.getScaleX();
+@@ -366,7 +366,7 @@
+             // a*b == -c*d && a*a+c*c == b*b+d*d. In the actual check below, we
+             // leave a bit of room for error.
+             if (nearZero(a*b + c*d) && nearZero(a*a + c*c - (b*b + d*d))) {
+-                scale = (float) Math.sqrt(a*a + c*c);
++                final float scale = (float) Math.sqrt(a*a + c*c);
+ 
+                 if (dashes != null) {
+                     recycleDashes = true;
+@@ -421,7 +421,7 @@
+         pc2d = transformerPC2D.deltaTransformConsumer(pc2d, strokerat);
+ 
+         // stroker will adjust the clip rectangle (width / miter limit):
+-        pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit, scale,
++        pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit,
+                 (dashes == null));
+ 
+         // Curve Monotizer:
+@@ -831,10 +831,26 @@
+                 // Define the initial clip bounds:
+                 final float[] clipRect = rdrCtx.clipRect;
+ 
+-                clipRect[0] = clip.getLoY();
+-                clipRect[1] = clip.getLoY() + clip.getHeight();
+-                clipRect[2] = clip.getLoX();
+-                clipRect[3] = clip.getLoX() + clip.getWidth();
++                // Adjust the clipping rectangle with the renderer offsets
++                final float rdrOffX = Renderer.RDR_OFFSET_X;
++                final float rdrOffY = Renderer.RDR_OFFSET_Y;
++
++                // add a small rounding error:
++                final float margin = 1e-3f;
++
++                clipRect[0] = clip.getLoY()
++                                - margin + rdrOffY;
++                clipRect[1] = clip.getLoY() + clip.getHeight()
++                                + margin + rdrOffY;
++                clipRect[2] = clip.getLoX()
++                                - margin + rdrOffX;
++                clipRect[3] = clip.getLoX() + clip.getWidth()
++                                + margin + rdrOffX;
++
++                if (MarlinConst.DO_LOG_CLIP) {
++                    MarlinUtils.logInfo("clipRect (clip): "
++                                        + Arrays.toString(rdrCtx.clipRect));
++                }
+ 
+                 // Enable clipping:
+                 rdrCtx.doClip = true;
+diff --git a/src/share/classes/sun/java2d/marlin/RendererContext.java b/src/share/classes/sun/java2d/marlin/RendererContext.java
+--- a/src/share/classes/sun/java2d/marlin/RendererContext.java
++++ b/src/share/classes/sun/java2d/marlin/RendererContext.java
+@@ -85,6 +85,8 @@
+     boolean closedPath = false;
+     // clip rectangle (ymin, ymax, xmin, xmax):
+     final float[] clipRect = new float[4];
++    // clip inverse scale (mean) to adjust length checks
++    float clipInvScale = 0.0f;
+     // CurveBasicMonotonizer instance
+     final CurveBasicMonotonizer monotonizer;
+     // CurveClipSplitter instance
+@@ -159,6 +161,7 @@
+         stroking   = 0;
+         doClip     = false;
+         closedPath = false;
++        clipInvScale = 0.0f;
+ 
+         // if context is maked as DIRTY:
+         if (dirty) {
+diff --git a/src/share/classes/sun/java2d/marlin/Stroker.java b/src/share/classes/sun/java2d/marlin/Stroker.java
+--- a/src/share/classes/sun/java2d/marlin/Stroker.java
++++ b/src/share/classes/sun/java2d/marlin/Stroker.java
+@@ -141,7 +141,6 @@
+      * <code>JOIN_MITER</code>, <code>JOIN_ROUND</code> or
+      * <code>JOIN_BEVEL</code>.
+      * @param miterLimit the desired miter limit
+-     * @param scale scaling factor applied to clip boundaries
+      * @param subdivideCurves true to indicate to subdivide curves, false if dasher does
+      * @return this instance
+      */
+@@ -150,7 +149,6 @@
+                  final int capStyle,
+                  final int joinStyle,
+                  final float miterLimit,
+-                 final float scale,
+                  final boolean subdivideCurves)
+     {
+         this.out = pc2d;
+@@ -171,7 +169,6 @@
+ 
+         if (rdrCtx.doClip) {
+             // Adjust the clipping rectangle with the stroker margin (miter limit, width)
+-            float rdrOffX = 0.0f, rdrOffY = 0.0f;
+             float margin = lineWidth2;
+ 
+             if (capStyle == CAP_SQUARE) {
+@@ -180,23 +177,21 @@
+             if ((joinStyle == JOIN_MITER) && (margin < limit)) {
+                 margin = limit;
+             }
+-            if (scale != 1.0f) {
+-                margin *= scale;
+-                rdrOffX = scale * Renderer.RDR_OFFSET_X;
+-                rdrOffY = scale * Renderer.RDR_OFFSET_Y;
+-            }
+-            // add a small rounding error:
+-            margin += 1e-3f;
+ 
+             // bounds as half-open intervals: minX <= x < maxX and minY <= y < maxY
+             // adjust clip rectangle (ymin, ymax, xmin, xmax):
+             final float[] _clipRect = rdrCtx.clipRect;
+-            _clipRect[0] -= margin - rdrOffY;
+-            _clipRect[1] += margin + rdrOffY;
+-            _clipRect[2] -= margin - rdrOffX;
+-            _clipRect[3] += margin + rdrOffX;
++            _clipRect[0] -= margin;
++            _clipRect[1] += margin;
++            _clipRect[2] -= margin;
++            _clipRect[3] += margin;
+             this.clipRect = _clipRect;
+ 
++            if (MarlinConst.DO_LOG_CLIP) {
++                MarlinUtils.logInfo("clipRect (stroker): "
++                                    + Arrays.toString(rdrCtx.clipRect));
++            }
++
+             // initialize curve splitter here for stroker & dasher:
+             if (DO_CLIP_SUBDIVIDER) {
+                 subdivide = subdivideCurves;
+@@ -306,13 +301,9 @@
+         // If it is >=0, we know that abs(ext) is <= 90 degrees, so we only
+         // need 1 curve to approximate the circle section that joins omx,omy
+         // and mx,my.
+-        final int numCurves = (cosext >= 0.0f) ? 1 : 2;
+-
+-        switch (numCurves) {
+-        case 1:
++        if (cosext >= 0.0f) {
+             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+-            break;
+-        case 2:
++        } else {
+             // we need to split the arc into 2 arcs spanning the same angle.
+             // The point we want will be one of the 2 intersections of the
+             // perpendicular bisector of the chord (omx,omy)->(mx,my) and the
+@@ -341,8 +332,6 @@
+             }
+             drawBezApproxForArc(cx, cy, omx, omy, mmx, mmy, rev);
+             drawBezApproxForArc(cx, cy, mmx, mmy, mx, my, rev);
+-            break;
+-        default:
+         }
+     }
+ 
+diff --git a/src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java b/src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java
+--- a/src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java
++++ b/src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java
+@@ -120,44 +120,56 @@
+                 // Scale only
+                 if (rdrCtx.doClip) {
+                     // adjust clip rectangle (ymin, ymax, xmin, xmax):
+-                    adjustClipScale(rdrCtx.clipRect, mxx, myy);
++                    rdrCtx.clipInvScale = adjustClipScale(rdrCtx.clipRect,
++                        mxx, myy);
+                 }
+                 return dt_DeltaScaleFilter.init(out, mxx, myy);
+             }
+         } else {
+             if (rdrCtx.doClip) {
+                 // adjust clip rectangle (ymin, ymax, xmin, xmax):
+-                adjustClipInverseDelta(rdrCtx.clipRect, mxx, mxy, myx, myy);
++                rdrCtx.clipInvScale = adjustClipInverseDelta(rdrCtx.clipRect,
++                    mxx, mxy, myx, myy);
+             }
+             return dt_DeltaTransformFilter.init(out, mxx, mxy, myx, myy);
+         }
+     }
+ 
+-    private static void adjustClipOffset(final float[] clipRect) {
+-        clipRect[0] += Renderer.RDR_OFFSET_Y;
+-        clipRect[1] += Renderer.RDR_OFFSET_Y;
+-        clipRect[2] += Renderer.RDR_OFFSET_X;
+-        clipRect[3] += Renderer.RDR_OFFSET_X;
++    private static float adjustClipScale(final float[] clipRect,
++                                         final float mxx, final float myy)
++    {
++        // Adjust the clipping rectangle (iv_DeltaScaleFilter):
++        final float scaleY = 1.0f / myy;
++        clipRect[0] *= scaleY;
++        clipRect[1] *= scaleY;
++
++        if (clipRect[1] < clipRect[0]) {
++            float tmp = clipRect[0];
++            clipRect[0] = clipRect[1];
++            clipRect[1] = tmp;
++        }
++
++        final float scaleX = 1.0f / mxx;
++        clipRect[2] *= scaleX;
++        clipRect[3] *= scaleX;
++
++        if (clipRect[3] < clipRect[2]) {
++            float tmp = clipRect[2];
++            clipRect[2] = clipRect[3];
++            clipRect[3] = tmp;
++        }
++
++        if (MarlinConst.DO_LOG_CLIP) {
++                MarlinUtils.logInfo("clipRect (ClipScale): "
++                                    + Arrays.toString(clipRect));
++        }
++        return 0.5f * (Math.abs(scaleX) + Math.abs(scaleY));
+     }
+ 
+-    private static void adjustClipScale(final float[] clipRect,
+-                                        final float mxx, final float myy)
++    private static float adjustClipInverseDelta(final float[] clipRect,
++                                                final float mxx, final float mxy,
++                                                final float myx, final float myy)
+     {
+-        adjustClipOffset(clipRect);
+-
+-        // Adjust the clipping rectangle (iv_DeltaScaleFilter):
+-        clipRect[0] /= myy;
+-        clipRect[1] /= myy;
+-        clipRect[2] /= mxx;
+-        clipRect[3] /= mxx;
+-    }
+-
+-    private static void adjustClipInverseDelta(final float[] clipRect,
+-                                               final float mxx, final float mxy,
+-                                               final float myx, final float myy)
+-    {
+-        adjustClipOffset(clipRect);
+-
+         // Adjust the clipping rectangle (iv_DeltaTransformFilter):
+         final float det = mxx * myy - mxy * myx;
+         final float imxx =  myy / det;
+@@ -199,6 +211,16 @@
+         clipRect[1] = ymax;
+         clipRect[2] = xmin;
+         clipRect[3] = xmax;
++
++        if (MarlinConst.DO_LOG_CLIP) {
++                MarlinUtils.logInfo("clipRect (ClipInverseDelta): "
++                                    + Arrays.toString(clipRect));
++        }
++
++        final float scaleX = (float) Math.sqrt(imxx * imxx + imxy * imxy);
++        final float scaleY = (float) Math.sqrt(imyx * imyx + imyy * imyy);
++
++        return 0.5f * (scaleX + scaleY);
+     }
+ 
+     PathConsumer2D inverseDeltaTransformConsumer(PathConsumer2D out,
+@@ -216,7 +238,7 @@
+             if (mxx == 1.0f && myy == 1.0f) {
+                 return out;
+             } else {
+-                return iv_DeltaScaleFilter.init(out, 1.0f/mxx, 1.0f/myy);
++                return iv_DeltaScaleFilter.init(out, 1.0f / mxx, 1.0f / myy);
+             }
+         } else {
+             final float det = mxx * myy - mxy * myx;
+@@ -533,19 +555,6 @@
+         PathClipFilter init(final PathConsumer2D out) {
+             this.out = out;
+ 
+-            // Adjust the clipping rectangle with the renderer offsets
+-            final float rdrOffX = Renderer.RDR_OFFSET_X;
+-            final float rdrOffY = Renderer.RDR_OFFSET_Y;
+-
+-            // add a small rounding error:
+-            final float margin = 1e-3f;
+-
+-            final float[] _clipRect = this.clipRect;
+-            _clipRect[0] -= margin - rdrOffY;
+-            _clipRect[1] += margin + rdrOffY;
+-            _clipRect[2] -= margin - rdrOffX;
+-            _clipRect[3] += margin + rdrOffX;
+-
+             if (MarlinConst.DO_CLIP_SUBDIVIDER) {
+                 // adjust padded clip rectangle:
+                 curveSplitter.init();
+@@ -868,6 +877,11 @@
+ 
+         private static final int MAX_N_CURVES = 3 * 4;
+ 
++        private final RendererContext rdrCtx;
++
++        // scaled length threshold:
++        private float minLength;
++
+         // clip rectangle (ymin, ymax, xmin, xmax):
+         final float[] clipRect;
+ 
+@@ -885,12 +899,23 @@
+         private final Curve curve;
+ 
+         CurveClipSplitter(final RendererContext rdrCtx) {
++            this.rdrCtx = rdrCtx;
+             this.clipRect = rdrCtx.clipRect;
+             this.curve = rdrCtx.curve;
+         }
+ 
+         void init() {
+             this.init_clipRectPad = true;
++
++            if (DO_CHECK_LENGTH) {
++                this.minLength = (this.rdrCtx.clipInvScale == 0.0f) ? LEN_TH
++                                    : (LEN_TH * this.rdrCtx.clipInvScale);
++
++                if (MarlinConst.DO_LOG_CLIP) {
++                    MarlinUtils.logInfo("CurveClipSplitter.minLength = "
++                                            + minLength);
++                }
++            }
+         }
+ 
+         private void initPaddedClip() {
+@@ -907,7 +932,7 @@
+ 
+             if (TRACE) {
+                 MarlinUtils.logInfo("clip: X [" + _clipRectPad[2] + " .. " + _clipRectPad[3] +"] "
+-                                        + "Y ["+ _clipRectPad[0] + " .. " + _clipRectPad[1] +"]");
++                                        + "Y [" + _clipRectPad[0] + " .. " + _clipRectPad[1] +"]");
+             }
+         }
+ 
+@@ -920,7 +945,7 @@
+                 MarlinUtils.logInfo("divLine P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ")");
+             }
+ 
+-            if (DO_CHECK_LENGTH && Helpers.fastLineLen(x0, y0, x1, y1) <= LEN_TH) {
++            if (DO_CHECK_LENGTH && Helpers.fastLineLen(x0, y0, x1, y1) <= minLength) {
+                 return false;
+             }
+ 
+@@ -941,7 +966,7 @@
+                 MarlinUtils.logInfo("divQuad P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ")");
+             }
+ 
+-            if (DO_CHECK_LENGTH && Helpers.fastQuadLen(x0, y0, x1, y1, x2, y2) <= LEN_TH) {
++            if (DO_CHECK_LENGTH && Helpers.fastQuadLen(x0, y0, x1, y1, x2, y2) <= minLength) {
+                 return false;
+             }
+ 
+@@ -964,7 +989,7 @@
+                 MarlinUtils.logInfo("divCurve P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ") P3(" + x3 + ", " + y3 + ")");
+             }
+ 
+-            if (DO_CHECK_LENGTH && Helpers.fastCurvelen(x0, y0, x1, y1, x2, y2, x3, y3) <= LEN_TH) {
++            if (DO_CHECK_LENGTH && Helpers.fastCurvelen(x0, y0, x1, y1, x2, y2, x3, y3) <= minLength) {
+                 return false;
+             }
+ 
+@@ -992,8 +1017,8 @@
+                                                         outCodeOR, clipRectPad);
+ 
+             if (TRACE) {
+-                MarlinUtils.logInfo("nSplits: "+ nSplits);
+-                MarlinUtils.logInfo("subTs: "+Arrays.toString(Arrays.copyOfRange(subTs, 0, nSplits)));
++                MarlinUtils.logInfo("nSplits: " + nSplits);
++                MarlinUtils.logInfo("subTs: " + Arrays.toString(Arrays.copyOfRange(subTs, 0, nSplits)));
+             }
+             if (nSplits == 0) {
+                 // only curve support shortcut
+@@ -1011,7 +1036,7 @@
+ 
+             for (int i = 0, off = 0; i <= nSplits; i++, off += type) {
+                 if (TRACE) {
+-                    MarlinUtils.logInfo("Part Curve "+Arrays.toString(Arrays.copyOfRange(mid, off, off + type)));
++                    MarlinUtils.logInfo("Part Curve " + Arrays.toString(Arrays.copyOfRange(mid, off, off + type)));
+                 }
+                 emitCurrent(type, mid, off, out);
+             }
+diff --git a/src/share/classes/sun/java2d/marlin/Version.java b/src/share/classes/sun/java2d/marlin/Version.java
+--- a/src/share/classes/sun/java2d/marlin/Version.java
++++ b/src/share/classes/sun/java2d/marlin/Version.java
+@@ -27,7 +27,7 @@
+ 
+ public final class Version {
+ 
+-    private static final String VERSION = "marlin-0.9.1-Unsafe-OpenJDK";
++    private static final String VERSION = "marlin-0.9.1.1-Unsafe-OpenJDK";
+ 
+     public static String getVersion() {
+         return VERSION;
+diff --git a/test/sun/java2d/marlin/ScaleClipTest.java b/test/sun/java2d/marlin/ScaleClipTest.java
+new file mode 100644
+--- /dev/null
++++ b/test/sun/java2d/marlin/ScaleClipTest.java
+@@ -0,0 +1,232 @@
++/*
++ * Copyright (c) 2018, Oracle and/or its affiliates. All rights reserved.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ * This code is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only, as
++ * published by the Free Software Foundation.
++ *
++ * This code is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++ * version 2 for more details (a copy is included in the LICENSE file that
++ * accompanied this code).
++ *
++ * You should have received a copy of the GNU General Public License version
++ * 2 along with this work; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
++ * or visit www.oracle.com if you need additional information or have any
++ * questions.
++ */
++
++import java.awt.BasicStroke;
++import java.awt.Color;
++import java.awt.Graphics2D;
++import java.awt.RenderingHints;
++import java.awt.geom.AffineTransform;
++import java.awt.geom.Path2D;
++import java.awt.image.BufferedImage;
++import java.awt.image.Raster;
++import java.io.File;
++import java.io.IOException;
++import javax.imageio.ImageIO;
++
++/**
++ * Scaled Line Clipping rendering test
++ *
++ * @test
++ * @summary verify that scaled line is properly rendered
++ * @bug 8210335
++ */
++public class ScaleClipTest {
++
++    static final boolean SAVE_IMAGE = false;
++    static final int SIZE = 50;
++
++    enum SCALE_MODE {
++        ORTHO,
++        NON_ORTHO,
++        COMPLEX
++    };
++
++    public static void main(String[] args) {
++
++        // First display which renderer is tested:
++        // JDK9 only:
++        System.setProperty("sun.java2d.renderer.verbose", "true");
++
++        System.out.println("ScaleClipTest: size = " + SIZE);
++
++        final BufferedImage image = new BufferedImage(SIZE, SIZE, BufferedImage.TYPE_INT_ARGB);
++
++        boolean fail = false;
++
++        // testNegativeScale:
++        for (SCALE_MODE mode : SCALE_MODE.values()) {
++            try {
++                testNegativeScale(image, mode);
++            } catch (IllegalStateException ise) {
++                System.err.println("testNegativeScale[" + mode + "] failed:");
++                ise.printStackTrace();
++                fail = true;
++            }
++        }
++
++        // testMarginScale:
++        for (SCALE_MODE mode : SCALE_MODE.values()) {
++            try {
++                testMarginScale(image, mode);
++            } catch (IllegalStateException ise) {
++                System.err.println("testMarginScale[" + mode + "] failed:");
++                ise.printStackTrace();
++                fail = true;
++            }
++        }
++
++        // Fail at the end:
++        if (fail) {
++            throw new RuntimeException("ScaleClipTest has failures.");
++        }
++    }
++
++    private static void testNegativeScale(final BufferedImage image, final SCALE_MODE mode) {
++
++        final Graphics2D g2d = (Graphics2D) image.getGraphics();
++        try {
++            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
++            g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
++            g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
++
++            g2d.setBackground(Color.WHITE);
++            g2d.clearRect(0, 0, SIZE, SIZE);
++
++            g2d.setColor(Color.BLACK);
++
++            // Bug in TransformingPathConsumer2D.adjustClipScale()
++            // non ortho scale only
++            final double scale = -1.0;
++
++            final AffineTransform at;
++            switch (mode) {
++                default:
++                case ORTHO:
++                    at = AffineTransform.getScaleInstance(scale, scale);
++                    break;
++                case NON_ORTHO:
++                    at = AffineTransform.getScaleInstance(scale, scale + 1e-5);
++                    break;
++                case COMPLEX:
++                    at = AffineTransform.getScaleInstance(scale, scale);
++                    at.concatenate(AffineTransform.getShearInstance(1e-4, 1e-4));
++                    break;
++            }
++            g2d.setTransform(at);
++
++            // Set cap/join to reduce clip margin:
++            g2d.setStroke(new BasicStroke(2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL));
++
++            final Path2D p = new Path2D.Double();
++            p.moveTo(scale * 10, scale * 10);
++            p.lineTo(scale * (SIZE - 10), scale * (SIZE - 10));
++
++            g2d.draw(p);
++
++            if (SAVE_IMAGE) {
++                try {
++                    final File file = new File("ScaleClipTest-testNegativeScale-" + mode + ".png");
++
++                    System.out.println("Writing file: " + file.getAbsolutePath());
++                    ImageIO.write(image, "PNG", file);
++                } catch (IOException ioe) {
++                    ioe.printStackTrace();
++                }
++            }
++
++            // Check image:
++            // 25, 25 = black
++            checkPixel(image.getData(), 25, 25, Color.BLACK.getRGB());
++
++        } finally {
++            g2d.dispose();
++        }
++    }
++
++    private static void testMarginScale(final BufferedImage image, final SCALE_MODE mode) {
++
++        final Graphics2D g2d = (Graphics2D) image.getGraphics();
++        try {
++            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
++            g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
++            g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
++
++            g2d.setBackground(Color.WHITE);
++            g2d.clearRect(0, 0, SIZE, SIZE);
++
++            g2d.setColor(Color.BLACK);
++
++            // Bug in Stroker.init()
++            // ortho scale only: scale used twice !
++            final double scale = 1e-2;
++
++            final AffineTransform at;
++            switch (mode) {
++                default:
++                case ORTHO:
++                    at = AffineTransform.getScaleInstance(scale, scale);
++                    break;
++                case NON_ORTHO:
++                    at = AffineTransform.getScaleInstance(scale, scale + 1e-5);
++                    break;
++                case COMPLEX:
++                    at = AffineTransform.getScaleInstance(scale, scale);
++                    at.concatenate(AffineTransform.getShearInstance(1e-4, 1e-4));
++                    break;
++            }
++            g2d.setTransform(at);
++
++            final double invScale = 1.0 / scale;
++
++            // Set cap/join to reduce clip margin:
++            final float w = (float) (3.0 * invScale);
++            g2d.setStroke(new BasicStroke(w, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL));
++
++            final Path2D p = new Path2D.Double();
++            p.moveTo(invScale * -0.5, invScale * 10);
++            p.lineTo(invScale * -0.5, invScale * (SIZE - 10));
++
++            g2d.draw(p);
++
++            if (SAVE_IMAGE) {
++                try {
++                    final File file = new File("ScaleClipTest-testMarginScale-" + mode + ".png");
++
++                    System.out.println("Writing file: " + file.getAbsolutePath());
++                    ImageIO.write(image, "PNG", file);
++                } catch (IOException ioe) {
++                    ioe.printStackTrace();
++                }
++            }
++
++            // Check image:
++            // 0, 25 = black
++            checkPixel(image.getData(), 0, 25, Color.BLACK.getRGB());
++        } finally {
++            g2d.dispose();
++        }
++    }
++
++    private static void checkPixel(final Raster raster,
++                                   final int x, final int y,
++                                   final int expected) {
++
++        final int[] rgb = (int[]) raster.getDataElements(x, y, null);
++
++        if (rgb[0] != expected) {
++            throw new IllegalStateException("bad pixel at (" + x + ", " + y
++                    + ") = " + rgb[0] + " expected: " + expected);
++        }
++    }
++
++}

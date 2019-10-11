@@ -1,0 +1,84 @@
+# HG changeset patch
+# User lbourges
+# Date 1450130917 28800
+#      Mon Dec 14 14:08:37 2015 -0800
+# Node ID 4b5bf9f960c83dabbd8e2374da99a1aa7113295c
+# Parent  fcd988599d9a56846b0aa7f706168be8e119c7b0
+8145055: Marlin renderer causes unaligned write accesses
+Reviewed-by: flar, prr
+
+diff --git a/src/java.desktop/share/classes/sun/java2d/marlin/MarlinCache.java b/src/java.desktop/share/classes/sun/java2d/marlin/MarlinCache.java
+--- a/src/java.desktop/share/classes/sun/java2d/marlin/MarlinCache.java
++++ b/src/java.desktop/share/classes/sun/java2d/marlin/MarlinCache.java
+@@ -156,8 +156,6 @@
+                     // rewritten to avoid division:
+                     || (width * heightSubPixel) >
+                             ((edgeSumDeltaY - heightSubPixel) << BLOCK_SIZE_LG);
+-//                            ((edgeSumDeltaY - heightSubPixel) * RLE_THRESHOLD);
+-//                            ((edgeSumDeltaY - heightSubPixel) << BLOCK_TH_LG);
+ 
+                 if (doTrace && !useRLE) {
+                     final float meanCrossings
+@@ -293,8 +291,10 @@
+         // update row index to current position:
+         rowAAChunkIndex[row] = pos;
+ 
+-        // determine need array size (may overflow):
+-        final long needSize = pos + (px_bbox1 - px0);
++        // determine need array size:
++        // for RLE encoding, position must be aligned to 4 bytes (int):
++        // align - 1 = 3 so add +3 and round-off by mask ~3 = -4
++        final long needSize = pos + ((px_bbox1 - px0 + 3) & -4);
+ 
+         // update next position (bytes):
+         rowAAChunkPos = needSize;
+@@ -401,8 +401,7 @@
+ 
+         // determine need array size:
+         // pessimistic: max needed size = deltaX x 4 (1 int)
+-        final int maxLen = (to - from);
+-        final long needSize = initialPos + (maxLen << 2);
++        final long needSize = initialPos + ((to - from) << 2);
+ 
+         // update row data:
+         OffHeapArray _rowAAChunk = rowAAChunk;
+@@ -465,6 +464,13 @@
+                             // note: last pixel exclusive (>= 0)
+                             // note: it should check X is smaller than 23bits (overflow)!
+ 
++                            // check address alignment to 4 bytes:
++                            if (doCheckUnsafe) {
++                                if ((addr_off & 3) != 0) {
++                                    MarlinUtils.logInfo("Misaligned Unsafe address: " + addr_off);
++                                }
++                            }
++
+                             // special case to encode entries into a single int:
+                             if (val == 0) {
+                                 _unsafe.putInt(addr_off,
+@@ -521,6 +527,13 @@
+         // note: last pixel exclusive (>= 0)
+         // note: it should check X is smaller than 23bits (overflow)!
+ 
++        // check address alignment to 4 bytes:
++        if (doCheckUnsafe) {
++            if ((addr_off & 3) != 0) {
++                MarlinUtils.logInfo("Misaligned Unsafe address: " + addr_off);
++            }
++        }
++
+         // special case to encode entries into a single int:
+         if (val == 0) {
+             _unsafe.putInt(addr_off,
+diff --git a/src/java.desktop/share/classes/sun/java2d/marlin/MarlinConst.java b/src/java.desktop/share/classes/sun/java2d/marlin/MarlinConst.java
+--- a/src/java.desktop/share/classes/sun/java2d/marlin/MarlinConst.java
++++ b/src/java.desktop/share/classes/sun/java2d/marlin/MarlinConst.java
+@@ -40,6 +40,8 @@
+     // log misc.Unsafe alloc/realloc/free
+     static final boolean logUnsafeMalloc = enableLogs
+         && MarlinProperties.isLogUnsafeMalloc();
++    // do check unsafe alignment:
++    static final boolean doCheckUnsafe = false;
+ 
+     // do statistics
+     static final boolean doStats = enableLogs && MarlinProperties.isDoStats();
