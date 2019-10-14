@@ -3,7 +3,7 @@
 OJDK8_PATH=openjdk-jdk8u
 PATCH_PATH=`pwd -P`
 
-cd ${OJDK8_PATH}/jdk
+cd ../${OJDK8_PATH}/jdk
 
 patch -p1 < ${PATCH_PATH}/m01.8143849.patch
 patch -p1 < ${PATCH_PATH}/m02.8145055.patch
