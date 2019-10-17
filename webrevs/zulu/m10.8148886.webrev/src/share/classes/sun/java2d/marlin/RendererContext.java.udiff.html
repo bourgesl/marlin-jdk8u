@@ -1,0 +1,210 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/RendererContext.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Version.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/RendererContext.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13689">13689</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8148886">8148886</a>: SEGV in sun.java2d.marlin.Renderer._endRendering
+Summary: handle reentrancy in both AAShapePipe and MarlinRenderingEngine using new sun.java2d.ReentrantContextProvider implementations
+Reviewed-by: flar, prr</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -1,7 +1,7 @@</span>
+ /*
+<span class="removed">- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.</span>
+<span class="new">+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.</span>
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License version 2 only, as
+  * published by the Free Software Foundation.  Oracle designates this
+</pre><hr /><pre>
+<span class="newmarker">@@ -24,52 +24,49 @@</span>
+  */
+ 
+ package sun.java2d.marlin;
+ 
+ import java.awt.geom.Path2D;
+<span class="removed">-import java.lang.ref.SoftReference;</span>
+ import java.lang.ref.WeakReference;
+ import java.util.concurrent.atomic.AtomicInteger;
+<span class="new">+import sun.java2d.ReentrantContext;</span>
+<span class="new">+import sun.java2d.ReentrantContextProvider;</span>
+ import static sun.java2d.marlin.ArrayCache.*;
+ import sun.java2d.marlin.MarlinRenderingEngine.NormalizingPathIterator;
+ import static sun.java2d.marlin.MarlinUtils.logInfo;
+ 
+ /**
+  * This class is a renderer context dedicated to a single thread
+  */
+<span class="removed">-final class RendererContext implements MarlinConst {</span>
+<span class="new">+final class RendererContext extends ReentrantContext implements MarlinConst {</span>
+ 
+     // RendererContext creation counter
+     private static final AtomicInteger contextCount = new AtomicInteger(1);
+     // RendererContext statistics
+     static final RendererStats stats = (doStats || doMonitors)
+                                        ? RendererStats.getInstance(): null;
+ 
+     private static final boolean USE_CACHE_HARD_REF = doStats
+<span class="removed">-        || (MarlinRenderingEngine.REF_TYPE == MarlinRenderingEngine.REF_WEAK);</span>
+<span class="new">+        || (MarlinRenderingEngine.REF_TYPE == ReentrantContextProvider.REF_WEAK);</span>
+ 
+     /**
+      * Create a new renderer context
+      *
+      * @return new RendererContext instance
+      */
+     static RendererContext createContext() {
+         final RendererContext newCtx = new RendererContext("ctx"
+                     + Integer.toString(contextCount.getAndIncrement()));
+<span class="new">+</span>
+         if (RendererContext.stats != null) {
+             RendererContext.stats.allContexts.add(newCtx);
+         }
+         return newCtx;
+     }
+ 
+     // context name (debugging purposes)
+     final String name;
+<span class="removed">-    /*</span>
+<span class="removed">-     * Reference to this instance (hard, soft or weak).</span>
+<span class="removed">-     * @see MarlinRenderingEngine#REF_TYPE</span>
+<span class="removed">-     */</span>
+<span class="removed">-    final Object reference;</span>
+     // dirty flag indicating an exception occured during pipeline in pathTo()
+     boolean dirty = false;
+     // dynamic array caches kept using weak reference (low memory footprint)
+     WeakReference&lt;ArrayCachesHolder&gt; refArrayCaches = null;
+     // hard reference to array caches (for statistics)
+</pre><hr /><pre>
+<span class="newmarker">@@ -97,11 +94,11 @@</span>
+     int stroking = 0;
+ 
+     /**
+      * Constructor
+      *
+<span class="removed">-     * @param name</span>
+<span class="new">+     * @param name context name (debugging)</span>
+      */
+     RendererContext(final String name) {
+         if (logCreateContext) {
+             MarlinUtils.logInfo("new RendererContext = " + name);
+         }
+</pre><hr /><pre>
+<span class="newmarker">@@ -120,24 +117,10 @@</span>
+         renderer = new Renderer(this); // needs MarlinCache from rdrCtx.cache
+         ptg = new MarlinTileGenerator(renderer);
+ 
+         stroker = new Stroker(this);
+         dasher = new Dasher(this);
+<span class="removed">-</span>
+<span class="removed">-        // Create the reference to this instance (hard, soft or weak):</span>
+<span class="removed">-        switch (MarlinRenderingEngine.REF_TYPE) {</span>
+<span class="removed">-            default:</span>
+<span class="removed">-            case MarlinRenderingEngine.REF_HARD:</span>
+<span class="removed">-                reference = this;</span>
+<span class="removed">-                break;</span>
+<span class="removed">-            case MarlinRenderingEngine.REF_SOFT:</span>
+<span class="removed">-                reference = new SoftReference&lt;RendererContext&gt;(this);</span>
+<span class="removed">-                break;</span>
+<span class="removed">-            case MarlinRenderingEngine.REF_WEAK:</span>
+<span class="removed">-                reference = new WeakReference&lt;RendererContext&gt;(this);</span>
+<span class="removed">-                break;</span>
+<span class="removed">-        }</span>
+     }
+ 
+     /**
+      * Disposes this renderer context:
+      * clean up before reusing this context
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Version.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

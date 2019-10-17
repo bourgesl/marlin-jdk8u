@@ -1,0 +1,217 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Cdiff src/share/classes/sun/java2d/marlin/Dasher.java</title>
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/ByteArrayCache.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/FloatArrayCache.java.cdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Dasher.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+        <pre>
+<hr /><span class="oldmarker">*** 66,93 ****</span>
+      private final float[] curCurvepts;
+  
+      // per-thread renderer context
+      final RendererContext rdrCtx;
+  
+<span class="removed">-     // dashes array (dirty)</span>
+<span class="removed">-     final float[] dashes_initial = new float[INITIAL_ARRAY];</span>
+<span class="removed">- </span>
+      // flag to recycle dash array copy
+      boolean recycleDashes;
+  
+<span class="changed">!     // per-thread initial arrays (large enough to satisfy most usages</span>
+<span class="changed">!     // +1 to avoid recycling in Helpers.widenArray()</span>
+<span class="changed">!     private final float[] firstSegmentsBuffer_initial = new float[INITIAL_ARRAY + 1];</span>
+  
+      /**
+       * Constructs a &lt;code&gt;Dasher&lt;/code&gt;.
+       * @param rdrCtx per-thread renderer context
+       */
+      Dasher(final RendererContext rdrCtx) {
+          this.rdrCtx = rdrCtx;
+  
+<span class="changed">!         firstSegmentsBuffer = firstSegmentsBuffer_initial;</span>
+  
+          // we need curCurvepts to be able to contain 2 curves because when
+          // dashing curves, we need to subdivide it
+          curCurvepts = new float[8 * 2];
+      }
+<span class="newmarker">--- 66,94 ----</span>
+      private final float[] curCurvepts;
+  
+      // per-thread renderer context
+      final RendererContext rdrCtx;
+  
+      // flag to recycle dash array copy
+      boolean recycleDashes;
+  
+<span class="changed">!     // dashes ref (dirty)</span>
+<span class="changed">!     final FloatArrayCache.Reference dashes_ref;</span>
+<span class="changed">!     // firstSegmentsBuffer ref (dirty)</span>
+<span class="changed">!     final FloatArrayCache.Reference firstSegmentsBuffer_ref;</span>
+  
+      /**
+       * Constructs a &lt;code&gt;Dasher&lt;/code&gt;.
+       * @param rdrCtx per-thread renderer context
+       */
+      Dasher(final RendererContext rdrCtx) {
+          this.rdrCtx = rdrCtx;
+  
+<span class="changed">!         dashes_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_ARRAY); // 1K</span>
+<span class="changed">! </span>
+<span class="changed">!         firstSegmentsBuffer_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_ARRAY); // 1K</span>
+<span class="changed">!         firstSegmentsBuffer     = firstSegmentsBuffer_ref.initial;</span>
+  
+          // we need curCurvepts to be able to contain 2 curves because when
+          // dashing curves, we need to subdivide it
+          curCurvepts = new float[8 * 2];
+      }
+<hr /><span class="oldmarker">*** 140,161 ****</span>
+       */
+      void dispose() {
+          if (DO_CLEAN_DIRTY) {
+              // Force zero-fill dirty arrays:
+              Arrays.fill(curCurvepts, 0f);
+<span class="removed">-             Arrays.fill(firstSegmentsBuffer, 0f);</span>
+          }
+          // Return arrays:
+<span class="changed">!         if (recycleDashes &amp;&amp; dash != dashes_initial) {</span>
+<span class="changed">!             rdrCtx.putDirtyFloatArray(dash);</span>
+<span class="changed">!             dash = null;</span>
+<span class="changed">!         }</span>
+<span class="changed">! </span>
+<span class="changed">!         if (firstSegmentsBuffer != firstSegmentsBuffer_initial) {</span>
+<span class="changed">!             rdrCtx.putDirtyFloatArray(firstSegmentsBuffer);</span>
+<span class="changed">!             firstSegmentsBuffer = firstSegmentsBuffer_initial;</span>
+          }
+      }
+  
+      @Override
+      public void moveTo(float x0, float y0) {
+          if (firstSegidx &gt; 0) {
+<span class="newmarker">--- 141,156 ----</span>
+       */
+      void dispose() {
+          if (DO_CLEAN_DIRTY) {
+              // Force zero-fill dirty arrays:
+              Arrays.fill(curCurvepts, 0f);
+          }
+          // Return arrays:
+<span class="changed">!         if (recycleDashes) {</span>
+<span class="changed">!             dash = dashes_ref.putArray(dash);</span>
+          }
+<span class="new">+         firstSegmentsBuffer = firstSegmentsBuffer_ref.putArray(firstSegmentsBuffer);</span>
+      }
+  
+      @Override
+      public void moveTo(float x0, float y0) {
+          if (firstSegidx &gt; 0) {
+<hr /><span class="oldmarker">*** 220,230 ****</span>
+                      if (DO_STATS) {
+                          rdrCtx.stats.stat_array_dasher_firstSegmentsBuffer
+                              .add(segIdx + len);
+                      }
+                      firstSegmentsBuffer = buf
+<span class="changed">!                         = rdrCtx.widenDirtyFloatArray(buf, segIdx, segIdx + len);</span>
+                  }
+                  buf[segIdx++] = type;
+                  len--;
+                  // small arraycopy (2, 4 or 6) but with offset:
+                  System.arraycopy(pts, off, buf, segIdx, len);
+<span class="newmarker">--- 215,226 ----</span>
+                      if (DO_STATS) {
+                          rdrCtx.stats.stat_array_dasher_firstSegmentsBuffer
+                              .add(segIdx + len);
+                      }
+                      firstSegmentsBuffer = buf
+<span class="changed">!                         = firstSegmentsBuffer_ref.widenArray(buf, segIdx,</span>
+<span class="changed">!                                                              segIdx + len);</span>
+                  }
+                  buf[segIdx++] = type;
+                  len--;
+                  // small arraycopy (2, 4 or 6) but with offset:
+                  System.arraycopy(pts, off, buf, segIdx, len);
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/ByteArrayCache.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/FloatArrayCache.java.cdiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

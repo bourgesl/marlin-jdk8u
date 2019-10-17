@@ -1,0 +1,663 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Dasher.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/ByteArrayCache.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+<span class="removed">  25 </span>
+  26 package sun.java2d.marlin;
+  27 
+<span class="changed">  28 import java.util.ArrayDeque;</span>
+<span class="changed">  29 import java.util.Arrays;</span>
+<span class="changed">  30 import static sun.java2d.marlin.MarlinUtils.logException;</span>
+  31 import static sun.java2d.marlin.MarlinUtils.logInfo;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  32 
+  33 final class ByteArrayCache implements MarlinConst {
+  34 
+<span class="changed">  35     private final int arraySize;</span>
+<span class="changed">  36     private final ArrayDeque&lt;byte[]&gt; byteArrays;</span>
+<span class="changed">  37     // stats</span>
+<span class="changed">  38     private int getOp = 0;</span>
+<span class="changed">  39     private int createOp = 0;</span>
+<span class="changed">  40     private int returnOp = 0;</span>
+  41 
+<span class="changed">  42     void dumpStats() {</span>
+<span class="changed">  43         if (getOp &gt; 0) {</span>
+<span class="changed">  44             logInfo("ByteArrayCache[" + arraySize + "]: get: " + getOp</span>
+<span class="changed">  45                     + " created: " + createOp + " - returned: " + returnOp</span>
+<span class="changed">  46                     + " :: cache size: " + byteArrays.size());</span>
+  47         }
+
+
+
+
+  48     }
+  49 
+<span class="changed">  50     ByteArrayCache(final int arraySize) {</span>
+<span class="changed">  51         this.arraySize = arraySize;</span>
+<span class="changed">  52         // small but enough: almost 1 cache line</span>
+<span class="changed">  53         this.byteArrays = new ArrayDeque&lt;byte[]&gt;(6);</span>
+
+
+
+
+
+
+
+  54     }
+  55 
+<span class="changed">  56     byte[] getArray() {</span>
+<span class="changed">  57         if (DO_STATS) {</span>
+<span class="changed">  58             getOp++;</span>
+
+  59         }
+  60 
+<span class="changed">  61         // use cache:</span>
+<span class="changed">  62         final byte[] array = byteArrays.pollLast();</span>
+<span class="changed">  63         if (array != null) {</span>
+<span class="changed">  64             return array;</span>
+  65         }
+  66 
+
+
+
+
+
+
+
+
+
+
+
+  67         if (DO_STATS) {
+<span class="changed">  68             createOp++;</span>
+  69         }
+<span class="removed">  70 </span>
+<span class="removed">  71         return new byte[arraySize];</span>
+  72     }
+  73 
+<span class="changed">  74     void putDirtyArray(final byte[] array, final int length) {</span>
+<span class="changed">  75         if (length != arraySize) {</span>
+<span class="changed">  76             if (DO_CHECKS) {</span>
+<span class="changed">  77                 MarlinUtils.logInfo("ArrayCache: bad length = " + length);</span>
+  78             }
+<span class="changed">  79             return;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  80         }
+  81         if (DO_STATS) {
+<span class="changed">  82             returnOp++;</span>
+  83         }
+  84 
+<span class="changed">  85         // NO clean-up of array data = DIRTY ARRAY</span>
+
+
+
+
+
+
+
+
+  86 
+<span class="changed">  87         if (DO_CLEAN_DIRTY) {</span>
+<span class="changed">  88             // Force zero-fill dirty arrays:</span>
+<span class="changed">  89             Arrays.fill(array, 0, array.length, BYTE_0);</span>
+
+
+
+
+  90         }
+  91 
+<span class="changed">  92         // fill cache:</span>
+<span class="changed">  93         byteArrays.addLast(array);</span>
+
+
+  94     }
+  95 
+<span class="changed">  96     void putArray(final byte[] array, final int length,</span>
+<span class="changed">  97                   final int fromIndex, final int toIndex)</span>
+  98     {
+<span class="changed">  99         if (length != arraySize) {</span>
+<span class="changed"> 100             if (DO_CHECKS) {</span>
+<span class="changed"> 101                 MarlinUtils.logInfo("ArrayCache: bad length = " + length);</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 102             }
+
+
+
+
+
+
+
+
+
+
+
+ 103             return;
+ 104         }
+ 105         if (DO_STATS) {
+<span class="changed"> 106             returnOp++;</span>
+ 107         }
+
+
+
+ 108 
+<span class="changed"> 109         // clean-up array of dirty part[fromIndex; toIndex[</span>
+<span class="changed"> 110         fill(array, fromIndex, toIndex, BYTE_0);</span>
+
+
+
+
+
+
+
+ 111 
+<span class="changed"> 112         // fill cache:</span>
+<span class="changed"> 113         byteArrays.addLast(array);</span>
+
+
+
+
+ 114     }
+ 115 
+ 116     static void fill(final byte[] array, final int fromIndex,
+ 117                      final int toIndex, final byte value)
+ 118     {
+ 119         // clear array data:
+<span class="removed"> 120         /*</span>
+<span class="removed"> 121          * Arrays.fill is faster than System.arraycopy(empty array)</span>
+<span class="removed"> 122          * or Unsafe.setMemory(byte 0)</span>
+<span class="removed"> 123          */</span>
+<span class="removed"> 124         if (toIndex != 0) {</span>
+ 125             Arrays.fill(array, fromIndex, toIndex, value);
+<span class="removed"> 126         }</span>
+<span class="removed"> 127 </span>
+ 128         if (DO_CHECKS) {
+ 129             check(array, fromIndex, toIndex, value);
+ 130         }
+ 131     }
+ 132 
+ 133     static void check(final byte[] array, final int fromIndex,
+ 134                       final int toIndex, final byte value)
+ 135     {
+ 136         if (DO_CHECKS) {
+ 137             // check zero on full array:
+ 138             for (int i = 0; i &lt; array.length; i++) {
+ 139                 if (array[i] != value) {
+ 140                     logException("Invalid value at: " + i + " = " + array[i]
+ 141                             + " from: " + fromIndex + " to: " + toIndex + "\n"
+ 142                             + Arrays.toString(array), new Throwable());
+ 143 
+ 144                     // ensure array is correctly filled:
+ 145                     Arrays.fill(array, value);
+ 146 
+ 147                     return;
+ 148                 }
+ 149             }
+ 150         }
+ 151     }
+
+
+
+
+ 152 }
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+
+  25 package sun.java2d.marlin;
+  26 
+<span class="changed">  27 import static sun.java2d.marlin.ArrayCacheConst.ARRAY_SIZES;</span>
+<span class="changed">  28 import static sun.java2d.marlin.ArrayCacheConst.BUCKETS;</span>
+<span class="changed">  29 import static sun.java2d.marlin.ArrayCacheConst.MAX_ARRAY_SIZE;</span>
+  30 import static sun.java2d.marlin.MarlinUtils.logInfo;
+<span class="new">  31 import static sun.java2d.marlin.MarlinUtils.logException;</span>
+<span class="new">  32 </span>
+<span class="new">  33 import java.lang.ref.WeakReference;</span>
+<span class="new">  34 import java.util.Arrays;</span>
+<span class="new">  35 </span>
+<span class="new">  36 import sun.java2d.marlin.ArrayCacheConst.BucketStats;</span>
+<span class="new">  37 import sun.java2d.marlin.ArrayCacheConst.CacheStats;</span>
+<span class="new">  38 </span>
+<span class="new">  39 /*</span>
+<span class="new">  40  * Note that the [BYTE/INT/FLOAT]ArrayCache files are nearly identical except</span>
+<span class="new">  41  * for a few type and name differences. Typically, the [BYTE]ArrayCache.java file</span>
+<span class="new">  42  * is edited manually and then [INT]ArrayCache.java and [FLOAT]ArrayCache.java</span>
+<span class="new">  43  * files are generated with the following command lines:</span>
+<span class="new">  44  */</span>
+<span class="new">  45 // % sed -e 's/(b\yte)[ ]*//g' -e 's/b\yte/int/g' -e 's/B\yte/Int/g' &lt; B\yteArrayCache.java &gt; IntArrayCache.java</span>
+<span class="new">  46 // % sed -e 's/(b\yte)[ ]*/(float) /g' -e 's/b\yte/float/g' -e 's/B\yte/Float/g' &lt; B\yteArrayCache.java &gt; FloatArrayCache.java</span>
+  47 
+  48 final class ByteArrayCache implements MarlinConst {
+  49 
+<span class="changed">  50     final boolean clean;</span>
+<span class="changed">  51     private final int bucketCapacity;</span>
+<span class="changed">  52     private WeakReference&lt;Bucket[]&gt; refBuckets = null;</span>
+<span class="changed">  53     final CacheStats stats;</span>
+
+
+  54 
+<span class="changed">  55     ByteArrayCache(final boolean clean, final int bucketCapacity) {</span>
+<span class="changed">  56         this.clean = clean;</span>
+<span class="changed">  57         this.bucketCapacity = bucketCapacity;</span>
+<span class="changed">  58         this.stats = (DO_STATS) ?</span>
+<span class="changed">  59             new CacheStats(getLogPrefix(clean) + "ByteArrayCache") : null;</span>
+  60     }
+<span class="new">  61 </span>
+<span class="new">  62     Bucket getCacheBucket(final int length) {</span>
+<span class="new">  63         final int bucket = ArrayCacheConst.getBucket(length);</span>
+<span class="new">  64         return getBuckets()[bucket];</span>
+  65     }
+  66 
+<span class="changed">  67     private Bucket[] getBuckets() {</span>
+<span class="changed">  68         // resolve reference:</span>
+<span class="changed">  69         Bucket[] buckets = (refBuckets != null) ? refBuckets.get() : null;</span>
+<span class="changed">  70 </span>
+<span class="changed">  71         // create a new buckets ?</span>
+<span class="changed">  72         if (buckets == null) {</span>
+<span class="changed">  73             buckets = new Bucket[BUCKETS];</span>
+<span class="changed">  74 </span>
+<span class="changed">  75             for (int i = 0; i &lt; BUCKETS; i++) {</span>
+<span class="changed">  76                 buckets[i] = new Bucket(clean, ARRAY_SIZES[i], bucketCapacity,</span>
+<span class="changed">  77                         (DO_STATS) ? stats.bucketStats[i] : null);</span>
+  78             }
+  79 
+<span class="changed">  80             // update weak reference:</span>
+<span class="changed">  81             refBuckets = new WeakReference&lt;Bucket[]&gt;(buckets);</span>
+<span class="changed">  82         }</span>
+<span class="changed">  83         return buckets;</span>
+  84     }
+  85 
+<span class="changed">  86     Reference createRef(final int initialSize) {</span>
+<span class="changed">  87         return new Reference(this, initialSize);</span>
+
+
+  88     }
+  89 
+<span class="new">  90     static final class Reference {</span>
+<span class="new">  91 </span>
+<span class="new">  92         // initial array reference (direct access)</span>
+<span class="new">  93         final byte[] initial;</span>
+<span class="new">  94         private final boolean clean;</span>
+<span class="new">  95         private final ByteArrayCache cache;</span>
+<span class="new">  96 </span>
+<span class="new">  97         Reference(final ByteArrayCache cache, final int initialSize) {</span>
+<span class="new">  98             this.cache = cache;</span>
+<span class="new">  99             this.clean = cache.clean;</span>
+<span class="new"> 100             this.initial = createArray(initialSize, clean);</span>
+ 101             if (DO_STATS) {
+<span class="changed"> 102                 cache.stats.totalInitial += initialSize;</span>
+ 103             }
+
+
+ 104         }
+ 105 
+<span class="changed"> 106         byte[] getArray(final int length) {</span>
+<span class="changed"> 107             if (length &lt;= MAX_ARRAY_SIZE) {</span>
+<span class="changed"> 108                 return cache.getCacheBucket(length).getArray();</span>
+
+ 109             }
+<span class="changed"> 110             if (DO_STATS) {</span>
+<span class="changed"> 111                 cache.stats.oversize++;</span>
+<span class="changed"> 112             }</span>
+<span class="changed"> 113             if (DO_LOG_OVERSIZE) {</span>
+<span class="changed"> 114                 logInfo(getLogPrefix(clean) + "ByteArrayCache: "</span>
+<span class="changed"> 115                         + "getArray[oversize]: length=\t" + length);</span>
+<span class="changed"> 116             }</span>
+<span class="changed"> 117             return createArray(length, clean);</span>
+<span class="changed"> 118         }</span>
+<span class="changed"> 119 </span>
+<span class="changed"> 120         byte[] widenArray(final byte[] array, final int usedSize,</span>
+<span class="changed"> 121                           final int needSize)</span>
+<span class="changed"> 122         {</span>
+<span class="changed"> 123             final int length = array.length;</span>
+<span class="changed"> 124             if (DO_CHECKS &amp;&amp; length &gt;= needSize) {</span>
+<span class="changed"> 125                 return array;</span>
+ 126             }
+ 127             if (DO_STATS) {
+<span class="changed"> 128                 cache.stats.resize++;</span>
+ 129             }
+ 130 
+<span class="changed"> 131             // maybe change bucket:</span>
+<span class="changed"> 132             // ensure getNewSize() &gt; newSize:</span>
+<span class="changed"> 133             final byte[] res = getArray(ArrayCacheConst.getNewSize(usedSize, needSize));</span>
+<span class="changed"> 134 </span>
+<span class="changed"> 135             // use wrapper to ensure proper copy:</span>
+<span class="changed"> 136             System.arraycopy(array, 0, res, 0, usedSize); // copy only used elements</span>
+<span class="changed"> 137 </span>
+<span class="changed"> 138             // maybe return current array:</span>
+<span class="changed"> 139             putArray(array, 0, usedSize); // ensure array is cleared</span>
+ 140 
+<span class="changed"> 141             if (DO_LOG_WIDEN_ARRAY) {</span>
+<span class="changed"> 142                 logInfo(getLogPrefix(clean) + "ByteArrayCache: "</span>
+<span class="changed"> 143                         + "widenArray[" + res.length</span>
+<span class="changed"> 144                         + "]: usedSize=\t" + usedSize + "\tlength=\t" + length</span>
+<span class="changed"> 145                         + "\tneeded length=\t" + needSize);</span>
+<span class="changed"> 146             }</span>
+<span class="changed"> 147             return res;</span>
+ 148         }
+ 149 
+<span class="changed"> 150         byte[] putArray(final byte[] array)</span>
+<span class="changed"> 151         {</span>
+<span class="changed"> 152             // dirty array helper:</span>
+<span class="changed"> 153             return putArray(array, 0, array.length);</span>
+ 154         }
+ 155 
+<span class="changed"> 156         byte[] putArray(final byte[] array, final int fromIndex,</span>
+<span class="changed"> 157                         final int toIndex)</span>
+ 158         {
+<span class="changed"> 159             if (array.length &lt;= MAX_ARRAY_SIZE) {</span>
+<span class="changed"> 160                 if ((clean || DO_CLEAN_DIRTY) &amp;&amp; (toIndex != 0)) {</span>
+<span class="changed"> 161                     // clean-up array of dirty part[fromIndex; toIndex[</span>
+<span class="changed"> 162                     fill(array, fromIndex, toIndex, (byte)0);</span>
+<span class="changed"> 163                 }</span>
+<span class="changed"> 164                 // ensure to never store initial arrays in cache:</span>
+<span class="changed"> 165                 if (array != initial) {</span>
+<span class="changed"> 166                     cache.getCacheBucket(array.length).putArray(array);</span>
+<span class="changed"> 167                 }</span>
+<span class="changed"> 168             }</span>
+<span class="changed"> 169             return initial;</span>
+<span class="changed"> 170         }</span>
+<span class="changed"> 171     }</span>
+<span class="changed"> 172 </span>
+<span class="changed"> 173     static final class Bucket {</span>
+<span class="changed"> 174 </span>
+<span class="changed"> 175         private int tail = 0;</span>
+<span class="changed"> 176         private final int arraySize;</span>
+<span class="changed"> 177         private final boolean clean;</span>
+<span class="changed"> 178         private final byte[][] arrays;</span>
+<span class="changed"> 179         private final BucketStats stats;</span>
+<span class="changed"> 180 </span>
+<span class="changed"> 181         Bucket(final boolean clean, final int arraySize,</span>
+<span class="changed"> 182                final int capacity, final BucketStats stats)</span>
+<span class="changed"> 183         {</span>
+<span class="changed"> 184             this.arraySize = arraySize;</span>
+<span class="changed"> 185             this.clean = clean;</span>
+<span class="changed"> 186             this.stats = stats;</span>
+<span class="changed"> 187             this.arrays = new byte[capacity][];</span>
+<span class="changed"> 188         }</span>
+<span class="changed"> 189 </span>
+<span class="changed"> 190         byte[] getArray() {</span>
+<span class="changed"> 191             if (DO_STATS) {</span>
+<span class="changed"> 192                 stats.getOp++;</span>
+<span class="changed"> 193             }</span>
+<span class="changed"> 194             // use cache:</span>
+<span class="changed"> 195             if (tail != 0) {</span>
+<span class="changed"> 196                 final byte[] array = arrays[--tail];</span>
+<span class="changed"> 197                 arrays[tail] = null;</span>
+<span class="changed"> 198                 return array;</span>
+ 199             }
+<span class="new"> 200             if (DO_STATS) {</span>
+<span class="new"> 201                 stats.createOp++;</span>
+<span class="new"> 202             }</span>
+<span class="new"> 203             return createArray(arraySize, clean);</span>
+<span class="new"> 204         }</span>
+<span class="new"> 205 </span>
+<span class="new"> 206         void putArray(final byte[] array)</span>
+<span class="new"> 207         {</span>
+<span class="new"> 208             if (DO_CHECKS &amp;&amp; (array.length != arraySize)) {</span>
+<span class="new"> 209                 logInfo(getLogPrefix(clean) + "ByteArrayCache: "</span>
+<span class="new"> 210                         + "bad length = " + array.length);</span>
+ 211                 return;
+ 212             }
+ 213             if (DO_STATS) {
+<span class="changed"> 214                 stats.returnOp++;</span>
+ 215             }
+<span class="new"> 216             // fill cache:</span>
+<span class="new"> 217             if (arrays.length &gt; tail) {</span>
+<span class="new"> 218                 arrays[tail++] = array;</span>
+ 219 
+<span class="changed"> 220                 if (DO_STATS) {</span>
+<span class="changed"> 221                     stats.updateMaxSize(tail);</span>
+<span class="changed"> 222                 }</span>
+<span class="changed"> 223             } else if (DO_CHECKS) {</span>
+<span class="changed"> 224                 logInfo(getLogPrefix(clean) + "ByteArrayCache: "</span>
+<span class="changed"> 225                         + "array capacity exceeded !");</span>
+<span class="changed"> 226             }</span>
+<span class="changed"> 227         }</span>
+<span class="changed"> 228     }</span>
+ 229 
+<span class="changed"> 230     static byte[] createArray(final int length, final boolean clean) {</span>
+<span class="changed"> 231         //if (clean) {</span>
+<span class="changed"> 232             return new byte[length];</span>
+<span class="changed"> 233         //}</span>
+<span class="changed"> 234         // use JDK9 Unsafe.allocateUninitializedArray(class, length):</span>
+<span class="changed"> 235         //return (byte[]) OffHeapArray.UNSAFE.allocateUninitializedArray(byte.class, length);</span>
+ 236     }
+ 237 
+ 238     static void fill(final byte[] array, final int fromIndex,
+ 239                      final int toIndex, final byte value)
+ 240     {
+ 241         // clear array data:
+
+
+
+
+
+ 242         Arrays.fill(array, fromIndex, toIndex, value);
+
+
+ 243         if (DO_CHECKS) {
+ 244             check(array, fromIndex, toIndex, value);
+ 245         }
+ 246     }
+ 247 
+ 248     static void check(final byte[] array, final int fromIndex,
+ 249                       final int toIndex, final byte value)
+ 250     {
+ 251         if (DO_CHECKS) {
+ 252             // check zero on full array:
+ 253             for (int i = 0; i &lt; array.length; i++) {
+ 254                 if (array[i] != value) {
+ 255                     logException("Invalid value at: " + i + " = " + array[i]
+ 256                             + " from: " + fromIndex + " to: " + toIndex + "\n"
+ 257                             + Arrays.toString(array), new Throwable());
+ 258 
+ 259                     // ensure array is correctly filled:
+ 260                     Arrays.fill(array, value);
+ 261 
+ 262                     return;
+ 263                 }
+ 264             }
+ 265         }
+ 266     }
+<span class="new"> 267 </span>
+<span class="new"> 268     static String getLogPrefix(final boolean clean) {</span>
+<span class="new"> 269         return (clean) ? "Clean" : "Dirty";</span>
+<span class="new"> 270     }</span>
+ 271 }
+</pre></td>
+</tr></table>
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Dasher.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

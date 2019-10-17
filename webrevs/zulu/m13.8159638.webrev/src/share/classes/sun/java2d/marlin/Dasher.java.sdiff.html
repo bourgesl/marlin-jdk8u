@@ -1,0 +1,425 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/ByteArrayCache.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/FloatArrayCache.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Dasher.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  51     private float startPhase;
+  52     private boolean startDashOn;
+  53     private int startIdx;
+  54 
+  55     private boolean starting;
+  56     private boolean needsMoveTo;
+  57 
+  58     private int idx;
+  59     private boolean dashOn;
+  60     private float phase;
+  61 
+  62     private float sx, sy;
+  63     private float x0, y0;
+  64 
+  65     // temporary storage for the current curve
+  66     private final float[] curCurvepts;
+  67 
+  68     // per-thread renderer context
+  69     final RendererContext rdrCtx;
+  70 
+<span class="removed">  71     // dashes array (dirty)</span>
+<span class="removed">  72     final float[] dashes_initial = new float[INITIAL_ARRAY];</span>
+<span class="removed">  73 </span>
+  74     // flag to recycle dash array copy
+  75     boolean recycleDashes;
+  76 
+<span class="changed">  77     // per-thread initial arrays (large enough to satisfy most usages</span>
+<span class="changed">  78     // +1 to avoid recycling in Helpers.widenArray()</span>
+<span class="changed">  79     private final float[] firstSegmentsBuffer_initial = new float[INITIAL_ARRAY + 1];</span>
+
+  80 
+  81     /**
+  82      * Constructs a &lt;code&gt;Dasher&lt;/code&gt;.
+  83      * @param rdrCtx per-thread renderer context
+  84      */
+  85     Dasher(final RendererContext rdrCtx) {
+  86         this.rdrCtx = rdrCtx;
+  87 
+<span class="changed">  88         firstSegmentsBuffer = firstSegmentsBuffer_initial;</span>
+
+
+
+  89 
+  90         // we need curCurvepts to be able to contain 2 curves because when
+  91         // dashing curves, we need to subdivide it
+  92         curCurvepts = new float[8 * 2];
+  93     }
+  94 
+  95     /**
+  96      * Initialize the &lt;code&gt;Dasher&lt;/code&gt;.
+  97      *
+  98      * @param out an output &lt;code&gt;PathConsumer2D&lt;/code&gt;.
+  99      * @param dash an array of &lt;code&gt;float&lt;/code&gt;s containing the dash pattern
+ 100      * @param dashLen length of the given dash array
+ 101      * @param phase a &lt;code&gt;float&lt;/code&gt; containing the dash phase
+ 102      * @param recycleDashes true to indicate to recycle the given dash array
+ 103      * @return this instance
+ 104      */
+ 105     Dasher init(final PathConsumer2D out, float[] dash, int dashLen,
+ 106                 float phase, boolean recycleDashes)
+ 107     {
+ 108         if (phase &lt; 0f) {
+
+</pre><hr></hr><pre>
+ 125         this.startPhase = this.phase = phase;
+ 126         this.startDashOn = dashOn;
+ 127         this.startIdx = idx;
+ 128         this.starting = true;
+ 129         needsMoveTo = false;
+ 130         firstSegidx = 0;
+ 131 
+ 132         this.recycleDashes = recycleDashes;
+ 133 
+ 134         return this; // fluent API
+ 135     }
+ 136 
+ 137     /**
+ 138      * Disposes this dasher:
+ 139      * clean up before reusing this instance
+ 140      */
+ 141     void dispose() {
+ 142         if (DO_CLEAN_DIRTY) {
+ 143             // Force zero-fill dirty arrays:
+ 144             Arrays.fill(curCurvepts, 0f);
+<span class="removed"> 145             Arrays.fill(firstSegmentsBuffer, 0f);</span>
+ 146         }
+ 147         // Return arrays:
+<span class="changed"> 148         if (recycleDashes &amp;&amp; dash != dashes_initial) {</span>
+<span class="changed"> 149             rdrCtx.putDirtyFloatArray(dash);</span>
+<span class="changed"> 150             dash = null;</span>
+<span class="changed"> 151         }</span>
+<span class="changed"> 152 </span>
+<span class="changed"> 153         if (firstSegmentsBuffer != firstSegmentsBuffer_initial) {</span>
+<span class="changed"> 154             rdrCtx.putDirtyFloatArray(firstSegmentsBuffer);</span>
+<span class="changed"> 155             firstSegmentsBuffer = firstSegmentsBuffer_initial;</span>
+ 156         }
+
+ 157     }
+ 158 
+ 159     @Override
+ 160     public void moveTo(float x0, float y0) {
+ 161         if (firstSegidx &gt; 0) {
+ 162             out.moveTo(sx, sy);
+ 163             emitFirstSegments();
+ 164         }
+ 165         needsMoveTo = true;
+ 166         this.idx = startIdx;
+ 167         this.dashOn = this.startDashOn;
+ 168         this.phase = this.startPhase;
+ 169         this.sx = this.x0 = x0;
+ 170         this.sy = this.y0 = y0;
+ 171         this.starting = true;
+ 172     }
+ 173 
+ 174     private void emitSeg(float[] buf, int off, int type) {
+ 175         switch (type) {
+ 176         case 8:
+
+</pre><hr></hr><pre>
+ 205     // buffer below.
+ 206     private float[] firstSegmentsBuffer; // dynamic array
+ 207     private int firstSegidx;
+ 208 
+ 209     // precondition: pts must be in relative coordinates (relative to x0,y0)
+ 210     // fullCurve is true iff the curve in pts has not been split.
+ 211     private void goTo(float[] pts, int off, final int type) {
+ 212         float x = pts[off + type - 4];
+ 213         float y = pts[off + type - 3];
+ 214         if (dashOn) {
+ 215             if (starting) {
+ 216                 int len = type - 2 + 1;
+ 217                 int segIdx = firstSegidx;
+ 218                 float[] buf = firstSegmentsBuffer;
+ 219                 if (segIdx + len  &gt; buf.length) {
+ 220                     if (DO_STATS) {
+ 221                         rdrCtx.stats.stat_array_dasher_firstSegmentsBuffer
+ 222                             .add(segIdx + len);
+ 223                     }
+ 224                     firstSegmentsBuffer = buf
+<span class="changed"> 225                         = rdrCtx.widenDirtyFloatArray(buf, segIdx, segIdx + len);</span>
+
+ 226                 }
+ 227                 buf[segIdx++] = type;
+ 228                 len--;
+ 229                 // small arraycopy (2, 4 or 6) but with offset:
+ 230                 System.arraycopy(pts, off, buf, segIdx, len);
+ 231                 segIdx += len;
+ 232                 firstSegidx = segIdx;
+ 233             } else {
+ 234                 if (needsMoveTo) {
+ 235                     out.moveTo(x0, y0);
+ 236                     needsMoveTo = false;
+ 237                 }
+ 238                 emitSeg(pts, off, type);
+ 239             }
+ 240         } else {
+ 241             starting = false;
+ 242             needsMoveTo = true;
+ 243         }
+ 244         this.x0 = x;
+ 245         this.y0 = y;
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  51     private float startPhase;
+  52     private boolean startDashOn;
+  53     private int startIdx;
+  54 
+  55     private boolean starting;
+  56     private boolean needsMoveTo;
+  57 
+  58     private int idx;
+  59     private boolean dashOn;
+  60     private float phase;
+  61 
+  62     private float sx, sy;
+  63     private float x0, y0;
+  64 
+  65     // temporary storage for the current curve
+  66     private final float[] curCurvepts;
+  67 
+  68     // per-thread renderer context
+  69     final RendererContext rdrCtx;
+  70 
+
+
+
+  71     // flag to recycle dash array copy
+  72     boolean recycleDashes;
+  73 
+<span class="changed">  74     // dashes ref (dirty)</span>
+<span class="changed">  75     final FloatArrayCache.Reference dashes_ref;</span>
+<span class="changed">  76     // firstSegmentsBuffer ref (dirty)</span>
+<span class="changed">  77     final FloatArrayCache.Reference firstSegmentsBuffer_ref;</span>
+  78 
+  79     /**
+  80      * Constructs a &lt;code&gt;Dasher&lt;/code&gt;.
+  81      * @param rdrCtx per-thread renderer context
+  82      */
+  83     Dasher(final RendererContext rdrCtx) {
+  84         this.rdrCtx = rdrCtx;
+  85 
+<span class="changed">  86         dashes_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_ARRAY); // 1K</span>
+<span class="changed">  87 </span>
+<span class="changed">  88         firstSegmentsBuffer_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_ARRAY); // 1K</span>
+<span class="changed">  89         firstSegmentsBuffer     = firstSegmentsBuffer_ref.initial;</span>
+  90 
+  91         // we need curCurvepts to be able to contain 2 curves because when
+  92         // dashing curves, we need to subdivide it
+  93         curCurvepts = new float[8 * 2];
+  94     }
+  95 
+  96     /**
+  97      * Initialize the &lt;code&gt;Dasher&lt;/code&gt;.
+  98      *
+  99      * @param out an output &lt;code&gt;PathConsumer2D&lt;/code&gt;.
+ 100      * @param dash an array of &lt;code&gt;float&lt;/code&gt;s containing the dash pattern
+ 101      * @param dashLen length of the given dash array
+ 102      * @param phase a &lt;code&gt;float&lt;/code&gt; containing the dash phase
+ 103      * @param recycleDashes true to indicate to recycle the given dash array
+ 104      * @return this instance
+ 105      */
+ 106     Dasher init(final PathConsumer2D out, float[] dash, int dashLen,
+ 107                 float phase, boolean recycleDashes)
+ 108     {
+ 109         if (phase &lt; 0f) {
+
+</pre><hr></hr><pre>
+ 126         this.startPhase = this.phase = phase;
+ 127         this.startDashOn = dashOn;
+ 128         this.startIdx = idx;
+ 129         this.starting = true;
+ 130         needsMoveTo = false;
+ 131         firstSegidx = 0;
+ 132 
+ 133         this.recycleDashes = recycleDashes;
+ 134 
+ 135         return this; // fluent API
+ 136     }
+ 137 
+ 138     /**
+ 139      * Disposes this dasher:
+ 140      * clean up before reusing this instance
+ 141      */
+ 142     void dispose() {
+ 143         if (DO_CLEAN_DIRTY) {
+ 144             // Force zero-fill dirty arrays:
+ 145             Arrays.fill(curCurvepts, 0f);
+
+ 146         }
+ 147         // Return arrays:
+<span class="changed"> 148         if (recycleDashes) {</span>
+<span class="changed"> 149             dash = dashes_ref.putArray(dash);</span>
+
+
+
+
+
+
+ 150         }
+<span class="new"> 151         firstSegmentsBuffer = firstSegmentsBuffer_ref.putArray(firstSegmentsBuffer);</span>
+ 152     }
+ 153 
+ 154     @Override
+ 155     public void moveTo(float x0, float y0) {
+ 156         if (firstSegidx &gt; 0) {
+ 157             out.moveTo(sx, sy);
+ 158             emitFirstSegments();
+ 159         }
+ 160         needsMoveTo = true;
+ 161         this.idx = startIdx;
+ 162         this.dashOn = this.startDashOn;
+ 163         this.phase = this.startPhase;
+ 164         this.sx = this.x0 = x0;
+ 165         this.sy = this.y0 = y0;
+ 166         this.starting = true;
+ 167     }
+ 168 
+ 169     private void emitSeg(float[] buf, int off, int type) {
+ 170         switch (type) {
+ 171         case 8:
+
+</pre><hr></hr><pre>
+ 200     // buffer below.
+ 201     private float[] firstSegmentsBuffer; // dynamic array
+ 202     private int firstSegidx;
+ 203 
+ 204     // precondition: pts must be in relative coordinates (relative to x0,y0)
+ 205     // fullCurve is true iff the curve in pts has not been split.
+ 206     private void goTo(float[] pts, int off, final int type) {
+ 207         float x = pts[off + type - 4];
+ 208         float y = pts[off + type - 3];
+ 209         if (dashOn) {
+ 210             if (starting) {
+ 211                 int len = type - 2 + 1;
+ 212                 int segIdx = firstSegidx;
+ 213                 float[] buf = firstSegmentsBuffer;
+ 214                 if (segIdx + len  &gt; buf.length) {
+ 215                     if (DO_STATS) {
+ 216                         rdrCtx.stats.stat_array_dasher_firstSegmentsBuffer
+ 217                             .add(segIdx + len);
+ 218                     }
+ 219                     firstSegmentsBuffer = buf
+<span class="changed"> 220                         = firstSegmentsBuffer_ref.widenArray(buf, segIdx,</span>
+<span class="changed"> 221                                                              segIdx + len);</span>
+ 222                 }
+ 223                 buf[segIdx++] = type;
+ 224                 len--;
+ 225                 // small arraycopy (2, 4 or 6) but with offset:
+ 226                 System.arraycopy(pts, off, buf, segIdx, len);
+ 227                 segIdx += len;
+ 228                 firstSegidx = segIdx;
+ 229             } else {
+ 230                 if (needsMoveTo) {
+ 231                     out.moveTo(x0, y0);
+ 232                     needsMoveTo = false;
+ 233                 }
+ 234                 emitSeg(pts, off, type);
+ 235             }
+ 236         } else {
+ 237             starting = false;
+ 238             needsMoveTo = true;
+ 239         }
+ 240         this.x0 = x;
+ 241         this.y0 = y;
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/ByteArrayCache.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/FloatArrayCache.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

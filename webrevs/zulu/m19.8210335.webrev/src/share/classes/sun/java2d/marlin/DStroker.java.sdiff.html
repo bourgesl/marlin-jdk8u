@@ -1,0 +1,463 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DRendererContext.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/DStroker.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13698">13698</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8210335">8210335</a>: Clipping problems with complex affine transforms: negative scaling factors or small scaling factors
+Summary: fixed clipping rectangle to take into account the inverse transform (scale/shear)
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 122                     rdrCtx.stats.stat_array_str_polystack_curves,
+ 123                     rdrCtx.stats.stat_array_str_polystack_types)
+ 124             : new PolyStack(rdrCtx);
+ 125 
+ 126         this.curve = rdrCtx.curve;
+ 127         this.curveSplitter = rdrCtx.curveClipSplitter;
+ 128     }
+ 129 
+ 130     /**
+ 131      * Inits the &lt;code&gt;DStroker&lt;/code&gt;.
+ 132      *
+ 133      * @param pc2d an output &lt;code&gt;DPathConsumer2D&lt;/code&gt;.
+ 134      * @param lineWidth the desired line width in pixels
+ 135      * @param capStyle the desired end cap style, one of
+ 136      * &lt;code&gt;CAP_BUTT&lt;/code&gt;, &lt;code&gt;CAP_ROUND&lt;/code&gt; or
+ 137      * &lt;code&gt;CAP_SQUARE&lt;/code&gt;.
+ 138      * @param joinStyle the desired line join style, one of
+ 139      * &lt;code&gt;JOIN_MITER&lt;/code&gt;, &lt;code&gt;JOIN_ROUND&lt;/code&gt; or
+ 140      * &lt;code&gt;JOIN_BEVEL&lt;/code&gt;.
+ 141      * @param miterLimit the desired miter limit
+<span class="removed"> 142      * @param scale scaling factor applied to clip boundaries</span>
+ 143      * @param subdivideCurves true to indicate to subdivide curves, false if dasher does
+ 144      * @return this instance
+ 145      */
+ 146     DStroker init(final DPathConsumer2D pc2d,
+ 147                   final double lineWidth,
+ 148                   final int capStyle,
+ 149                   final int joinStyle,
+ 150                   final double miterLimit,
+<span class="removed"> 151                   final double scale,</span>
+ 152                   final boolean subdivideCurves)
+ 153     {
+ 154         this.out = pc2d;
+ 155 
+ 156         this.lineWidth2 = lineWidth / 2.0d;
+ 157         this.invHalfLineWidth2Sq = 1.0d / (2.0d * lineWidth2 * lineWidth2);
+ 158         this.monotonize = subdivideCurves;
+ 159 
+ 160         this.capStyle = capStyle;
+ 161         this.joinStyle = joinStyle;
+ 162 
+ 163         final double limit = miterLimit * lineWidth2;
+ 164         this.miterLimitSq = limit * limit;
+ 165 
+ 166         this.prev = CLOSE;
+ 167 
+ 168         rdrCtx.stroking = 1;
+ 169 
+ 170         if (rdrCtx.doClip) {
+ 171             // Adjust the clipping rectangle with the stroker margin (miter limit, width)
+<span class="removed"> 172             double rdrOffX = 0.0d, rdrOffY = 0.0d;</span>
+ 173             double margin = lineWidth2;
+ 174 
+ 175             if (capStyle == CAP_SQUARE) {
+ 176                 margin *= SQRT_2;
+ 177             }
+ 178             if ((joinStyle == JOIN_MITER) &amp;&amp; (margin &lt; limit)) {
+ 179                 margin = limit;
+ 180             }
+<span class="removed"> 181             if (scale != 1.0d) {</span>
+<span class="removed"> 182                 margin *= scale;</span>
+<span class="removed"> 183                 rdrOffX = scale * DRenderer.RDR_OFFSET_X;</span>
+<span class="removed"> 184                 rdrOffY = scale * DRenderer.RDR_OFFSET_Y;</span>
+<span class="removed"> 185             }</span>
+<span class="removed"> 186             // add a small rounding error:</span>
+<span class="removed"> 187             margin += 1e-3d;</span>
+ 188 
+ 189             // bounds as half-open intervals: minX &lt;= x &lt; maxX and minY &lt;= y &lt; maxY
+ 190             // adjust clip rectangle (ymin, ymax, xmin, xmax):
+ 191             final double[] _clipRect = rdrCtx.clipRect;
+<span class="changed"> 192             _clipRect[0] -= margin - rdrOffY;</span>
+<span class="changed"> 193             _clipRect[1] += margin + rdrOffY;</span>
+<span class="changed"> 194             _clipRect[2] -= margin - rdrOffX;</span>
+<span class="changed"> 195             _clipRect[3] += margin + rdrOffX;</span>
+ 196             this.clipRect = _clipRect;
+ 197 
+
+
+
+
+
+ 198             // initialize curve splitter here for stroker &amp; dasher:
+ 199             if (DO_CLIP_SUBDIVIDER) {
+ 200                 subdivide = subdivideCurves;
+ 201                 // adjust padded clip rectangle:
+ 202                 curveSplitter.init();
+ 203             } else {
+ 204                 subdivide = false;
+ 205             }
+ 206         } else {
+ 207             this.clipRect = null;
+ 208             this.cOutCode = 0;
+ 209             this.sOutCode = 0;
+ 210         }
+ 211         return this; // fluent API
+ 212     }
+ 213 
+ 214     void disableClipping() {
+ 215         this.clipRect = null;
+ 216         this.cOutCode = 0;
+ 217         this.sOutCode = 0;
+
+</pre><hr></hr><pre>
+ 287             omx = -omx;
+ 288             omy = -omy;
+ 289             mx  = -mx;
+ 290             my  = -my;
+ 291         }
+ 292         drawRoundJoin(cx, cy, omx, omy, mx, my, rev);
+ 293     }
+ 294 
+ 295     private void drawRoundJoin(double cx, double cy,
+ 296                                double omx, double omy,
+ 297                                double mx, double my,
+ 298                                boolean rev)
+ 299     {
+ 300         // The sign of the dot product of mx,my and omx,omy is equal to the
+ 301         // the sign of the cosine of ext
+ 302         // (ext is the angle between omx,omy and mx,my).
+ 303         final double cosext = omx * mx + omy * my;
+ 304         // If it is &gt;=0, we know that abs(ext) is &lt;= 90 degrees, so we only
+ 305         // need 1 curve to approximate the circle section that joins omx,omy
+ 306         // and mx,my.
+<span class="changed"> 307         final int numCurves = (cosext &gt;= 0.0d) ? 1 : 2;</span>
+<span class="changed"> 308 </span>
+<span class="changed"> 309         switch (numCurves) {</span>
+<span class="changed"> 310         case 1:</span>
+ 311             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+<span class="changed"> 312             break;</span>
+<span class="changed"> 313         case 2:</span>
+ 314             // we need to split the arc into 2 arcs spanning the same angle.
+ 315             // The point we want will be one of the 2 intersections of the
+ 316             // perpendicular bisector of the chord (omx,omy)-&gt;(mx,my) and the
+ 317             // circle. We could find this by scaling the vector
+ 318             // (omx+mx, omy+my)/2 so that it has length=lineWidth2 (and thus lies
+ 319             // on the circle), but that can have numerical problems when the angle
+ 320             // between omx,omy and mx,my is close to 180 degrees. So we compute a
+ 321             // normal of (omx,omy)-(mx,my). This will be the direction of the
+ 322             // perpendicular bisector. To get one of the intersections, we just scale
+ 323             // this vector that its length is lineWidth2 (this works because the
+ 324             // perpendicular bisector goes through the origin). This scaling doesn't
+ 325             // have numerical problems because we know that lineWidth2 divided by
+ 326             // this normal's length is at least 0.5 and at most sqrt(2)/2 (because
+ 327             // we know the angle of the arc is &gt; 90 degrees).
+ 328             double nx = my - omy, ny = omx - mx;
+ 329             double nlen = Math.sqrt(nx*nx + ny*ny);
+ 330             double scale = lineWidth2/nlen;
+ 331             double mmx = nx * scale, mmy = ny * scale;
+ 332 
+ 333             // if (isCW(omx, omy, mx, my) != isCW(mmx, mmy, mx, my)) then we've
+ 334             // computed the wrong intersection so we get the other one.
+ 335             // The test above is equivalent to if (rev).
+ 336             if (rev) {
+ 337                 mmx = -mmx;
+ 338                 mmy = -mmy;
+ 339             }
+ 340             drawBezApproxForArc(cx, cy, omx, omy, mmx, mmy, rev);
+ 341             drawBezApproxForArc(cx, cy, mmx, mmy, mx, my, rev);
+<span class="removed"> 342             break;</span>
+<span class="removed"> 343         default:</span>
+ 344         }
+ 345     }
+ 346 
+ 347     // the input arc defined by omx,omy and mx,my must span &lt;= 90 degrees.
+ 348     private void drawBezApproxForArc(final double cx, final double cy,
+ 349                                      final double omx, final double omy,
+ 350                                      final double mx, final double my,
+ 351                                      boolean rev)
+ 352     {
+ 353         final double cosext2 = (omx * mx + omy * my) * invHalfLineWidth2Sq;
+ 354 
+ 355         // check round off errors producing cos(ext) &gt; 1 and a NaN below
+ 356         // cos(ext) == 1 implies colinear segments and an empty join anyway
+ 357         if (cosext2 &gt;= 0.5d) {
+ 358             // just return to avoid generating a flat curve:
+ 359             return;
+ 360         }
+ 361 
+ 362         // cv is the length of P1-P0 and P2-P3 divided by the radius of the arc
+ 363         // (so, cv assumes the arc has radius 1). P0, P1, P2, P3 are the points that
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 122                     rdrCtx.stats.stat_array_str_polystack_curves,
+ 123                     rdrCtx.stats.stat_array_str_polystack_types)
+ 124             : new PolyStack(rdrCtx);
+ 125 
+ 126         this.curve = rdrCtx.curve;
+ 127         this.curveSplitter = rdrCtx.curveClipSplitter;
+ 128     }
+ 129 
+ 130     /**
+ 131      * Inits the &lt;code&gt;DStroker&lt;/code&gt;.
+ 132      *
+ 133      * @param pc2d an output &lt;code&gt;DPathConsumer2D&lt;/code&gt;.
+ 134      * @param lineWidth the desired line width in pixels
+ 135      * @param capStyle the desired end cap style, one of
+ 136      * &lt;code&gt;CAP_BUTT&lt;/code&gt;, &lt;code&gt;CAP_ROUND&lt;/code&gt; or
+ 137      * &lt;code&gt;CAP_SQUARE&lt;/code&gt;.
+ 138      * @param joinStyle the desired line join style, one of
+ 139      * &lt;code&gt;JOIN_MITER&lt;/code&gt;, &lt;code&gt;JOIN_ROUND&lt;/code&gt; or
+ 140      * &lt;code&gt;JOIN_BEVEL&lt;/code&gt;.
+ 141      * @param miterLimit the desired miter limit
+
+ 142      * @param subdivideCurves true to indicate to subdivide curves, false if dasher does
+ 143      * @return this instance
+ 144      */
+ 145     DStroker init(final DPathConsumer2D pc2d,
+ 146                   final double lineWidth,
+ 147                   final int capStyle,
+ 148                   final int joinStyle,
+ 149                   final double miterLimit,
+
+ 150                   final boolean subdivideCurves)
+ 151     {
+ 152         this.out = pc2d;
+ 153 
+ 154         this.lineWidth2 = lineWidth / 2.0d;
+ 155         this.invHalfLineWidth2Sq = 1.0d / (2.0d * lineWidth2 * lineWidth2);
+ 156         this.monotonize = subdivideCurves;
+ 157 
+ 158         this.capStyle = capStyle;
+ 159         this.joinStyle = joinStyle;
+ 160 
+ 161         final double limit = miterLimit * lineWidth2;
+ 162         this.miterLimitSq = limit * limit;
+ 163 
+ 164         this.prev = CLOSE;
+ 165 
+ 166         rdrCtx.stroking = 1;
+ 167 
+ 168         if (rdrCtx.doClip) {
+ 169             // Adjust the clipping rectangle with the stroker margin (miter limit, width)
+
+ 170             double margin = lineWidth2;
+ 171 
+ 172             if (capStyle == CAP_SQUARE) {
+ 173                 margin *= SQRT_2;
+ 174             }
+ 175             if ((joinStyle == JOIN_MITER) &amp;&amp; (margin &lt; limit)) {
+ 176                 margin = limit;
+ 177             }
+
+
+
+
+
+
+
+ 178 
+ 179             // bounds as half-open intervals: minX &lt;= x &lt; maxX and minY &lt;= y &lt; maxY
+ 180             // adjust clip rectangle (ymin, ymax, xmin, xmax):
+ 181             final double[] _clipRect = rdrCtx.clipRect;
+<span class="changed"> 182             _clipRect[0] -= margin;</span>
+<span class="changed"> 183             _clipRect[1] += margin;</span>
+<span class="changed"> 184             _clipRect[2] -= margin;</span>
+<span class="changed"> 185             _clipRect[3] += margin;</span>
+ 186             this.clipRect = _clipRect;
+ 187 
+<span class="new"> 188             if (MarlinConst.DO_LOG_CLIP) {</span>
+<span class="new"> 189                 MarlinUtils.logInfo("clipRect (stroker): "</span>
+<span class="new"> 190                                     + Arrays.toString(rdrCtx.clipRect));</span>
+<span class="new"> 191             }</span>
+<span class="new"> 192 </span>
+ 193             // initialize curve splitter here for stroker &amp; dasher:
+ 194             if (DO_CLIP_SUBDIVIDER) {
+ 195                 subdivide = subdivideCurves;
+ 196                 // adjust padded clip rectangle:
+ 197                 curveSplitter.init();
+ 198             } else {
+ 199                 subdivide = false;
+ 200             }
+ 201         } else {
+ 202             this.clipRect = null;
+ 203             this.cOutCode = 0;
+ 204             this.sOutCode = 0;
+ 205         }
+ 206         return this; // fluent API
+ 207     }
+ 208 
+ 209     void disableClipping() {
+ 210         this.clipRect = null;
+ 211         this.cOutCode = 0;
+ 212         this.sOutCode = 0;
+
+</pre><hr></hr><pre>
+ 282             omx = -omx;
+ 283             omy = -omy;
+ 284             mx  = -mx;
+ 285             my  = -my;
+ 286         }
+ 287         drawRoundJoin(cx, cy, omx, omy, mx, my, rev);
+ 288     }
+ 289 
+ 290     private void drawRoundJoin(double cx, double cy,
+ 291                                double omx, double omy,
+ 292                                double mx, double my,
+ 293                                boolean rev)
+ 294     {
+ 295         // The sign of the dot product of mx,my and omx,omy is equal to the
+ 296         // the sign of the cosine of ext
+ 297         // (ext is the angle between omx,omy and mx,my).
+ 298         final double cosext = omx * mx + omy * my;
+ 299         // If it is &gt;=0, we know that abs(ext) is &lt;= 90 degrees, so we only
+ 300         // need 1 curve to approximate the circle section that joins omx,omy
+ 301         // and mx,my.
+<span class="changed"> 302         if (cosext &gt;= 0.0d) {</span>
+
+
+
+ 303             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+<span class="changed"> 304         } else {</span>
+
+ 305             // we need to split the arc into 2 arcs spanning the same angle.
+ 306             // The point we want will be one of the 2 intersections of the
+ 307             // perpendicular bisector of the chord (omx,omy)-&gt;(mx,my) and the
+ 308             // circle. We could find this by scaling the vector
+ 309             // (omx+mx, omy+my)/2 so that it has length=lineWidth2 (and thus lies
+ 310             // on the circle), but that can have numerical problems when the angle
+ 311             // between omx,omy and mx,my is close to 180 degrees. So we compute a
+ 312             // normal of (omx,omy)-(mx,my). This will be the direction of the
+ 313             // perpendicular bisector. To get one of the intersections, we just scale
+ 314             // this vector that its length is lineWidth2 (this works because the
+ 315             // perpendicular bisector goes through the origin). This scaling doesn't
+ 316             // have numerical problems because we know that lineWidth2 divided by
+ 317             // this normal's length is at least 0.5 and at most sqrt(2)/2 (because
+ 318             // we know the angle of the arc is &gt; 90 degrees).
+ 319             double nx = my - omy, ny = omx - mx;
+ 320             double nlen = Math.sqrt(nx*nx + ny*ny);
+ 321             double scale = lineWidth2/nlen;
+ 322             double mmx = nx * scale, mmy = ny * scale;
+ 323 
+ 324             // if (isCW(omx, omy, mx, my) != isCW(mmx, mmy, mx, my)) then we've
+ 325             // computed the wrong intersection so we get the other one.
+ 326             // The test above is equivalent to if (rev).
+ 327             if (rev) {
+ 328                 mmx = -mmx;
+ 329                 mmy = -mmy;
+ 330             }
+ 331             drawBezApproxForArc(cx, cy, omx, omy, mmx, mmy, rev);
+ 332             drawBezApproxForArc(cx, cy, mmx, mmy, mx, my, rev);
+
+
+ 333         }
+ 334     }
+ 335 
+ 336     // the input arc defined by omx,omy and mx,my must span &lt;= 90 degrees.
+ 337     private void drawBezApproxForArc(final double cx, final double cy,
+ 338                                      final double omx, final double omy,
+ 339                                      final double mx, final double my,
+ 340                                      boolean rev)
+ 341     {
+ 342         final double cosext2 = (omx * mx + omy * my) * invHalfLineWidth2Sq;
+ 343 
+ 344         // check round off errors producing cos(ext) &gt; 1 and a NaN below
+ 345         // cos(ext) == 1 implies colinear segments and an empty join anyway
+ 346         if (cosext2 &gt;= 0.5d) {
+ 347             // just return to avoid generating a flat curve:
+ 348             return;
+ 349         }
+ 350 
+ 351         // cv is the length of P1-P0 and P2-P3 divided by the radius of the arc
+ 352         // (so, cv assumes the arc has radius 1). P0, P1, P2, P3 are the points that
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DRendererContext.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

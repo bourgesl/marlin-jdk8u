@@ -1,0 +1,252 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New src/share/classes/sun/java2d/ReentrantContextProvider.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 package sun.java2d;
+  26 
+  27 import java.lang.ref.Reference;
+  28 import java.lang.ref.SoftReference;
+  29 import java.lang.ref.WeakReference;
+  30 
+  31 /**
+  32  * This abstract ReentrantContextProvider helper class manages the creation,
+  33  * storage, and retrieval of concrete ReentrantContext instances which can be
+  34  * subclassed to hold cached contextual data.
+  35  *
+  36  * It supports reentrancy as every call to acquire() provides a new unique context
+  37  * instance that must later be returned for reuse by a call to release(ctx)
+  38  * (typically in a try/finally block).
+  39  *
+  40  * It has a couple of abstract implementations which store references in a queue
+  41  * and/or thread-local storage.
+  42  * The Providers can be configured to hold ReentrantContext instances in memory
+  43  * using hard, soft or weak references.
+  44  *
+  45  * The acquire() and release() methods are used to retrieve and return the contexts.
+  46  *
+  47  * The {@code newContext()} method remains abstract in all implementations and
+  48  * must be provided by the module to create a new subclass of ReentrantContext
+  49  * with the appropriate contextual data in it.
+  50  *
+  51  * Sample Usage:
+  52  * - create a subclass ReentrantContextImpl to hold the thread state:
+  53  *
+  54  * static final class ReentrantContextImpl extends ReentrantContext {
+  55  *     // specific cached data
+  56  * }
+  57  *
+  58  * - create the appropriate ReentrantContextProvider:
+  59  *
+  60  * private static final ReentrantContextProvider&lt;ReentrantContextImpl&gt; contextProvider =
+  61  *     new ReentrantContextProviderTL&lt;ReentrantContextImpl&gt;(ReentrantContextProvider.REF_WEAK)
+  62  *     {
+  63  *         @Override
+  64  *         protected ReentrantContextImpl newContext() {
+  65  *             return new ReentrantContextImpl();
+  66  *         }
+  67  *     };
+  68  * ...
+  69  * void someMethod() {
+  70  *     ReentrantContextImpl ctx = contextProvider.acquire();
+  71  *     try {
+  72  *         // use the context
+  73  *     } finally {
+  74  *         contextProvider.release(ctx);
+  75  *     }
+  76  * }
+  77  *
+  78  * @param &lt;K&gt; ReentrantContext subclass
+  79  *
+  80  * @see ReentrantContext
+  81  */
+  82 public abstract class ReentrantContextProvider&lt;K extends ReentrantContext&gt;
+  83 {
+  84     // thread-local storage: inactive
+  85     static final byte USAGE_TL_INACTIVE = 0;
+  86     // thread-local storage: in use
+  87     static final byte USAGE_TL_IN_USE = 1;
+  88     // CLQ storage
+  89     static final byte USAGE_CLQ = 2;
+  90 
+  91     // hard reference
+  92     public static final int REF_HARD = 0;
+  93     // soft reference
+  94     public static final int REF_SOFT = 1;
+  95     // weak reference
+  96     public static final int REF_WEAK = 2;
+  97 
+  98     /* members */
+  99     // internal reference type
+ 100     private final int refType;
+ 101 
+ 102     /**
+ 103      * Create a new ReentrantContext provider using the given reference type
+ 104      * among hard, soft or weak
+ 105      *
+ 106      * @param refType reference type
+ 107      */
+ 108     protected ReentrantContextProvider(final int refType) {
+ 109         this.refType = refType;
+ 110     }
+ 111 
+ 112     /**
+ 113      * Create a new ReentrantContext instance
+ 114      *
+ 115      * @return new ReentrantContext instance
+ 116      */
+ 117     protected abstract K newContext();
+ 118 
+ 119     /**
+ 120      * Give a ReentrantContext instance for the current thread
+ 121      *
+ 122      * @return ReentrantContext instance
+ 123      */
+ 124     public abstract K acquire();
+ 125 
+ 126     /**
+ 127      * Restore the given ReentrantContext instance for reuse
+ 128      *
+ 129      * @param ctx ReentrantContext instance
+ 130      */
+ 131     public abstract void release(K ctx);
+ 132 
+ 133     @SuppressWarnings("unchecked")
+ 134     protected final Reference&lt;K&gt; getOrCreateReference(final K ctx) {
+ 135         if (ctx.reference == null) {
+ 136             // Create the reference:
+ 137             switch (refType) {
+ 138                 case REF_HARD:
+ 139                     ctx.reference = new HardReference&lt;K&gt;(ctx);
+ 140                     break;
+ 141                 case REF_SOFT:
+ 142                     ctx.reference = new SoftReference&lt;K&gt;(ctx);
+ 143                     break;
+ 144                 default:
+ 145                 case REF_WEAK:
+ 146                     ctx.reference = new WeakReference&lt;K&gt;(ctx);
+ 147                     break;
+ 148             }
+ 149         }
+ 150         return (Reference&lt;K&gt;) ctx.reference;
+ 151     }
+ 152 
+ 153     /* Missing HardReference implementation */
+ 154     static final class HardReference&lt;V&gt; extends WeakReference&lt;V&gt; {
+ 155         // kept strong reference:
+ 156         private final V strongRef;
+ 157 
+ 158         HardReference(final V referent) {
+ 159             // no referent needed for the parent WeakReference:
+ 160             super(null);
+ 161             this.strongRef = referent;
+ 162         }
+ 163 
+ 164         @Override
+ 165         public V get() {
+ 166             return strongRef;
+ 167         }
+ 168     }
+ 169 }
+</pre></body></html>

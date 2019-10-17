@@ -1,0 +1,427 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/RendererStats.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/RendererStats.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -23,15 +23,19 @@</span>
+  * questions.
+  */
+ 
+ package sun.java2d.marlin;
+ 
+<span class="new">+import java.lang.ref.PhantomReference;</span>
+<span class="new">+import java.lang.ref.ReferenceQueue;</span>
+ import java.security.AccessController;
+ import java.security.PrivilegedAction;
+ import java.util.Timer;
+ import java.util.TimerTask;
+<span class="new">+import java.util.Vector;</span>
+ import java.util.concurrent.ConcurrentLinkedQueue;
+<span class="new">+import sun.java2d.marlin.ArrayCacheConst.CacheStats;</span>
+ import static sun.java2d.marlin.MarlinUtils.logInfo;
+ import sun.java2d.marlin.stats.Histogram;
+ import sun.java2d.marlin.stats.Monitor;
+ import sun.java2d.marlin.stats.StatLong;
+ import sun.misc.ThreadGroupUtils;
+</pre><hr /><pre>
+<span class="newmarker">@@ -39,30 +43,26 @@</span>
+ /**
+  * This class gathers global rendering statistics for debugging purposes only
+  */
+ public final class RendererStats implements MarlinConst {
+ 
+<span class="removed">-    // singleton</span>
+<span class="removed">-    private static volatile RendererStats SINGLETON = null;</span>
+<span class="new">+    static RendererStats createInstance(final Object parent, final String name)</span>
+<span class="new">+    {</span>
+<span class="new">+        final RendererStats stats = new RendererStats(name);</span>
+ 
+<span class="removed">-    static RendererStats getInstance() {</span>
+<span class="removed">-        if (SINGLETON == null) {</span>
+<span class="removed">-            SINGLETON = new RendererStats();</span>
+<span class="removed">-        }</span>
+<span class="removed">-        return SINGLETON;</span>
+<span class="new">+        // Keep a strong reference to dump it later:</span>
+<span class="new">+        RendererStatsHolder.getInstance().add(parent, stats);</span>
+<span class="new">+</span>
+<span class="new">+        return stats;</span>
+     }
+ 
+     public static void dumpStats() {
+<span class="removed">-        if (SINGLETON != null) {</span>
+<span class="removed">-            SINGLETON.dump();</span>
+<span class="removed">-        }</span>
+<span class="new">+        RendererStatsHolder.dumpStats();</span>
+     }
+ 
+<span class="removed">-    /* RendererContext collection as hard references</span>
+<span class="removed">-       (only used for debugging purposes) */</span>
+<span class="removed">-    static final ConcurrentLinkedQueue&lt;RendererContext&gt; ALL_CONTEXTS</span>
+<span class="removed">-        = new ConcurrentLinkedQueue&lt;RendererContext&gt;();</span>
+<span class="new">+    // context name (debugging purposes)</span>
+<span class="new">+    final String name;</span>
+     // stats
+     final StatLong stat_cache_rowAA
+         = new StatLong("cache.rowAA");
+     final StatLong stat_cache_rowAAChunk
+         = new StatLong("cache.rowAAChunk");
+</pre><hr /><pre>
+<span class="newmarker">@@ -116,11 +116,11 @@</span>
+     final StatLong stat_array_stroker_polystack_curves
+         = new StatLong("array.stroker.polystack.curves.d_float");
+     final StatLong stat_array_stroker_polystack_curveTypes
+         = new StatLong("array.stroker.polystack.curveTypes.d_byte");
+     final StatLong stat_array_marlincache_rowAAChunk
+<span class="removed">-        = new StatLong("array.marlincache.rowAAChunk.d_byte");</span>
+<span class="new">+        = new StatLong("array.marlincache.rowAAChunk.resize");</span>
+     final StatLong stat_array_marlincache_touchedTile
+         = new StatLong("array.marlincache.touchedTile.int");
+     final StatLong stat_array_renderer_alphaline
+         = new StatLong("array.renderer.alphaline.int");
+     final StatLong stat_array_renderer_crossings
+</pre><hr /><pre>
+<span class="newmarker">@@ -134,10 +134,14 @@</span>
+     final StatLong stat_array_renderer_edgePtrs
+         = new StatLong("array.renderer.edgePtrs.int");
+     final StatLong stat_array_renderer_aux_edgePtrs
+         = new StatLong("array.renderer.aux_edgePtrs.int");
+     // histograms
+<span class="new">+    final Histogram hist_rdr_edges_count</span>
+<span class="new">+        = new Histogram("renderer.edges.count");</span>
+<span class="new">+    final Histogram hist_rdr_poly_stack_curves</span>
+<span class="new">+        = new Histogram("renderer.polystack.curves");</span>
+     final Histogram hist_rdr_crossings
+         = new Histogram("renderer.crossings");
+     final Histogram hist_rdr_crossings_ratio
+         = new Histogram("renderer.crossings.ratio");
+     final Histogram hist_rdr_crossings_adds
+</pre><hr /><pre>
+<span class="newmarker">@@ -179,10 +183,12 @@</span>
+         stat_rdr_activeEdges_adds_high,
+         stat_rdr_crossings_updates,
+         stat_rdr_crossings_sorts,
+         stat_rdr_crossings_bsearch,
+         stat_rdr_crossings_msorts,
+<span class="new">+        hist_rdr_edges_count,</span>
+<span class="new">+        hist_rdr_poly_stack_curves,</span>
+         hist_rdr_crossings,
+         hist_rdr_crossings_ratio,
+         hist_rdr_crossings_adds,
+         hist_rdr_crossings_msorts,
+         hist_rdr_crossings_msorts_adds,
+</pre><hr /><pre>
+<span class="newmarker">@@ -231,49 +237,24 @@</span>
+         mon_rdr_copyAARow,
+         mon_pipe_renderTiles,
+         mon_ptg_getAlpha,
+         mon_debug
+     };
+<span class="new">+    // offheap stats</span>
+<span class="new">+    long totalOffHeapInitial = 0L;</span>
+<span class="new">+     // live accumulator</span>
+<span class="new">+    long totalOffHeap = 0L;</span>
+<span class="new">+    long totalOffHeapMax = 0L;</span>
+<span class="new">+    // cache stats</span>
+<span class="new">+    CacheStats[] cacheStats = null;</span>
+ 
+<span class="removed">-    private RendererStats() {</span>
+<span class="removed">-        super();</span>
+<span class="removed">-</span>
+<span class="removed">-        AccessController.doPrivileged(</span>
+<span class="removed">-            (PrivilegedAction&lt;Void&gt;) () -&gt; {</span>
+<span class="removed">-                final Thread hook = new Thread(</span>
+<span class="removed">-                    ThreadGroupUtils.getRootThreadGroup(),</span>
+<span class="removed">-                    new Runnable() {</span>
+<span class="removed">-                        @Override</span>
+<span class="removed">-                        public void run() {</span>
+<span class="removed">-                            dump();</span>
+<span class="removed">-                        }</span>
+<span class="removed">-                    },</span>
+<span class="removed">-                    "MarlinStatsHook"</span>
+<span class="removed">-                );</span>
+<span class="removed">-                hook.setContextClassLoader(null);</span>
+<span class="removed">-                Runtime.getRuntime().addShutdownHook(hook);</span>
+<span class="removed">-</span>
+<span class="removed">-                if (USE_DUMP_THREAD) {</span>
+<span class="removed">-                    final Timer statTimer = new Timer("RendererStats");</span>
+<span class="removed">-                    statTimer.scheduleAtFixedRate(new TimerTask() {</span>
+<span class="removed">-                        @Override</span>
+<span class="removed">-                        public void run() {</span>
+<span class="removed">-                            dump();</span>
+<span class="removed">-                        }</span>
+<span class="removed">-                    }, DUMP_INTERVAL, DUMP_INTERVAL);</span>
+<span class="removed">-                }</span>
+<span class="removed">-                return null;</span>
+<span class="removed">-            }</span>
+<span class="removed">-        );</span>
+<span class="new">+    private RendererStats(final String name) {</span>
+<span class="new">+        this.name = name;</span>
+     }
+ 
+     void dump() {
+<span class="removed">-        if (DO_STATS) {</span>
+<span class="removed">-            ArrayCache.dumpStats();</span>
+<span class="removed">-        }</span>
+<span class="removed">-        for (RendererContext rdrCtx : ALL_CONTEXTS) {</span>
+<span class="removed">-            logInfo("RendererContext: " + rdrCtx.name);</span>
+<span class="new">+        logInfo("RendererContext: " + name);</span>
+ 
+             if (DO_MONITORS) {
+                 for (Monitor monitor : monitors) {
+                     if (monitor.count != 0) {
+                         logInfo(monitor.toString());
+</pre><hr /><pre>
+<span class="newmarker">@@ -296,33 +277,143 @@</span>
+ 
+             if (DO_STATS) {
+                 for (StatLong stat : statistics) {
+                     if (stat.count != 0) {
+                         logInfo(stat.toString());
+<span class="new">+                    if (DO_FLUSH_STATS) {</span>
+<span class="new">+                        stat.reset();</span>
+<span class="new">+                    }</span>
+<span class="new">+                }</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            logInfo("OffHeap footprint: initial: " + totalOffHeapInitial</span>
+<span class="new">+                + " bytes - max: " + totalOffHeapMax + " bytes");</span>
+<span class="new">+            if (DO_FLUSH_STATS) {</span>
+<span class="new">+                totalOffHeapMax = 0L;</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            logInfo("Array caches for RendererContext: " + name);</span>
+<span class="new">+</span>
+<span class="new">+            long totalInitialBytes = totalOffHeapInitial;</span>
+<span class="new">+            long totalCacheBytes   = 0L;</span>
+<span class="new">+</span>
+<span class="new">+            if (cacheStats != null) {</span>
+<span class="new">+                for (CacheStats stat : cacheStats) {</span>
+<span class="new">+                    totalCacheBytes   += stat.dumpStats();</span>
+<span class="new">+                    totalInitialBytes += stat.getTotalInitialBytes();</span>
+<span class="new">+                    if (DO_FLUSH_STATS) {</span>
+                         stat.reset();
+                     }
+                 }
+<span class="removed">-                // IntArrayCaches stats:</span>
+<span class="removed">-                final RendererContext.ArrayCachesHolder holder</span>
+<span class="removed">-                    = rdrCtx.getArrayCachesHolder();</span>
+<span class="new">+            }</span>
+<span class="new">+            logInfo("Heap footprint: initial: " + totalInitialBytes</span>
+<span class="new">+                    + " bytes - cache: " + totalCacheBytes + " bytes");</span>
+<span class="new">+        }</span>
+<span class="new">+    }</span>
+<span class="new">+</span>
+<span class="new">+    static final class RendererStatsHolder {</span>
+<span class="new">+</span>
+<span class="new">+        // singleton</span>
+<span class="new">+        private static volatile RendererStatsHolder SINGLETON = null;</span>
+<span class="new">+</span>
+<span class="new">+        static synchronized RendererStatsHolder getInstance() {</span>
+<span class="new">+            if (SINGLETON == null) {</span>
+<span class="new">+                SINGLETON = new RendererStatsHolder();</span>
+<span class="new">+            }</span>
+<span class="new">+            return SINGLETON;</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        static void dumpStats() {</span>
+<span class="new">+            if (SINGLETON != null) {</span>
+<span class="new">+                SINGLETON.dump();</span>
+<span class="new">+            }</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        /* RendererStats collection as hard references</span>
+<span class="new">+           (only used for debugging purposes) */</span>
+<span class="new">+        private final ConcurrentLinkedQueue&lt;RendererStats&gt; allStats</span>
+<span class="new">+            = new ConcurrentLinkedQueue&lt;RendererStats&gt;();</span>
+<span class="new">+</span>
+<span class="new">+        private RendererStatsHolder() {</span>
+<span class="new">+            AccessController.doPrivileged(</span>
+<span class="new">+                (PrivilegedAction&lt;Void&gt;) () -&gt; {</span>
+<span class="new">+                    /*</span>
+<span class="new">+                     * The thread must be a member of a thread group</span>
+<span class="new">+                     * which will not get GCed before VM exit.</span>
+<span class="new">+                     * Make its parent the top-level thread group.</span>
+<span class="new">+                     */</span>
+<span class="new">+                    final ThreadGroup rootTG</span>
+<span class="new">+                            = ThreadGroupUtils.getRootThreadGroup();</span>
+<span class="new">+                    final Thread t = new Thread(rootTG, new RendererStatsDisposer(),</span>
+<span class="new">+                            "MarlinRenderer Disposer");</span>
+<span class="new">+                    t.setContextClassLoader(null);</span>
+<span class="new">+                    t.setDaemon(true);</span>
+<span class="new">+                    t.setPriority(Thread.MAX_PRIORITY - 2);</span>
+<span class="new">+                    t.start();</span>
+<span class="new">+                    return null;</span>
+<span class="new">+                }</span>
+<span class="new">+            );</span>
+<span class="new">+        }</span>
+ 
+<span class="removed">-                logInfo("Array caches for thread: " + rdrCtx.name);</span>
+<span class="new">+        void add(final Object parent, final RendererStats stats) {</span>
+<span class="new">+            allStats.add(stats);</span>
+<span class="new">+</span>
+<span class="new">+            // Create the phantom reference to ensure removing dead entries:</span>
+<span class="new">+            REF_LIST.add(new RendererStatsReference(parent, stats));</span>
+<span class="new">+        }</span>
+ 
+<span class="removed">-                for (IntArrayCache cache : holder.intArrayCaches) {</span>
+<span class="removed">-                    cache.dumpStats();</span>
+<span class="new">+        void remove(final RendererStats stats) {</span>
+<span class="new">+            stats.dump(); // dump anyway</span>
+<span class="new">+            allStats.remove(stats);</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        void dump() {</span>
+<span class="new">+            for (RendererStats stats : allStats) {</span>
+<span class="new">+                stats.dump();</span>
+<span class="new">+            }</span>
+                 }
+ 
+<span class="removed">-                logInfo("Dirty Array caches for thread: " + rdrCtx.name);</span>
+<span class="new">+        // Parent reference queue</span>
+<span class="new">+        private static final ReferenceQueue&lt;Object&gt; REF_QUEUE</span>
+<span class="new">+                = new ReferenceQueue&lt;Object&gt;();</span>
+<span class="new">+        // reference list</span>
+<span class="new">+        private static final Vector&lt;RendererStatsReference&gt; REF_LIST</span>
+<span class="new">+                = new Vector&lt;RendererStatsReference&gt;(32);</span>
+ 
+<span class="removed">-                for (IntArrayCache cache : holder.dirtyIntArrayCaches) {</span>
+<span class="removed">-                    cache.dumpStats();</span>
+<span class="new">+        static final class RendererStatsReference extends PhantomReference&lt;Object&gt; {</span>
+<span class="new">+</span>
+<span class="new">+            private final RendererStats stats;</span>
+<span class="new">+</span>
+<span class="new">+            RendererStatsReference(final Object parent, final RendererStats stats) {</span>
+<span class="new">+                super(parent, REF_QUEUE);</span>
+<span class="new">+                this.stats = stats;</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            void dispose() {</span>
+<span class="new">+                // remove stats from allRdrStats</span>
+<span class="new">+                RendererStatsHolder.getInstance().remove(this.stats);</span>
+<span class="new">+            }</span>
+                 }
+<span class="removed">-                for (FloatArrayCache cache : holder.dirtyFloatArrayCaches) {</span>
+<span class="removed">-                    cache.dumpStats();</span>
+<span class="new">+</span>
+<span class="new">+        static final class RendererStatsDisposer implements Runnable {</span>
+<span class="new">+            @Override</span>
+<span class="new">+            public void run() {</span>
+<span class="new">+                final Thread currentThread = Thread.currentThread();</span>
+<span class="new">+                RendererStatsReference ref;</span>
+<span class="new">+</span>
+<span class="new">+                // check interrupted:</span>
+<span class="new">+                for (; !currentThread.isInterrupted();) {</span>
+<span class="new">+                    try {</span>
+<span class="new">+                        ref = (RendererStatsReference)REF_QUEUE.remove();</span>
+<span class="new">+                        ref.dispose();</span>
+<span class="new">+</span>
+<span class="new">+                        REF_LIST.remove(ref);</span>
+<span class="new">+</span>
+<span class="new">+                    } catch (InterruptedException ie) {</span>
+<span class="new">+                        MarlinUtils.logException("RendererStatsDisposer interrupted:",</span>
+<span class="new">+                                ie);</span>
+                 }
+<span class="removed">-                for (ByteArrayCache cache : holder.dirtyByteArrayCaches) {</span>
+<span class="removed">-                    cache.dumpStats();</span>
+                 }
+             }
+         }
+     }
+ }
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

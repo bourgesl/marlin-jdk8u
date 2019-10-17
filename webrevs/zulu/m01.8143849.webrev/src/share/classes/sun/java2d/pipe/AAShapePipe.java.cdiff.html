@@ -1,0 +1,443 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Cdiff src/share/classes/sun/java2d/pipe/AAShapePipe.java</title>
+</head>
+<body id="SUNWwebrev">
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/pipe/RenderingEngine.java.cdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/pipe/AAShapePipe.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13680">13680</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8143849">8143849</a>: Integrate Marlin renderer per JEP 265
+Reviewed-by: flar, prr</pre>
+        <pre>
+<hr /><span class="oldmarker">*** 1,7 ****</span>
+  /*
+<span class="changed">!  * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.</span>
+   * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   *
+   * This code is free software; you can redistribute it and/or modify it
+   * under the terms of the GNU General Public License version 2 only, as
+   * published by the Free Software Foundation.  Oracle designates this
+<span class="newmarker">--- 1,7 ----</span>
+  /*
+<span class="changed">!  * Copyright (c) 1997, 2015, Oracle and/or its affiliates. All rights reserved.</span>
+   * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   *
+   * This code is free software; you can redistribute it and/or modify it
+   * under the terms of the GNU General Public License version 2 only, as
+   * published by the Free Software Foundation.  Oracle designates this
+<hr /><span class="oldmarker">*** 20,37 ****</span>
+   *
+   * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+   * or visit www.oracle.com if you need additional information or have any
+   * questions.
+   */
+<span class="removed">- </span>
+  package sun.java2d.pipe;
+  
+  import java.awt.BasicStroke;
+  import java.awt.Rectangle;
+  import java.awt.Shape;
+  import java.awt.geom.Rectangle2D;
+<span class="removed">- import java.awt.geom.PathIterator;</span>
+  import sun.awt.SunHints;
+  import sun.java2d.SunGraphics2D;
+  
+  /**
+   * This class is used to convert raw geometry into 8-bit alpha tiles
+<span class="newmarker">--- 20,35 ----</span>
+<hr /><span class="oldmarker">*** 43,52 ****</span>
+<span class="newmarker">--- 41,59 ----</span>
+  public class AAShapePipe
+      implements ShapeDrawPipe, ParallelogramPipe
+  {
+      static RenderingEngine renderengine = RenderingEngine.getInstance();
+  
+<span class="new">+     // Per-thread TileState (~1K very small so do not use any Weak Reference)</span>
+<span class="new">+     private static final ThreadLocal&lt;TileState&gt; tileStateThreadLocal =</span>
+<span class="new">+             new ThreadLocal&lt;TileState&gt;() {</span>
+<span class="new">+         @Override</span>
+<span class="new">+         protected TileState initialValue() {</span>
+<span class="new">+             return new TileState();</span>
+<span class="new">+         }</span>
+<span class="new">+     };</span>
+<span class="new">+ </span>
+      CompositePipe outpipe;
+  
+      public AAShapePipe(CompositePipe pipe) {
+          outpipe = pipe;
+      }
+<hr /><span class="oldmarker">*** 66,107 ****</span>
+  
+      public void fill(SunGraphics2D sg, Shape s) {
+          renderPath(sg, s, null);
+      }
+  
+<span class="removed">-     private static Rectangle2D computeBBox(double ux1, double uy1,</span>
+<span class="removed">-                                            double ux2, double uy2)</span>
+<span class="removed">-     {</span>
+<span class="removed">-         if ((ux2 -= ux1) &lt; 0) {</span>
+<span class="removed">-             ux1 += ux2;</span>
+<span class="removed">-             ux2 = -ux2;</span>
+<span class="removed">-         }</span>
+<span class="removed">-         if ((uy2 -= uy1) &lt; 0) {</span>
+<span class="removed">-             uy1 += uy2;</span>
+<span class="removed">-             uy2 = -uy2;</span>
+<span class="removed">-         }</span>
+<span class="removed">-         return new Rectangle2D.Double(ux1, uy1, ux2, uy2);</span>
+<span class="removed">-     }</span>
+<span class="removed">- </span>
+      public void fillParallelogram(SunGraphics2D sg,
+                                    double ux1, double uy1,
+                                    double ux2, double uy2,
+                                    double x, double y,
+                                    double dx1, double dy1,
+                                    double dx2, double dy2)
+      {
+          Region clip = sg.getCompClip();
+<span class="changed">!         int abox[] = new int[4];</span>
+          AATileGenerator aatg =
+              renderengine.getAATileGenerator(x, y, dx1, dy1, dx2, dy2, 0, 0,
+                                              clip, abox);
+          if (aatg == null) {
+              // Nothing to render
+              return;
+          }
+  
+<span class="changed">!         renderTiles(sg, computeBBox(ux1, uy1, ux2, uy2), aatg, abox);</span>
+      }
+  
+      public void drawParallelogram(SunGraphics2D sg,
+                                    double ux1, double uy1,
+                                    double ux2, double uy2,
+<span class="newmarker">--- 73,102 ----</span>
+  
+      public void fill(SunGraphics2D sg, Shape s) {
+          renderPath(sg, s, null);
+      }
+  
+      public void fillParallelogram(SunGraphics2D sg,
+                                    double ux1, double uy1,
+                                    double ux2, double uy2,
+                                    double x, double y,
+                                    double dx1, double dy1,
+                                    double dx2, double dy2)
+      {
+          Region clip = sg.getCompClip();
+<span class="changed">!         final TileState ts = tileStateThreadLocal.get();</span>
+<span class="changed">!         final int[] abox = ts.abox;</span>
+<span class="changed">! </span>
+          AATileGenerator aatg =
+              renderengine.getAATileGenerator(x, y, dx1, dy1, dx2, dy2, 0, 0,
+                                              clip, abox);
+          if (aatg == null) {
+              // Nothing to render
+              return;
+          }
+  
+<span class="changed">!         renderTiles(sg, ts.computeBBox(ux1, uy1, ux2, uy2), aatg, abox, ts);</span>
+      }
+  
+      public void drawParallelogram(SunGraphics2D sg,
+                                    double ux1, double uy1,
+                                    double ux2, double uy2,
+<hr /><span class="oldmarker">*** 109,188 ****</span>
+                                    double dx1, double dy1,
+                                    double dx2, double dy2,
+                                    double lw1, double lw2)
+      {
+          Region clip = sg.getCompClip();
+<span class="changed">!         int abox[] = new int[4];</span>
+          AATileGenerator aatg =
+              renderengine.getAATileGenerator(x, y, dx1, dy1, dx2, dy2, lw1, lw2,
+                                              clip, abox);
+          if (aatg == null) {
+              // Nothing to render
+              return;
+          }
+  
+          // Note that bbox is of the original shape, not the wide path.
+          // This is appropriate for handing to Paint methods...
+<span class="changed">!         renderTiles(sg, computeBBox(ux1, uy1, ux2, uy2), aatg, abox);</span>
+<span class="changed">!     }</span>
+<span class="changed">! </span>
+<span class="changed">!     private static byte[] theTile;</span>
+<span class="changed">! </span>
+<span class="changed">!     private synchronized static byte[] getAlphaTile(int len) {</span>
+<span class="changed">!         byte[] t = theTile;</span>
+<span class="changed">!         if (t == null || t.length &lt; len) {</span>
+<span class="changed">!             t = new byte[len];</span>
+<span class="changed">!         } else {</span>
+<span class="changed">!             theTile = null;</span>
+<span class="changed">!         }</span>
+<span class="changed">!         return t;</span>
+<span class="changed">!     }</span>
+<span class="changed">! </span>
+<span class="changed">!     private synchronized static void dropAlphaTile(byte[] t) {</span>
+<span class="changed">!         theTile = t;</span>
+      }
+  
+      public void renderPath(SunGraphics2D sg, Shape s, BasicStroke bs) {
+          boolean adjust = (bs != null &amp;&amp;
+                            sg.strokeHint != SunHints.INTVAL_STROKE_PURE);
+          boolean thin = (sg.strokeState &lt;= SunGraphics2D.STROKE_THINDASHED);
+  
+          Region clip = sg.getCompClip();
+<span class="changed">!         int abox[] = new int[4];</span>
+          AATileGenerator aatg =
+              renderengine.getAATileGenerator(s, sg.transform, clip,
+                                              bs, thin, adjust, abox);
+          if (aatg == null) {
+              // Nothing to render
+              return;
+          }
+  
+<span class="changed">!         renderTiles(sg, s, aatg, abox);</span>
+      }
+  
+      public void renderTiles(SunGraphics2D sg, Shape s,
+<span class="changed">!                             AATileGenerator aatg, int abox[])</span>
+      {
+          Object context = null;
+<span class="removed">-         byte alpha[] = null;</span>
+          try {
+              context = outpipe.startSequence(sg, s,
+<span class="changed">!                                             new Rectangle(abox[0], abox[1],</span>
+<span class="changed">!                                                           abox[2] - abox[0],</span>
+<span class="changed">!                                                           abox[3] - abox[1]),</span>
+                                              abox);
+  
+<span class="changed">!             int tw = aatg.getTileWidth();</span>
+<span class="changed">!             int th = aatg.getTileHeight();</span>
+<span class="changed">!             alpha = getAlphaTile(tw * th);</span>
+  
+              byte[] atile;
+  
+              for (int y = abox[1]; y &lt; abox[3]; y += th) {
+                  for (int x = abox[0]; x &lt; abox[2]; x += tw) {
+                      int w = Math.min(tw, abox[2] - x);
+<span class="removed">-                     int h = Math.min(th, abox[3] - y);</span>
+  
+                      int a = aatg.getTypicalAlpha();
+                      if (a == 0x00 ||
+                          outpipe.needTile(context, x, y, w, h) == false)
+                      {
+<span class="newmarker">--- 104,170 ----</span>
+                                    double dx1, double dy1,
+                                    double dx2, double dy2,
+                                    double lw1, double lw2)
+      {
+          Region clip = sg.getCompClip();
+<span class="changed">!         final TileState ts = tileStateThreadLocal.get();</span>
+<span class="changed">!         final int[] abox = ts.abox;</span>
+<span class="changed">! </span>
+          AATileGenerator aatg =
+              renderengine.getAATileGenerator(x, y, dx1, dy1, dx2, dy2, lw1, lw2,
+                                              clip, abox);
+          if (aatg == null) {
+              // Nothing to render
+              return;
+          }
+  
+          // Note that bbox is of the original shape, not the wide path.
+          // This is appropriate for handing to Paint methods...
+<span class="changed">!         renderTiles(sg, ts.computeBBox(ux1, uy1, ux2, uy2), aatg, abox, ts);</span>
+      }
+  
+      public void renderPath(SunGraphics2D sg, Shape s, BasicStroke bs) {
+          boolean adjust = (bs != null &amp;&amp;
+                            sg.strokeHint != SunHints.INTVAL_STROKE_PURE);
+          boolean thin = (sg.strokeState &lt;= SunGraphics2D.STROKE_THINDASHED);
+  
+          Region clip = sg.getCompClip();
+<span class="changed">!         final TileState ts = tileStateThreadLocal.get();</span>
+<span class="changed">!         final int[] abox = ts.abox;</span>
+<span class="changed">! </span>
+          AATileGenerator aatg =
+              renderengine.getAATileGenerator(s, sg.transform, clip,
+                                              bs, thin, adjust, abox);
+          if (aatg == null) {
+              // Nothing to render
+              return;
+          }
+  
+<span class="changed">!         renderTiles(sg, s, aatg, abox, ts);</span>
+      }
+  
+      public void renderTiles(SunGraphics2D sg, Shape s,
+<span class="changed">!                             AATileGenerator aatg, int abox[], TileState ts)</span>
+      {
+          Object context = null;
+          try {
+              context = outpipe.startSequence(sg, s,
+<span class="changed">!                                             ts.computeDevBox(abox),</span>
+                                              abox);
+  
+<span class="changed">!             final int tw = aatg.getTileWidth();</span>
+<span class="changed">!             final int th = aatg.getTileHeight();</span>
+  
+<span class="new">+             // get tile from thread local storage:</span>
+<span class="new">+             final byte[] alpha = ts.getAlphaTile(tw * th);</span>
+              byte[] atile;
+  
+              for (int y = abox[1]; y &lt; abox[3]; y += th) {
+<span class="new">+                 int h = Math.min(th, abox[3] - y);</span>
+<span class="new">+ </span>
+                  for (int x = abox[0]; x &lt; abox[2]; x += tw) {
+                      int w = Math.min(tw, abox[2] - x);
+  
+                      int a = aatg.getTypicalAlpha();
+                      if (a == 0x00 ||
+                          outpipe.needTile(context, x, y, w, h) == false)
+                      {
+<hr /><span class="oldmarker">*** 205,215 ****</span>
+          } finally {
+              aatg.dispose();
+              if (context != null) {
+                  outpipe.endSequence(context);
+              }
+<span class="removed">-             if (alpha != null) {</span>
+<span class="removed">-                 dropAlphaTile(alpha);</span>
+              }
+          }
+      }
+  }
+<span class="newmarker">--- 187,244 ----</span>
+          } finally {
+              aatg.dispose();
+              if (context != null) {
+                  outpipe.endSequence(context);
+              }
+          }
+      }
+<span class="new">+ </span>
+<span class="new">+     // Tile state used by AAShapePipe</span>
+<span class="new">+     static final class TileState {</span>
+<span class="new">+         // cached tile (32 x 32 tile by default)</span>
+<span class="new">+         private byte[] theTile = new byte[32 * 32];</span>
+<span class="new">+         // dirty aabox array</span>
+<span class="new">+         final int[] abox = new int[4];</span>
+<span class="new">+         // dirty bbox rectangle</span>
+<span class="new">+         private final Rectangle dev = new Rectangle();</span>
+<span class="new">+         // dirty bbox rectangle2D.Double</span>
+<span class="new">+         private final Rectangle2D.Double bbox2D = new Rectangle2D.Double();</span>
+<span class="new">+ </span>
+<span class="new">+         byte[] getAlphaTile(int len) {</span>
+<span class="new">+             byte[] t = theTile;</span>
+<span class="new">+             if (t.length &lt; len) {</span>
+<span class="new">+                 // create a larger tile and may free current theTile (too small)</span>
+<span class="new">+                 theTile = t = new byte[len];</span>
+<span class="new">+             }</span>
+<span class="new">+             return t;</span>
+<span class="new">+         }</span>
+<span class="new">+ </span>
+<span class="new">+         Rectangle computeDevBox(final int[] abox) {</span>
+<span class="new">+             final Rectangle box = this.dev;</span>
+<span class="new">+             box.x = abox[0];</span>
+<span class="new">+             box.y = abox[1];</span>
+<span class="new">+             box.width = abox[2] - abox[0];</span>
+<span class="new">+             box.height = abox[3] - abox[1];</span>
+<span class="new">+             return box;</span>
+          }
+<span class="new">+ </span>
+<span class="new">+         Rectangle2D computeBBox(double ux1, double uy1,</span>
+<span class="new">+                                 double ux2, double uy2)</span>
+<span class="new">+         {</span>
+<span class="new">+             if ((ux2 -= ux1) &lt; 0.0) {</span>
+<span class="new">+                 ux1 += ux2;</span>
+<span class="new">+                 ux2 = -ux2;</span>
+<span class="new">+             }</span>
+<span class="new">+             if ((uy2 -= uy1) &lt; 0.0) {</span>
+<span class="new">+                 uy1 += uy2;</span>
+<span class="new">+                 uy2 = -uy2;</span>
+<span class="new">+             }</span>
+<span class="new">+             final Rectangle2D.Double box = this.bbox2D;</span>
+<span class="new">+             box.x = ux1;</span>
+<span class="new">+             box.y = uy1;</span>
+<span class="new">+             box.width = ux2;</span>
+<span class="new">+             box.height = uy2;</span>
+<span class="new">+             return box;</span>
+<span class="new">+         }</span>
+<span class="new">+     }</span>
+<span class="new">+ </span>
+  }
+</pre>
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/pipe/RenderingEngine.java.cdiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

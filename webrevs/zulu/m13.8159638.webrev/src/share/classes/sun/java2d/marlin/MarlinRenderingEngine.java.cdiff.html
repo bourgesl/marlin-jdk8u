@@ -1,0 +1,350 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Cdiff src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java</title>
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinProperties.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Renderer.java.cdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+        <pre>
+<hr /><span class="oldmarker">*** 45,55 ****</span>
+   * Marlin RendererEngine implementation (derived from Pisces)
+   */
+  public class MarlinRenderingEngine extends RenderingEngine
+                                     implements MarlinConst
+  {
+<span class="changed">!     private static enum NormMode {ON_WITH_AA, ON_NO_AA, OFF}</span>
+  
+      private static final float MIN_PEN_SIZE = 1f / NORM_SUBPIXELS;
+  
+      static final float UPPER_BND = Float.MAX_VALUE / 2.0f;
+      static final float LOWER_BND = -UPPER_BND;
+<span class="newmarker">--- 45,86 ----</span>
+   * Marlin RendererEngine implementation (derived from Pisces)
+   */
+  public class MarlinRenderingEngine extends RenderingEngine
+                                     implements MarlinConst
+  {
+<span class="changed">!     private static enum NormMode {</span>
+<span class="changed">!         ON_WITH_AA {</span>
+<span class="changed">!             @Override</span>
+<span class="changed">!             PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,</span>
+<span class="changed">!                                                     final PathIterator src)</span>
+<span class="changed">!             {</span>
+<span class="changed">!                 // NormalizingPathIterator NearestPixelCenter:</span>
+<span class="changed">!                 return rdrCtx.nPCPathIterator.init(src);</span>
+<span class="changed">!             }</span>
+<span class="changed">!         },</span>
+<span class="changed">!         ON_NO_AA{</span>
+<span class="changed">!             @Override</span>
+<span class="changed">!             PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,</span>
+<span class="changed">!                                                     final PathIterator src)</span>
+<span class="changed">!             {</span>
+<span class="changed">!                 // NearestPixel NormalizingPathIterator:</span>
+<span class="changed">!                 return rdrCtx.nPQPathIterator.init(src);</span>
+<span class="changed">!             }</span>
+<span class="changed">!         },</span>
+<span class="changed">!         OFF{</span>
+<span class="changed">!             @Override</span>
+<span class="changed">!             PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,</span>
+<span class="changed">!                                                     final PathIterator src)</span>
+<span class="changed">!             {</span>
+<span class="changed">!                 // return original path iterator if normalization is disabled:</span>
+<span class="changed">!                 return src;</span>
+<span class="changed">!             }</span>
+<span class="changed">!         };</span>
+<span class="changed">! </span>
+<span class="changed">!         abstract PathIterator getNormalizingPathIterator(RendererContext rdrCtx,</span>
+<span class="changed">!                                                          PathIterator src);</span>
+<span class="changed">!     }</span>
+  
+      private static final float MIN_PEN_SIZE = 1f / NORM_SUBPIXELS;
+  
+      static final float UPPER_BND = Float.MAX_VALUE / 2.0f;
+      static final float LOWER_BND = -UPPER_BND;
+<hr /><span class="oldmarker">*** 89,105 ****</span>
+                                      float dashphase)
+      {
+          final RendererContext rdrCtx = getRendererContext();
+          try {
+              // initialize a large copyable Path2D to avoid a lot of array growing:
+<span class="changed">!             final Path2D.Float p2d =</span>
+<span class="changed">!                     (rdrCtx.p2d == null) ?</span>
+<span class="changed">!                     (rdrCtx.p2d = new Path2D.Float(Path2D.WIND_NON_ZERO,</span>
+<span class="changed">!                                                    INITIAL_MEDIUM_ARRAY))</span>
+<span class="changed">!                     : rdrCtx.p2d;</span>
+<span class="changed">!             // reset</span>
+<span class="changed">!             p2d.reset();</span>
+  
+              strokeTo(rdrCtx,
+                       src,
+                       null,
+                       width,
+<span class="newmarker">--- 120,130 ----</span>
+                                      float dashphase)
+      {
+          final RendererContext rdrCtx = getRendererContext();
+          try {
+              // initialize a large copyable Path2D to avoid a lot of array growing:
+<span class="changed">!             final Path2D.Float p2d = rdrCtx.getPath2D();</span>
+  
+              strokeTo(rdrCtx,
+                       src,
+                       null,
+                       width,
+<hr /><span class="oldmarker">*** 272,282 ****</span>
+  
+      final void strokeTo(final RendererContext rdrCtx,
+                          Shape src,
+                          AffineTransform at,
+                          float width,
+<span class="changed">!                         NormMode normalize,</span>
+                          int caps,
+                          int join,
+                          float miterlimit,
+                          float[] dashes,
+                          float dashphase,
+<span class="newmarker">--- 297,307 ----</span>
+  
+      final void strokeTo(final RendererContext rdrCtx,
+                          Shape src,
+                          AffineTransform at,
+                          float width,
+<span class="changed">!                         NormMode norm,</span>
+                          int caps,
+                          int join,
+                          float miterlimit,
+                          float[] dashes,
+                          float dashphase,
+<hr /><span class="oldmarker">*** 336,352 ****</span>
+                  if (dashes != null) {
+                      recycleDashes = true;
+                      dashLen = dashes.length;
+                      final float[] newDashes;
+                      if (dashLen &lt;= INITIAL_ARRAY) {
+<span class="changed">!                         newDashes = rdrCtx.dasher.dashes_initial;</span>
+                      } else {
+                          if (DO_STATS) {
+<span class="changed">!                             rdrCtx.stats.stat_array_dasher_dasher</span>
+<span class="changed">!                                 .add(dashLen);</span>
+                          }
+<span class="changed">!                         newDashes = rdrCtx.getDirtyFloatArray(dashLen);</span>
+                      }
+                      System.arraycopy(dashes, 0, newDashes, 0, dashLen);
+                      dashes = newDashes;
+                      for (int i = 0; i &lt; dashLen; i++) {
+                          dashes[i] *= scale;
+<span class="newmarker">--- 361,376 ----</span>
+                  if (dashes != null) {
+                      recycleDashes = true;
+                      dashLen = dashes.length;
+                      final float[] newDashes;
+                      if (dashLen &lt;= INITIAL_ARRAY) {
+<span class="changed">!                         newDashes = rdrCtx.dasher.dashes_ref.initial;</span>
+                      } else {
+                          if (DO_STATS) {
+<span class="changed">!                             rdrCtx.stats.stat_array_dasher_dasher.add(dashLen);</span>
+                          }
+<span class="changed">!                         newDashes = rdrCtx.dasher.dashes_ref.getArray(dashLen);</span>
+                      }
+                      System.arraycopy(dashes, 0, newDashes, 0, dashLen);
+                      dashes = newDashes;
+                      for (int i = 0; i &lt; dashLen; i++) {
+                          dashes[i] *= scale;
+<hr /><span class="oldmarker">*** 398,408 ****</span>
+              pc2d = rdrCtx.dasher.init(pc2d, dashes, dashLen, dashphase,
+                                        recycleDashes);
+          }
+          pc2d = transformerPC2D.inverseDeltaTransformConsumer(pc2d, strokerat);
+  
+<span class="changed">!         final PathIterator pi = getNormalizingPathIterator(rdrCtx, normalize,</span>
+                                      src.getPathIterator(at));
+  
+          pathTo(rdrCtx, pi, pc2d);
+  
+          /*
+<span class="newmarker">--- 422,432 ----</span>
+              pc2d = rdrCtx.dasher.init(pc2d, dashes, dashLen, dashphase,
+                                        recycleDashes);
+          }
+          pc2d = transformerPC2D.inverseDeltaTransformConsumer(pc2d, strokerat);
+  
+<span class="changed">!         final PathIterator pi = norm.getNormalizingPathIterator(rdrCtx,</span>
+                                           src.getPathIterator(at));
+  
+          pathTo(rdrCtx, pi, pc2d);
+  
+          /*
+<hr /><span class="oldmarker">*** 422,450 ****</span>
+  
+      private static boolean nearZero(final double num) {
+          return Math.abs(num) &lt; 2.0 * Math.ulp(num);
+      }
+  
+<span class="removed">-     PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,</span>
+<span class="removed">-                                             final NormMode mode,</span>
+<span class="removed">-                                             final PathIterator src)</span>
+<span class="removed">-     {</span>
+<span class="removed">-         switch (mode) {</span>
+<span class="removed">-             case ON_WITH_AA:</span>
+<span class="removed">-                 // NormalizingPathIterator NearestPixelCenter:</span>
+<span class="removed">-                 return rdrCtx.nPCPathIterator.init(src);</span>
+<span class="removed">-             case ON_NO_AA:</span>
+<span class="removed">-                 // NearestPixel NormalizingPathIterator:</span>
+<span class="removed">-                 return rdrCtx.nPQPathIterator.init(src);</span>
+<span class="removed">-             case OFF:</span>
+<span class="removed">-                 // return original path iterator if normalization is disabled:</span>
+<span class="removed">-                 return src;</span>
+<span class="removed">-             default:</span>
+<span class="removed">-                 throw new InternalError("Unrecognized normalization mode");</span>
+<span class="removed">-         }</span>
+<span class="removed">-     }</span>
+<span class="removed">- </span>
+      abstract static class NormalizingPathIterator implements PathIterator {
+  
+          private PathIterator src;
+  
+          // the adjustment applied to the current position.
+<span class="newmarker">--- 446,455 ----</span>
+<hr /><span class="oldmarker">*** 790,800 ****</span>
+  
+              final NormMode norm = (normalize) ? NormMode.ON_WITH_AA : NormMode.OFF;
+  
+              if (bs == null) {
+                  // fill shape:
+<span class="changed">!                 final PathIterator pi = getNormalizingPathIterator(rdrCtx, norm,</span>
+                                              s.getPathIterator(_at));
+  
+                  // note: Winding rule may be EvenOdd ONLY for fill operations !
+                  r = rdrCtx.renderer.init(clip.getLoX(), clip.getLoY(),
+                                           clip.getWidth(), clip.getHeight(),
+<span class="newmarker">--- 795,805 ----</span>
+  
+              final NormMode norm = (normalize) ? NormMode.ON_WITH_AA : NormMode.OFF;
+  
+              if (bs == null) {
+                  // fill shape:
+<span class="changed">!                 final PathIterator pi = norm.getNormalizingPathIterator(rdrCtx,</span>
+                                                   s.getPathIterator(_at));
+  
+                  // note: Winding rule may be EvenOdd ONLY for fill operations !
+                  r = rdrCtx.renderer.init(clip.getLoX(), clip.getLoY(),
+                                           clip.getWidth(), clip.getHeight(),
+<hr /><span class="oldmarker">*** 1019,1030 ****</span>
+<span class="newmarker">--- 1024,1038 ----</span>
+          logInfo("sun.java2d.renderer.useThreadLocal   = "
+                  + USE_THREAD_LOCAL);
+          logInfo("sun.java2d.renderer.useRef           = "
+                  + refType);
+  
+<span class="new">+         logInfo("sun.java2d.renderer.edges            = "</span>
+<span class="new">+                 + MarlinConst.INITIAL_EDGES_COUNT);</span>
+          logInfo("sun.java2d.renderer.pixelsize        = "
+                  + MarlinConst.INITIAL_PIXEL_DIM);
+<span class="new">+ </span>
+          logInfo("sun.java2d.renderer.subPixel_log2_X  = "
+                  + MarlinConst.SUBPIXEL_LG_POSITIONS_X);
+          logInfo("sun.java2d.renderer.subPixel_log2_Y  = "
+                  + MarlinConst.SUBPIXEL_LG_POSITIONS_Y);
+          logInfo("sun.java2d.renderer.tileSize_log2    = "
+<hr /><span class="oldmarker">*** 1074,1083 ****</span>
+<span class="newmarker">--- 1082,1096 ----</span>
+          logInfo("CUB_COUNT_LG = " + Renderer.CUB_COUNT_LG);
+          logInfo("CUB_DEC_BND  = " + Renderer.CUB_DEC_BND);
+          logInfo("CUB_INC_BND  = " + Renderer.CUB_INC_BND);
+          logInfo("QUAD_DEC_BND = " + Renderer.QUAD_DEC_BND);
+  
+<span class="new">+         logInfo("INITIAL_EDGES_CAPACITY               = "</span>
+<span class="new">+                 + MarlinConst.INITIAL_EDGES_CAPACITY);</span>
+<span class="new">+         logInfo("INITIAL_CROSSING_COUNT               = "</span>
+<span class="new">+                 + Renderer.INITIAL_CROSSING_COUNT);</span>
+<span class="new">+ </span>
+          logInfo("=========================================================="
+                  + "=====================");
+      }
+  
+      /**
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinProperties.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Renderer.java.cdiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

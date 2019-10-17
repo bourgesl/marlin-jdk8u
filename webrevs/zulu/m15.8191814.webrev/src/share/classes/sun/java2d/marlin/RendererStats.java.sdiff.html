@@ -1,0 +1,589 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/RendererStats.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13694">13694</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8191814">8191814</a>: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
+Summary: upgrade to Marlin 0.8.2 providing efficient path clipping (Stroker and Filler)
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+
+</pre><hr></hr><pre>
+  51 
+  52         // Keep a strong reference to dump it later:
+  53         RendererStatsHolder.getInstance().add(parent, stats);
+  54 
+  55         return stats;
+  56     }
+  57 
+  58     public static void dumpStats() {
+  59         RendererStatsHolder.dumpStats();
+  60     }
+  61 
+  62     // context name (debugging purposes)
+  63     final String name;
+  64     // stats
+  65     final StatLong stat_cache_rowAA
+  66         = new StatLong("cache.rowAA");
+  67     final StatLong stat_cache_rowAAChunk
+  68         = new StatLong("cache.rowAAChunk");
+  69     final StatLong stat_cache_tiles
+  70         = new StatLong("cache.tiles");
+<span class="removed">  71     final StatLong stat_rdr_poly_stack_curves</span>
+<span class="removed">  72         = new StatLong("renderer.poly.stack.curves");</span>
+<span class="removed">  73     final StatLong stat_rdr_poly_stack_types</span>
+<span class="removed">  74         = new StatLong("renderer.poly.stack.types");</span>
+  75     final StatLong stat_rdr_addLine
+  76         = new StatLong("renderer.addLine");
+  77     final StatLong stat_rdr_addLine_skip
+  78         = new StatLong("renderer.addLine.skip");
+  79     final StatLong stat_rdr_curveBreak
+  80         = new StatLong("renderer.curveBreakIntoLinesAndAdd");
+  81     final StatLong stat_rdr_curveBreak_dec
+  82         = new StatLong("renderer.curveBreakIntoLinesAndAdd.dec");
+  83     final StatLong stat_rdr_curveBreak_inc
+  84         = new StatLong("renderer.curveBreakIntoLinesAndAdd.inc");
+  85     final StatLong stat_rdr_quadBreak
+  86         = new StatLong("renderer.quadBreakIntoLinesAndAdd");
+  87     final StatLong stat_rdr_quadBreak_dec
+  88         = new StatLong("renderer.quadBreakIntoLinesAndAdd.dec");
+  89     final StatLong stat_rdr_edges
+  90         = new StatLong("renderer.edges");
+  91     final StatLong stat_rdr_edges_count
+  92         = new StatLong("renderer.edges.count");
+  93     final StatLong stat_rdr_edges_resizes
+  94         = new StatLong("renderer.edges.resize");
+  95     final StatLong stat_rdr_activeEdges
+  96         = new StatLong("renderer.activeEdges");
+  97     final StatLong stat_rdr_activeEdges_updates
+  98         = new StatLong("renderer.activeEdges.updates");
+  99     final StatLong stat_rdr_activeEdges_adds
+ 100         = new StatLong("renderer.activeEdges.adds");
+ 101     final StatLong stat_rdr_activeEdges_adds_high
+ 102         = new StatLong("renderer.activeEdges.adds_high");
+ 103     final StatLong stat_rdr_crossings_updates
+ 104         = new StatLong("renderer.crossings.updates");
+ 105     final StatLong stat_rdr_crossings_sorts
+ 106         = new StatLong("renderer.crossings.sorts");
+ 107     final StatLong stat_rdr_crossings_bsearch
+ 108         = new StatLong("renderer.crossings.bsearch");
+ 109     final StatLong stat_rdr_crossings_msorts
+ 110         = new StatLong("renderer.crossings.msorts");
+
+
+
+
+
+
+
+
+
+
+ 111     // growable arrays
+ 112     final StatLong stat_array_dasher_dasher
+ 113         = new StatLong("array.dasher.dasher.d_float");
+ 114     final StatLong stat_array_dasher_firstSegmentsBuffer
+ 115         = new StatLong("array.dasher.firstSegmentsBuffer.d_float");
+<span class="removed"> 116     final StatLong stat_array_stroker_polystack_curves</span>
+<span class="removed"> 117         = new StatLong("array.stroker.polystack.curves.d_float");</span>
+<span class="removed"> 118     final StatLong stat_array_stroker_polystack_curveTypes</span>
+<span class="removed"> 119         = new StatLong("array.stroker.polystack.curveTypes.d_byte");</span>
+ 120     final StatLong stat_array_marlincache_rowAAChunk
+ 121         = new StatLong("array.marlincache.rowAAChunk.resize");
+ 122     final StatLong stat_array_marlincache_touchedTile
+ 123         = new StatLong("array.marlincache.touchedTile.int");
+ 124     final StatLong stat_array_renderer_alphaline
+ 125         = new StatLong("array.renderer.alphaline.int");
+ 126     final StatLong stat_array_renderer_crossings
+ 127         = new StatLong("array.renderer.crossings.int");
+ 128     final StatLong stat_array_renderer_aux_crossings
+ 129         = new StatLong("array.renderer.aux_crossings.int");
+ 130     final StatLong stat_array_renderer_edgeBuckets
+ 131         = new StatLong("array.renderer.edgeBuckets.int");
+ 132     final StatLong stat_array_renderer_edgeBucketCounts
+ 133         = new StatLong("array.renderer.edgeBucketCounts.int");
+ 134     final StatLong stat_array_renderer_edgePtrs
+ 135         = new StatLong("array.renderer.edgePtrs.int");
+ 136     final StatLong stat_array_renderer_aux_edgePtrs
+ 137         = new StatLong("array.renderer.aux_edgePtrs.int");
+
+
+
+
+
+
+
+
+
+
+ 138     // histograms
+ 139     final Histogram hist_rdr_edges_count
+ 140         = new Histogram("renderer.edges.count");
+<span class="removed"> 141     final Histogram hist_rdr_poly_stack_curves</span>
+<span class="removed"> 142         = new Histogram("renderer.polystack.curves");</span>
+ 143     final Histogram hist_rdr_crossings
+ 144         = new Histogram("renderer.crossings");
+ 145     final Histogram hist_rdr_crossings_ratio
+ 146         = new Histogram("renderer.crossings.ratio");
+ 147     final Histogram hist_rdr_crossings_adds
+ 148         = new Histogram("renderer.crossings.adds");
+ 149     final Histogram hist_rdr_crossings_msorts
+ 150         = new Histogram("renderer.crossings.msorts");
+ 151     final Histogram hist_rdr_crossings_msorts_adds
+ 152         = new Histogram("renderer.crossings.msorts.adds");
+
+
+ 153     final Histogram hist_tile_generator_alpha
+ 154         = new Histogram("tile_generator.alpha");
+ 155     final Histogram hist_tile_generator_encoding
+ 156         = new Histogram("tile_generator.encoding");
+ 157     final Histogram hist_tile_generator_encoding_dist
+ 158         = new Histogram("tile_generator.encoding.dist");
+ 159     final Histogram hist_tile_generator_encoding_ratio
+ 160         = new Histogram("tile_generator.encoding.ratio");
+ 161     final Histogram hist_tile_generator_encoding_runLen
+ 162         = new Histogram("tile_generator.encoding.runLen");
+
+
+
+
+ 163     // all stats
+ 164     final StatLong[] statistics = new StatLong[]{
+ 165         stat_cache_rowAA,
+ 166         stat_cache_rowAAChunk,
+ 167         stat_cache_tiles,
+<span class="removed"> 168         stat_rdr_poly_stack_types,</span>
+<span class="removed"> 169         stat_rdr_poly_stack_curves,</span>
+ 170         stat_rdr_addLine,
+ 171         stat_rdr_addLine_skip,
+ 172         stat_rdr_curveBreak,
+ 173         stat_rdr_curveBreak_dec,
+ 174         stat_rdr_curveBreak_inc,
+ 175         stat_rdr_quadBreak,
+ 176         stat_rdr_quadBreak_dec,
+ 177         stat_rdr_edges,
+ 178         stat_rdr_edges_count,
+ 179         stat_rdr_edges_resizes,
+ 180         stat_rdr_activeEdges,
+ 181         stat_rdr_activeEdges_updates,
+ 182         stat_rdr_activeEdges_adds,
+ 183         stat_rdr_activeEdges_adds_high,
+ 184         stat_rdr_crossings_updates,
+ 185         stat_rdr_crossings_sorts,
+ 186         stat_rdr_crossings_bsearch,
+ 187         stat_rdr_crossings_msorts,
+
+
+
+
+
+ 188         hist_rdr_edges_count,
+<span class="removed"> 189         hist_rdr_poly_stack_curves,</span>
+ 190         hist_rdr_crossings,
+ 191         hist_rdr_crossings_ratio,
+ 192         hist_rdr_crossings_adds,
+ 193         hist_rdr_crossings_msorts,
+ 194         hist_rdr_crossings_msorts_adds,
+ 195         hist_tile_generator_alpha,
+ 196         hist_tile_generator_encoding,
+ 197         hist_tile_generator_encoding_dist,
+ 198         hist_tile_generator_encoding_ratio,
+ 199         hist_tile_generator_encoding_runLen,
+
+
+
+ 200         stat_array_dasher_dasher,
+ 201         stat_array_dasher_firstSegmentsBuffer,
+<span class="removed"> 202         stat_array_stroker_polystack_curves,</span>
+<span class="removed"> 203         stat_array_stroker_polystack_curveTypes,</span>
+ 204         stat_array_marlincache_rowAAChunk,
+ 205         stat_array_marlincache_touchedTile,
+ 206         stat_array_renderer_alphaline,
+ 207         stat_array_renderer_crossings,
+ 208         stat_array_renderer_aux_crossings,
+ 209         stat_array_renderer_edgeBuckets,
+ 210         stat_array_renderer_edgeBucketCounts,
+ 211         stat_array_renderer_edgePtrs,
+<span class="changed"> 212         stat_array_renderer_aux_edgePtrs</span>
+
+
+
+
+
+ 213     };
+ 214     // monitors
+ 215     final Monitor mon_pre_getAATileGenerator
+ 216         = new Monitor("MarlinRenderingEngine.getAATileGenerator()");
+ 217     final Monitor mon_rdr_addLine
+ 218         = new Monitor("Renderer.addLine()");
+ 219     final Monitor mon_rdr_endRendering
+ 220         = new Monitor("Renderer.endRendering()");
+ 221     final Monitor mon_rdr_endRendering_Y
+ 222         = new Monitor("Renderer._endRendering(Y)");
+ 223     final Monitor mon_rdr_copyAARow
+ 224         = new Monitor("Renderer.copyAARow()");
+ 225     final Monitor mon_pipe_renderTiles
+ 226         = new Monitor("AAShapePipe.renderTiles()");
+ 227     final Monitor mon_ptg_getAlpha
+ 228         = new Monitor("MarlinTileGenerator.getAlpha()");
+ 229     final Monitor mon_debug
+ 230         = new Monitor("DEBUG()");
+ 231     // all monitors
+ 232     final Monitor[] monitors = new Monitor[]{
+
+</pre><hr></hr>
+</pre></td><td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2015, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+
+</pre><hr></hr><pre>
+  51 
+  52         // Keep a strong reference to dump it later:
+  53         RendererStatsHolder.getInstance().add(parent, stats);
+  54 
+  55         return stats;
+  56     }
+  57 
+  58     public static void dumpStats() {
+  59         RendererStatsHolder.dumpStats();
+  60     }
+  61 
+  62     // context name (debugging purposes)
+  63     final String name;
+  64     // stats
+  65     final StatLong stat_cache_rowAA
+  66         = new StatLong("cache.rowAA");
+  67     final StatLong stat_cache_rowAAChunk
+  68         = new StatLong("cache.rowAAChunk");
+  69     final StatLong stat_cache_tiles
+  70         = new StatLong("cache.tiles");
+
+
+
+
+  71     final StatLong stat_rdr_addLine
+  72         = new StatLong("renderer.addLine");
+  73     final StatLong stat_rdr_addLine_skip
+  74         = new StatLong("renderer.addLine.skip");
+  75     final StatLong stat_rdr_curveBreak
+  76         = new StatLong("renderer.curveBreakIntoLinesAndAdd");
+  77     final StatLong stat_rdr_curveBreak_dec
+  78         = new StatLong("renderer.curveBreakIntoLinesAndAdd.dec");
+  79     final StatLong stat_rdr_curveBreak_inc
+  80         = new StatLong("renderer.curveBreakIntoLinesAndAdd.inc");
+  81     final StatLong stat_rdr_quadBreak
+  82         = new StatLong("renderer.quadBreakIntoLinesAndAdd");
+  83     final StatLong stat_rdr_quadBreak_dec
+  84         = new StatLong("renderer.quadBreakIntoLinesAndAdd.dec");
+  85     final StatLong stat_rdr_edges
+  86         = new StatLong("renderer.edges");
+  87     final StatLong stat_rdr_edges_count
+  88         = new StatLong("renderer.edges.count");
+  89     final StatLong stat_rdr_edges_resizes
+  90         = new StatLong("renderer.edges.resize");
+  91     final StatLong stat_rdr_activeEdges
+  92         = new StatLong("renderer.activeEdges");
+  93     final StatLong stat_rdr_activeEdges_updates
+  94         = new StatLong("renderer.activeEdges.updates");
+  95     final StatLong stat_rdr_activeEdges_adds
+  96         = new StatLong("renderer.activeEdges.adds");
+  97     final StatLong stat_rdr_activeEdges_adds_high
+  98         = new StatLong("renderer.activeEdges.adds_high");
+  99     final StatLong stat_rdr_crossings_updates
+ 100         = new StatLong("renderer.crossings.updates");
+ 101     final StatLong stat_rdr_crossings_sorts
+ 102         = new StatLong("renderer.crossings.sorts");
+ 103     final StatLong stat_rdr_crossings_bsearch
+ 104         = new StatLong("renderer.crossings.bsearch");
+ 105     final StatLong stat_rdr_crossings_msorts
+ 106         = new StatLong("renderer.crossings.msorts");
+<span class="new"> 107     final StatLong stat_str_polystack_curves</span>
+<span class="new"> 108         = new StatLong("stroker.polystack.curves");</span>
+<span class="new"> 109     final StatLong stat_str_polystack_types</span>
+<span class="new"> 110         = new StatLong("stroker.polystack.types");</span>
+<span class="new"> 111     final StatLong stat_cpd_polystack_curves</span>
+<span class="new"> 112         = new StatLong("closedPathDetector.polystack.curves");</span>
+<span class="new"> 113     final StatLong stat_cpd_polystack_types</span>
+<span class="new"> 114         = new StatLong("closedPathDetector.polystack.types");</span>
+<span class="new"> 115     final StatLong stat_pcf_idxstack_indices</span>
+<span class="new"> 116         = new StatLong("pathClipFilter.stack.indices");</span>
+ 117     // growable arrays
+ 118     final StatLong stat_array_dasher_dasher
+ 119         = new StatLong("array.dasher.dasher.d_float");
+ 120     final StatLong stat_array_dasher_firstSegmentsBuffer
+ 121         = new StatLong("array.dasher.firstSegmentsBuffer.d_float");
+
+
+
+
+ 122     final StatLong stat_array_marlincache_rowAAChunk
+ 123         = new StatLong("array.marlincache.rowAAChunk.resize");
+ 124     final StatLong stat_array_marlincache_touchedTile
+ 125         = new StatLong("array.marlincache.touchedTile.int");
+ 126     final StatLong stat_array_renderer_alphaline
+ 127         = new StatLong("array.renderer.alphaline.int");
+ 128     final StatLong stat_array_renderer_crossings
+ 129         = new StatLong("array.renderer.crossings.int");
+ 130     final StatLong stat_array_renderer_aux_crossings
+ 131         = new StatLong("array.renderer.aux_crossings.int");
+ 132     final StatLong stat_array_renderer_edgeBuckets
+ 133         = new StatLong("array.renderer.edgeBuckets.int");
+ 134     final StatLong stat_array_renderer_edgeBucketCounts
+ 135         = new StatLong("array.renderer.edgeBucketCounts.int");
+ 136     final StatLong stat_array_renderer_edgePtrs
+ 137         = new StatLong("array.renderer.edgePtrs.int");
+ 138     final StatLong stat_array_renderer_aux_edgePtrs
+ 139         = new StatLong("array.renderer.aux_edgePtrs.int");
+<span class="new"> 140     final StatLong stat_array_str_polystack_curves</span>
+<span class="new"> 141         = new StatLong("array.stroker.polystack.curves.d_float");</span>
+<span class="new"> 142     final StatLong stat_array_str_polystack_types</span>
+<span class="new"> 143         = new StatLong("array.stroker.polystack.curveTypes.d_byte");</span>
+<span class="new"> 144     final StatLong stat_array_cpd_polystack_curves</span>
+<span class="new"> 145         = new StatLong("array.closedPathDetector.polystack.curves.d_float");</span>
+<span class="new"> 146     final StatLong stat_array_cpd_polystack_types</span>
+<span class="new"> 147         = new StatLong("array.closedPathDetector.polystack.curveTypes.d_byte");</span>
+<span class="new"> 148     final StatLong stat_array_pcf_idxstack_indices</span>
+<span class="new"> 149         = new StatLong("array.pathClipFilter.stack.indices.d_int");</span>
+ 150     // histograms
+ 151     final Histogram hist_rdr_edges_count
+ 152         = new Histogram("renderer.edges.count");
+
+
+ 153     final Histogram hist_rdr_crossings
+ 154         = new Histogram("renderer.crossings");
+ 155     final Histogram hist_rdr_crossings_ratio
+ 156         = new Histogram("renderer.crossings.ratio");
+ 157     final Histogram hist_rdr_crossings_adds
+ 158         = new Histogram("renderer.crossings.adds");
+ 159     final Histogram hist_rdr_crossings_msorts
+ 160         = new Histogram("renderer.crossings.msorts");
+ 161     final Histogram hist_rdr_crossings_msorts_adds
+ 162         = new Histogram("renderer.crossings.msorts.adds");
+<span class="new"> 163     final Histogram hist_str_polystack_curves</span>
+<span class="new"> 164         = new Histogram("stroker.polystack.curves");</span>
+ 165     final Histogram hist_tile_generator_alpha
+ 166         = new Histogram("tile_generator.alpha");
+ 167     final Histogram hist_tile_generator_encoding
+ 168         = new Histogram("tile_generator.encoding");
+ 169     final Histogram hist_tile_generator_encoding_dist
+ 170         = new Histogram("tile_generator.encoding.dist");
+ 171     final Histogram hist_tile_generator_encoding_ratio
+ 172         = new Histogram("tile_generator.encoding.ratio");
+ 173     final Histogram hist_tile_generator_encoding_runLen
+ 174         = new Histogram("tile_generator.encoding.runLen");
+<span class="new"> 175     final Histogram hist_cpd_polystack_curves</span>
+<span class="new"> 176         = new Histogram("closedPathDetector.polystack.curves");</span>
+<span class="new"> 177     final Histogram hist_pcf_idxstack_indices</span>
+<span class="new"> 178         = new Histogram("pathClipFilter.stack.indices");</span>
+ 179     // all stats
+ 180     final StatLong[] statistics = new StatLong[]{
+ 181         stat_cache_rowAA,
+ 182         stat_cache_rowAAChunk,
+ 183         stat_cache_tiles,
+
+
+ 184         stat_rdr_addLine,
+ 185         stat_rdr_addLine_skip,
+ 186         stat_rdr_curveBreak,
+ 187         stat_rdr_curveBreak_dec,
+ 188         stat_rdr_curveBreak_inc,
+ 189         stat_rdr_quadBreak,
+ 190         stat_rdr_quadBreak_dec,
+ 191         stat_rdr_edges,
+ 192         stat_rdr_edges_count,
+ 193         stat_rdr_edges_resizes,
+ 194         stat_rdr_activeEdges,
+ 195         stat_rdr_activeEdges_updates,
+ 196         stat_rdr_activeEdges_adds,
+ 197         stat_rdr_activeEdges_adds_high,
+ 198         stat_rdr_crossings_updates,
+ 199         stat_rdr_crossings_sorts,
+ 200         stat_rdr_crossings_bsearch,
+ 201         stat_rdr_crossings_msorts,
+<span class="new"> 202         stat_str_polystack_types,</span>
+<span class="new"> 203         stat_str_polystack_curves,</span>
+<span class="new"> 204         stat_cpd_polystack_curves,</span>
+<span class="new"> 205         stat_cpd_polystack_types,</span>
+<span class="new"> 206         stat_pcf_idxstack_indices,</span>
+ 207         hist_rdr_edges_count,
+
+ 208         hist_rdr_crossings,
+ 209         hist_rdr_crossings_ratio,
+ 210         hist_rdr_crossings_adds,
+ 211         hist_rdr_crossings_msorts,
+ 212         hist_rdr_crossings_msorts_adds,
+ 213         hist_tile_generator_alpha,
+ 214         hist_tile_generator_encoding,
+ 215         hist_tile_generator_encoding_dist,
+ 216         hist_tile_generator_encoding_ratio,
+ 217         hist_tile_generator_encoding_runLen,
+<span class="new"> 218         hist_str_polystack_curves,</span>
+<span class="new"> 219         hist_cpd_polystack_curves,</span>
+<span class="new"> 220         hist_pcf_idxstack_indices,</span>
+ 221         stat_array_dasher_dasher,
+ 222         stat_array_dasher_firstSegmentsBuffer,
+
+
+ 223         stat_array_marlincache_rowAAChunk,
+ 224         stat_array_marlincache_touchedTile,
+ 225         stat_array_renderer_alphaline,
+ 226         stat_array_renderer_crossings,
+ 227         stat_array_renderer_aux_crossings,
+ 228         stat_array_renderer_edgeBuckets,
+ 229         stat_array_renderer_edgeBucketCounts,
+ 230         stat_array_renderer_edgePtrs,
+<span class="changed"> 231         stat_array_renderer_aux_edgePtrs,</span>
+<span class="changed"> 232         stat_array_str_polystack_curves,</span>
+<span class="changed"> 233         stat_array_str_polystack_types,</span>
+<span class="changed"> 234         stat_array_cpd_polystack_curves,</span>
+<span class="changed"> 235         stat_array_cpd_polystack_types,</span>
+<span class="changed"> 236         stat_array_pcf_idxstack_indices</span>
+ 237     };
+ 238     // monitors
+ 239     final Monitor mon_pre_getAATileGenerator
+ 240         = new Monitor("MarlinRenderingEngine.getAATileGenerator()");
+ 241     final Monitor mon_rdr_addLine
+ 242         = new Monitor("Renderer.addLine()");
+ 243     final Monitor mon_rdr_endRendering
+ 244         = new Monitor("Renderer.endRendering()");
+ 245     final Monitor mon_rdr_endRendering_Y
+ 246         = new Monitor("Renderer._endRendering(Y)");
+ 247     final Monitor mon_rdr_copyAARow
+ 248         = new Monitor("Renderer.copyAARow()");
+ 249     final Monitor mon_pipe_renderTiles
+ 250         = new Monitor("AAShapePipe.renderTiles()");
+ 251     final Monitor mon_ptg_getAlpha
+ 252         = new Monitor("MarlinTileGenerator.getAlpha()");
+ 253     final Monitor mon_debug
+ 254         = new Monitor("DEBUG()");
+ 255     // all monitors
+ 256     final Monitor[] monitors = new Monitor[]{
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

@@ -1,0 +1,575 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinCache.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13689">13689</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8148886">8148886</a>: SEGV in sun.java2d.marlin.Renderer._endRendering
+Summary: handle reentrancy in both AAShapePipe and MarlinRenderingEngine using new sun.java2d.ReentrantContextProvider implementations
+Reviewed-by: flar, prr</pre>
+
+<table><tr valign="top">
+<td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2015, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.BasicStroke;
+  29 import java.awt.Shape;
+  30 import java.awt.geom.AffineTransform;
+  31 import java.awt.geom.Path2D;
+  32 import java.awt.geom.PathIterator;
+<span class="removed">  33 import java.lang.ref.Reference;</span>
+  34 import java.security.AccessController;
+<span class="removed">  35 import java.util.concurrent.ConcurrentLinkedQueue;</span>
+  36 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  37 import sun.awt.geom.PathConsumer2D;
+
+
+
+  38 import sun.java2d.pipe.AATileGenerator;
+  39 import sun.java2d.pipe.Region;
+  40 import sun.java2d.pipe.RenderingEngine;
+  41 import sun.security.action.GetPropertyAction;
+  42 
+  43 /**
+  44  * Marlin RendererEngine implementation (derived from Pisces)
+  45  */
+  46 public class MarlinRenderingEngine extends RenderingEngine
+  47                                    implements MarlinConst
+  48 {
+  49     private static enum NormMode {ON_WITH_AA, ON_NO_AA, OFF}
+  50 
+  51     private static final float MIN_PEN_SIZE = 1f / NORM_SUBPIXELS;
+  52 
+  53     /**
+  54      * Public constructor
+  55      */
+  56     public MarlinRenderingEngine() {
+  57         super();
+
+</pre><hr></hr><pre>
+ 865     }
+ 866 
+ 867     static {
+ 868         if (PathIterator.WIND_NON_ZERO != Renderer.WIND_NON_ZERO ||
+ 869             PathIterator.WIND_EVEN_ODD != Renderer.WIND_EVEN_ODD ||
+ 870             BasicStroke.JOIN_MITER != Stroker.JOIN_MITER ||
+ 871             BasicStroke.JOIN_ROUND != Stroker.JOIN_ROUND ||
+ 872             BasicStroke.JOIN_BEVEL != Stroker.JOIN_BEVEL ||
+ 873             BasicStroke.CAP_BUTT != Stroker.CAP_BUTT ||
+ 874             BasicStroke.CAP_ROUND != Stroker.CAP_ROUND ||
+ 875             BasicStroke.CAP_SQUARE != Stroker.CAP_SQUARE)
+ 876         {
+ 877             throw new InternalError("mismatched renderer constants");
+ 878         }
+ 879     }
+ 880 
+ 881     // --- RendererContext handling ---
+ 882     // use ThreadLocal or ConcurrentLinkedQueue to get one RendererContext
+ 883     private static final boolean useThreadLocal;
+ 884 
+<span class="removed"> 885     // hard reference</span>
+<span class="removed"> 886     static final int REF_HARD = 0;</span>
+<span class="removed"> 887     // soft reference</span>
+<span class="removed"> 888     static final int REF_SOFT = 1;</span>
+<span class="removed"> 889     // weak reference</span>
+<span class="removed"> 890     static final int REF_WEAK = 2;</span>
+<span class="removed"> 891 </span>
+ 892     // reference type stored in either TL or CLQ
+ 893     static final int REF_TYPE;
+ 894 
+ 895     // Per-thread RendererContext
+<span class="changed"> 896     private static final ThreadLocal&lt;Object&gt; rdrCtxThreadLocal;</span>
+<span class="changed"> 897     // RendererContext queue when ThreadLocal is disabled</span>
+<span class="changed"> 898     private static final ConcurrentLinkedQueue&lt;Object&gt; rdrCtxQueue;</span>
+ 899 
+ 900     // Static initializer to use TL or CLQ mode
+ 901     static {
+<span class="removed"> 902         // CLQ mode by default:</span>
+ 903         useThreadLocal = MarlinProperties.isUseThreadLocal();
+<span class="removed"> 904         rdrCtxThreadLocal = (useThreadLocal) ? new ThreadLocal&lt;Object&gt;()</span>
+<span class="removed"> 905                                              : null;</span>
+<span class="removed"> 906         rdrCtxQueue = (!useThreadLocal) ? new ConcurrentLinkedQueue&lt;Object&gt;()</span>
+<span class="removed"> 907                                         : null;</span>
+ 908 
+ 909         // Soft reference by default:
+<span class="changed"> 910         String refType = AccessController.doPrivileged(</span>
+ 911                             new GetPropertyAction("sun.java2d.renderer.useRef",
+ 912                             "soft"));
+ 913         switch (refType) {
+ 914             default:
+ 915             case "soft":
+<span class="changed"> 916                 REF_TYPE = REF_SOFT;</span>
+ 917                 break;
+ 918             case "weak":
+<span class="changed"> 919                 REF_TYPE = REF_WEAK;</span>
+ 920                 break;
+ 921             case "hard":
+<span class="changed"> 922                 REF_TYPE = REF_HARD;</span>
+ 923                 break;
+ 924         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 925     }
+ 926 
+ 927     private static boolean settingsLogged = !enableLogs;
+ 928 
+ 929     private static void logSettings(final String reClass) {
+ 930         // log information at startup
+ 931         if (settingsLogged) {
+ 932             return;
+ 933         }
+ 934         settingsLogged = true;
+ 935 
+ 936         String refType;
+ 937         switch (REF_TYPE) {
+ 938             default:
+<span class="changed"> 939             case REF_HARD:</span>
+ 940                 refType = "hard";
+ 941                 break;
+<span class="changed"> 942             case REF_SOFT:</span>
+ 943                 refType = "soft";
+ 944                 break;
+<span class="changed"> 945             case REF_WEAK:</span>
+ 946                 refType = "weak";
+ 947                 break;
+ 948         }
+ 949 
+ 950         logInfo("=========================================================="
+ 951                 + "=====================");
+ 952 
+ 953         logInfo("Marlin software rasterizer           = ENABLED");
+ 954         logInfo("Version                              = ["
+ 955                 + Version.getVersion() + "]");
+ 956         logInfo("sun.java2d.renderer                  = "
+ 957                 + reClass);
+ 958         logInfo("sun.java2d.renderer.useThreadLocal   = "
+ 959                 + useThreadLocal);
+ 960         logInfo("sun.java2d.renderer.useRef           = "
+ 961                 + refType);
+ 962 
+ 963         logInfo("sun.java2d.renderer.pixelsize        = "
+ 964                 + MarlinConst.INITIAL_PIXEL_DIM);
+ 965         logInfo("sun.java2d.renderer.subPixel_log2_X  = "
+
+</pre><hr></hr><pre>
+1008         logInfo("sun.java2d.renderer.logUnsafeMalloc  = "
+1009                 + MarlinConst.logUnsafeMalloc);
+1010 
+1011         // quality settings
+1012         logInfo("Renderer settings:");
+1013         logInfo("CUB_COUNT_LG = " + Renderer.CUB_COUNT_LG);
+1014         logInfo("CUB_DEC_BND  = " + Renderer.CUB_DEC_BND);
+1015         logInfo("CUB_INC_BND  = " + Renderer.CUB_INC_BND);
+1016         logInfo("QUAD_DEC_BND = " + Renderer.QUAD_DEC_BND);
+1017 
+1018         logInfo("=========================================================="
+1019                 + "=====================");
+1020     }
+1021 
+1022     /**
+1023      * Get the RendererContext instance dedicated to the current thread
+1024      * @return RendererContext instance
+1025      */
+1026     @SuppressWarnings({"unchecked"})
+1027     static RendererContext getRendererContext() {
+<span class="changed">1028         RendererContext rdrCtx = null;</span>
+<span class="changed">1029         final Object ref = (useThreadLocal) ? rdrCtxThreadLocal.get()</span>
+<span class="changed">1030                            : rdrCtxQueue.poll();</span>
+<span class="changed">1031         if (ref != null) {</span>
+<span class="changed">1032             // resolve reference:</span>
+<span class="changed">1033             rdrCtx = (REF_TYPE == REF_HARD) ? ((RendererContext) ref)</span>
+<span class="changed">1034                      : ((Reference&lt;RendererContext&gt;) ref).get();</span>
+<span class="changed">1035         }</span>
+<span class="changed">1036         // create a new RendererContext if none is available</span>
+<span class="changed">1037         if (rdrCtx == null) {</span>
+<span class="changed">1038             rdrCtx = RendererContext.createContext();</span>
+<span class="changed">1039             if (useThreadLocal) {</span>
+<span class="changed">1040                 // update thread local reference:</span>
+<span class="changed">1041                 rdrCtxThreadLocal.set(rdrCtx.reference);</span>
+<span class="changed">1042             }</span>
+<span class="changed">1043         }</span>
+1044         if (doMonitors) {
+1045             RendererContext.stats.mon_pre_getAATileGenerator.start();
+1046         }
+1047         return rdrCtx;
+1048     }
+1049 
+1050     /**
+1051      * Reset and return the given RendererContext instance for reuse
+1052      * @param rdrCtx RendererContext instance
+1053      */
+1054     static void returnRendererContext(final RendererContext rdrCtx) {
+1055         rdrCtx.dispose();
+1056 
+1057         if (doMonitors) {
+1058             RendererContext.stats.mon_pre_getAATileGenerator.stop();
+1059         }
+<span class="changed">1060         if (!useThreadLocal) {</span>
+<span class="changed">1061             rdrCtxQueue.offer(rdrCtx.reference);</span>
+<span class="changed">1062         }</span>
+1063     }
+1064 }
+</pre></td><td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2016, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.BasicStroke;
+  29 import java.awt.Shape;
+  30 import java.awt.geom.AffineTransform;
+  31 import java.awt.geom.Path2D;
+  32 import java.awt.geom.PathIterator;
+
+  33 import java.security.AccessController;
+
+  34 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  35 import sun.awt.geom.PathConsumer2D;
+<span class="new">  36 import sun.java2d.ReentrantContextProvider;</span>
+<span class="new">  37 import sun.java2d.ReentrantContextProviderCLQ;</span>
+<span class="new">  38 import sun.java2d.ReentrantContextProviderTL;</span>
+  39 import sun.java2d.pipe.AATileGenerator;
+  40 import sun.java2d.pipe.Region;
+  41 import sun.java2d.pipe.RenderingEngine;
+  42 import sun.security.action.GetPropertyAction;
+  43 
+  44 /**
+  45  * Marlin RendererEngine implementation (derived from Pisces)
+  46  */
+  47 public class MarlinRenderingEngine extends RenderingEngine
+  48                                    implements MarlinConst
+  49 {
+  50     private static enum NormMode {ON_WITH_AA, ON_NO_AA, OFF}
+  51 
+  52     private static final float MIN_PEN_SIZE = 1f / NORM_SUBPIXELS;
+  53 
+  54     /**
+  55      * Public constructor
+  56      */
+  57     public MarlinRenderingEngine() {
+  58         super();
+
+</pre><hr></hr><pre>
+ 866     }
+ 867 
+ 868     static {
+ 869         if (PathIterator.WIND_NON_ZERO != Renderer.WIND_NON_ZERO ||
+ 870             PathIterator.WIND_EVEN_ODD != Renderer.WIND_EVEN_ODD ||
+ 871             BasicStroke.JOIN_MITER != Stroker.JOIN_MITER ||
+ 872             BasicStroke.JOIN_ROUND != Stroker.JOIN_ROUND ||
+ 873             BasicStroke.JOIN_BEVEL != Stroker.JOIN_BEVEL ||
+ 874             BasicStroke.CAP_BUTT != Stroker.CAP_BUTT ||
+ 875             BasicStroke.CAP_ROUND != Stroker.CAP_ROUND ||
+ 876             BasicStroke.CAP_SQUARE != Stroker.CAP_SQUARE)
+ 877         {
+ 878             throw new InternalError("mismatched renderer constants");
+ 879         }
+ 880     }
+ 881 
+ 882     // --- RendererContext handling ---
+ 883     // use ThreadLocal or ConcurrentLinkedQueue to get one RendererContext
+ 884     private static final boolean useThreadLocal;
+ 885 
+
+
+
+
+
+
+
+ 886     // reference type stored in either TL or CLQ
+ 887     static final int REF_TYPE;
+ 888 
+ 889     // Per-thread RendererContext
+<span class="changed"> 890     private static final ReentrantContextProvider&lt;RendererContext&gt; rdrCtxProvider;</span>
+
+
+ 891 
+ 892     // Static initializer to use TL or CLQ mode
+ 893     static {
+
+ 894         useThreadLocal = MarlinProperties.isUseThreadLocal();
+
+
+
+
+ 895 
+ 896         // Soft reference by default:
+<span class="changed"> 897         final String refType = AccessController.doPrivileged(</span>
+ 898                             new GetPropertyAction("sun.java2d.renderer.useRef",
+ 899                             "soft"));
+ 900         switch (refType) {
+ 901             default:
+ 902             case "soft":
+<span class="changed"> 903                 REF_TYPE = ReentrantContextProvider.REF_SOFT;</span>
+ 904                 break;
+ 905             case "weak":
+<span class="changed"> 906                 REF_TYPE = ReentrantContextProvider.REF_WEAK;</span>
+ 907                 break;
+ 908             case "hard":
+<span class="changed"> 909                 REF_TYPE = ReentrantContextProvider.REF_HARD;</span>
+ 910                 break;
+ 911         }
+<span class="new"> 912 </span>
+<span class="new"> 913         if (useThreadLocal) {</span>
+<span class="new"> 914             rdrCtxProvider = new ReentrantContextProviderTL&lt;RendererContext&gt;(REF_TYPE)</span>
+<span class="new"> 915                 {</span>
+<span class="new"> 916                     @Override</span>
+<span class="new"> 917                     protected RendererContext newContext() {</span>
+<span class="new"> 918                         return RendererContext.createContext();</span>
+<span class="new"> 919                     }</span>
+<span class="new"> 920                 };</span>
+<span class="new"> 921         } else {</span>
+<span class="new"> 922             rdrCtxProvider = new ReentrantContextProviderCLQ&lt;RendererContext&gt;(REF_TYPE)</span>
+<span class="new"> 923                 {</span>
+<span class="new"> 924                     @Override</span>
+<span class="new"> 925                     protected RendererContext newContext() {</span>
+<span class="new"> 926                         return RendererContext.createContext();</span>
+<span class="new"> 927                     }</span>
+<span class="new"> 928                 };</span>
+<span class="new"> 929         }</span>
+ 930     }
+ 931 
+ 932     private static boolean settingsLogged = !enableLogs;
+ 933 
+ 934     private static void logSettings(final String reClass) {
+ 935         // log information at startup
+ 936         if (settingsLogged) {
+ 937             return;
+ 938         }
+ 939         settingsLogged = true;
+ 940 
+ 941         String refType;
+ 942         switch (REF_TYPE) {
+ 943             default:
+<span class="changed"> 944             case ReentrantContextProvider.REF_HARD:</span>
+ 945                 refType = "hard";
+ 946                 break;
+<span class="changed"> 947             case ReentrantContextProvider.REF_SOFT:</span>
+ 948                 refType = "soft";
+ 949                 break;
+<span class="changed"> 950             case ReentrantContextProvider.REF_WEAK:</span>
+ 951                 refType = "weak";
+ 952                 break;
+ 953         }
+ 954 
+ 955         logInfo("=========================================================="
+ 956                 + "=====================");
+ 957 
+ 958         logInfo("Marlin software rasterizer           = ENABLED");
+ 959         logInfo("Version                              = ["
+ 960                 + Version.getVersion() + "]");
+ 961         logInfo("sun.java2d.renderer                  = "
+ 962                 + reClass);
+ 963         logInfo("sun.java2d.renderer.useThreadLocal   = "
+ 964                 + useThreadLocal);
+ 965         logInfo("sun.java2d.renderer.useRef           = "
+ 966                 + refType);
+ 967 
+ 968         logInfo("sun.java2d.renderer.pixelsize        = "
+ 969                 + MarlinConst.INITIAL_PIXEL_DIM);
+ 970         logInfo("sun.java2d.renderer.subPixel_log2_X  = "
+
+</pre><hr></hr><pre>
+1013         logInfo("sun.java2d.renderer.logUnsafeMalloc  = "
+1014                 + MarlinConst.logUnsafeMalloc);
+1015 
+1016         // quality settings
+1017         logInfo("Renderer settings:");
+1018         logInfo("CUB_COUNT_LG = " + Renderer.CUB_COUNT_LG);
+1019         logInfo("CUB_DEC_BND  = " + Renderer.CUB_DEC_BND);
+1020         logInfo("CUB_INC_BND  = " + Renderer.CUB_INC_BND);
+1021         logInfo("QUAD_DEC_BND = " + Renderer.QUAD_DEC_BND);
+1022 
+1023         logInfo("=========================================================="
+1024                 + "=====================");
+1025     }
+1026 
+1027     /**
+1028      * Get the RendererContext instance dedicated to the current thread
+1029      * @return RendererContext instance
+1030      */
+1031     @SuppressWarnings({"unchecked"})
+1032     static RendererContext getRendererContext() {
+<span class="changed">1033         final RendererContext rdrCtx = rdrCtxProvider.acquire();</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1034         if (doMonitors) {
+1035             RendererContext.stats.mon_pre_getAATileGenerator.start();
+1036         }
+1037         return rdrCtx;
+1038     }
+1039 
+1040     /**
+1041      * Reset and return the given RendererContext instance for reuse
+1042      * @param rdrCtx RendererContext instance
+1043      */
+1044     static void returnRendererContext(final RendererContext rdrCtx) {
+1045         rdrCtx.dispose();
+1046 
+1047         if (doMonitors) {
+1048             RendererContext.stats.mon_pre_getAATileGenerator.stop();
+1049         }
+<span class="changed">1050         rdrCtxProvider.release(rdrCtx);</span>
+
+
+1051     }
+1052 }
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinCache.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

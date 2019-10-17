@@ -1,0 +1,335 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff test/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../src/share/classes/sun/java2d/marlin/Version.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../index.html' target='_top'>index</a> <a href='../../../../src/share/classes/sun/java2d/marlin/ArrayCacheConst.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>test/sun/java2d/marlin/ArrayCacheSizeTest.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  */
+  23 
+<span class="changed">  24 import sun.java2d.marlin.ArrayCache;</span>
+  25 
+  26 /**
+  27  * @test
+  28  * @bug 8144445
+  29  * @summary Check the ArrayCache getNewLargeSize() method
+  30  * @run main ArrayCacheSizeTest
+  31  */
+  32 public class ArrayCacheSizeTest {
+  33 
+  34     public static void main(String[] args) {
+  35         testNewSize();
+  36         testNewLargeSize();
+  37     }
+  38 
+  39     private static void testNewSize() {
+  40         testNewSize(0, 1);
+  41         testNewSize(0, 100000);
+  42 
+  43         testNewSize(4096, 4097);
+  44         testNewSize(4096 * 16, 4096 * 16 + 1);
+
+</pre><hr></hr><pre>
+  54         testNewSizeExpectAIOB(Integer.MAX_VALUE, -1);
+  55     }
+  56 
+  57     private static void testNewSizeExpectAIOB(final int curSize,
+  58                                               final int needSize) {
+  59         try {
+  60             testNewSize(curSize, needSize);
+  61             throw new RuntimeException("ArrayIndexOutOfBoundsException not thrown");
+  62         } catch (ArrayIndexOutOfBoundsException aiobe) {
+  63             System.out.println("ArrayIndexOutOfBoundsException expected.");
+  64         } catch (RuntimeException re) {
+  65             throw re;
+  66         } catch (Throwable th) {
+  67             throw new RuntimeException("Unexpected exception", th);
+  68         }
+  69     }
+  70 
+  71     private static void testNewSize(final int curSize,
+  72                                     final int needSize) {
+  73 
+<span class="changed">  74         int size = ArrayCache.getNewSize(curSize, needSize);</span>
+  75 
+  76         System.out.println("getNewSize(" + curSize + ", " + needSize
+  77             + ") = " + size);
+  78 
+  79         if (size &lt; 0 || size &lt; needSize) {
+  80             throw new IllegalStateException("Invalid getNewSize("
+  81                 + curSize + ", " + needSize + ") = " + size + " !");
+  82         }
+  83     }
+  84 
+  85     private static void testNewLargeSize() {
+  86         testNewLargeSize(0, 1);
+  87         testNewLargeSize(0, 100000);
+  88 
+  89         testNewLargeSize(4096, 4097);
+  90         testNewLargeSize(4096 * 16, 4096 * 16 + 1);
+  91 
+  92         testNewLargeSize(4096 * 4096 * 4, 4096 * 4096 * 4 + 1);
+  93 
+  94         testNewLargeSize(4096 * 4096 * 4, Integer.MAX_VALUE);
+
+</pre><hr></hr><pre>
+ 100         testNewLargeSizeExpectAIOB(Integer.MAX_VALUE, -1L);
+ 101     }
+ 102 
+ 103     private static void testNewLargeSizeExpectAIOB(final long curSize,
+ 104                                                    final long needSize) {
+ 105         try {
+ 106             testNewLargeSize(curSize, needSize);
+ 107             throw new RuntimeException("ArrayIndexOutOfBoundsException not thrown");
+ 108         } catch (ArrayIndexOutOfBoundsException aiobe) {
+ 109             System.out.println("ArrayIndexOutOfBoundsException expected.");
+ 110         } catch (RuntimeException re) {
+ 111             throw re;
+ 112         } catch (Throwable th) {
+ 113             throw new RuntimeException("Unexpected exception", th);
+ 114         }
+ 115     }
+ 116 
+ 117     private static void testNewLargeSize(final long curSize,
+ 118                                          final long needSize) {
+ 119 
+<span class="changed"> 120         long size = ArrayCache.getNewLargeSize(curSize, needSize);</span>
+ 121 
+ 122         System.out.println("getNewLargeSize(" + curSize + ", " + needSize
+ 123             + ") = " + size);
+ 124 
+ 125         if (size &lt; 0 || size &lt; needSize || size &gt; Integer.MAX_VALUE) {
+ 126             throw new IllegalStateException("Invalid getNewLargeSize("
+ 127                 + curSize + ", " + needSize + ") = " + size + " !");
+ 128         }
+ 129     }
+ 130 
+ 131 }
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  */
+  23 
+<span class="changed">  24 import sun.java2d.marlin.ArrayCacheConst;</span>
+  25 
+  26 /**
+  27  * @test
+  28  * @bug 8144445
+  29  * @summary Check the ArrayCache getNewLargeSize() method
+  30  * @run main ArrayCacheSizeTest
+  31  */
+  32 public class ArrayCacheSizeTest {
+  33 
+  34     public static void main(String[] args) {
+  35         testNewSize();
+  36         testNewLargeSize();
+  37     }
+  38 
+  39     private static void testNewSize() {
+  40         testNewSize(0, 1);
+  41         testNewSize(0, 100000);
+  42 
+  43         testNewSize(4096, 4097);
+  44         testNewSize(4096 * 16, 4096 * 16 + 1);
+
+</pre><hr></hr><pre>
+  54         testNewSizeExpectAIOB(Integer.MAX_VALUE, -1);
+  55     }
+  56 
+  57     private static void testNewSizeExpectAIOB(final int curSize,
+  58                                               final int needSize) {
+  59         try {
+  60             testNewSize(curSize, needSize);
+  61             throw new RuntimeException("ArrayIndexOutOfBoundsException not thrown");
+  62         } catch (ArrayIndexOutOfBoundsException aiobe) {
+  63             System.out.println("ArrayIndexOutOfBoundsException expected.");
+  64         } catch (RuntimeException re) {
+  65             throw re;
+  66         } catch (Throwable th) {
+  67             throw new RuntimeException("Unexpected exception", th);
+  68         }
+  69     }
+  70 
+  71     private static void testNewSize(final int curSize,
+  72                                     final int needSize) {
+  73 
+<span class="changed">  74         int size = ArrayCacheConst.getNewSize(curSize, needSize);</span>
+  75 
+  76         System.out.println("getNewSize(" + curSize + ", " + needSize
+  77             + ") = " + size);
+  78 
+  79         if (size &lt; 0 || size &lt; needSize) {
+  80             throw new IllegalStateException("Invalid getNewSize("
+  81                 + curSize + ", " + needSize + ") = " + size + " !");
+  82         }
+  83     }
+  84 
+  85     private static void testNewLargeSize() {
+  86         testNewLargeSize(0, 1);
+  87         testNewLargeSize(0, 100000);
+  88 
+  89         testNewLargeSize(4096, 4097);
+  90         testNewLargeSize(4096 * 16, 4096 * 16 + 1);
+  91 
+  92         testNewLargeSize(4096 * 4096 * 4, 4096 * 4096 * 4 + 1);
+  93 
+  94         testNewLargeSize(4096 * 4096 * 4, Integer.MAX_VALUE);
+
+</pre><hr></hr><pre>
+ 100         testNewLargeSizeExpectAIOB(Integer.MAX_VALUE, -1L);
+ 101     }
+ 102 
+ 103     private static void testNewLargeSizeExpectAIOB(final long curSize,
+ 104                                                    final long needSize) {
+ 105         try {
+ 106             testNewLargeSize(curSize, needSize);
+ 107             throw new RuntimeException("ArrayIndexOutOfBoundsException not thrown");
+ 108         } catch (ArrayIndexOutOfBoundsException aiobe) {
+ 109             System.out.println("ArrayIndexOutOfBoundsException expected.");
+ 110         } catch (RuntimeException re) {
+ 111             throw re;
+ 112         } catch (Throwable th) {
+ 113             throw new RuntimeException("Unexpected exception", th);
+ 114         }
+ 115     }
+ 116 
+ 117     private static void testNewLargeSize(final long curSize,
+ 118                                          final long needSize) {
+ 119 
+<span class="changed"> 120         long size = ArrayCacheConst.getNewLargeSize(curSize, needSize);</span>
+ 121 
+ 122         System.out.println("getNewLargeSize(" + curSize + ", " + needSize
+ 123             + ") = " + size);
+ 124 
+ 125         if (size &lt; 0 || size &lt; needSize || size &gt; Integer.MAX_VALUE) {
+ 126             throw new IllegalStateException("Invalid getNewLargeSize("
+ 127                 + curSize + ", " + needSize + ") = " + size + " !");
+ 128         }
+ 129     }
+ 130 
+ 131 }
+</pre></td>
+</tr></table>
+<center><a href='../../../../src/share/classes/sun/java2d/marlin/Version.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../index.html' target='_top'>index</a> <a href='../../../../src/share/classes/sun/java2d/marlin/ArrayCacheConst.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

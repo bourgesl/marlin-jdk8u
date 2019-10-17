@@ -1,0 +1,450 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13680">13680</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8143849">8143849</a>: Integrate Marlin renderer per JEP 265
+Reviewed-by: flar, prr</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+<a name="2" id="anc2"></a><span class="removed">  25 </span>
+  26 package sun.java2d.pipe;
+  27 
+  28 import java.awt.BasicStroke;
+  29 import java.awt.Rectangle;
+  30 import java.awt.Shape;
+  31 import java.awt.geom.Rectangle2D;
+<a name="3" id="anc3"></a><span class="removed">  32 import java.awt.geom.PathIterator;</span>
+  33 import sun.awt.SunHints;
+  34 import sun.java2d.SunGraphics2D;
+  35 
+  36 /**
+  37  * This class is used to convert raw geometry into 8-bit alpha tiles
+  38  * using an AATileGenerator for application by the next stage of
+  39  * the pipeline.
+  40  * This class sets up the Generator and computes the alpha tiles
+  41  * and then passes them on to a CompositePipe object for painting.
+  42  */
+  43 public class AAShapePipe
+  44     implements ShapeDrawPipe, ParallelogramPipe
+  45 {
+  46     static RenderingEngine renderengine = RenderingEngine.getInstance();
+  47 
+<a name="4" id="anc4"></a>
+
+
+
+
+
+
+
+
+  48     CompositePipe outpipe;
+  49 
+  50     public AAShapePipe(CompositePipe pipe) {
+  51         outpipe = pipe;
+  52     }
+  53 
+  54     public void draw(SunGraphics2D sg, Shape s) {
+  55         BasicStroke bs;
+  56 
+  57         if (sg.stroke instanceof BasicStroke) {
+  58             bs = (BasicStroke) sg.stroke;
+  59         } else {
+  60             s = sg.stroke.createStrokedShape(s);
+  61             bs = null;
+  62         }
+  63 
+  64         renderPath(sg, s, bs);
+  65     }
+  66 
+  67     public void fill(SunGraphics2D sg, Shape s) {
+  68         renderPath(sg, s, null);
+  69     }
+  70 
+<a name="5" id="anc5"></a><span class="removed">  71     private static Rectangle2D computeBBox(double ux1, double uy1,</span>
+<span class="removed">  72                                            double ux2, double uy2)</span>
+<span class="removed">  73     {</span>
+<span class="removed">  74         if ((ux2 -= ux1) &lt; 0) {</span>
+<span class="removed">  75             ux1 += ux2;</span>
+<span class="removed">  76             ux2 = -ux2;</span>
+<span class="removed">  77         }</span>
+<span class="removed">  78         if ((uy2 -= uy1) &lt; 0) {</span>
+<span class="removed">  79             uy1 += uy2;</span>
+<span class="removed">  80             uy2 = -uy2;</span>
+<span class="removed">  81         }</span>
+<span class="removed">  82         return new Rectangle2D.Double(ux1, uy1, ux2, uy2);</span>
+<span class="removed">  83     }</span>
+<span class="removed">  84 </span>
+  85     public void fillParallelogram(SunGraphics2D sg,
+  86                                   double ux1, double uy1,
+  87                                   double ux2, double uy2,
+  88                                   double x, double y,
+  89                                   double dx1, double dy1,
+  90                                   double dx2, double dy2)
+  91     {
+  92         Region clip = sg.getCompClip();
+<a name="6" id="anc6"></a><span class="changed">  93         int abox[] = new int[4];</span>
+
+
+  94         AATileGenerator aatg =
+  95             renderengine.getAATileGenerator(x, y, dx1, dy1, dx2, dy2, 0, 0,
+  96                                             clip, abox);
+  97         if (aatg == null) {
+  98             // Nothing to render
+  99             return;
+ 100         }
+ 101 
+<a name="7" id="anc7"></a><span class="changed"> 102         renderTiles(sg, computeBBox(ux1, uy1, ux2, uy2), aatg, abox);</span>
+ 103     }
+ 104 
+ 105     public void drawParallelogram(SunGraphics2D sg,
+ 106                                   double ux1, double uy1,
+ 107                                   double ux2, double uy2,
+ 108                                   double x, double y,
+ 109                                   double dx1, double dy1,
+ 110                                   double dx2, double dy2,
+ 111                                   double lw1, double lw2)
+ 112     {
+ 113         Region clip = sg.getCompClip();
+<a name="8" id="anc8"></a><span class="changed"> 114         int abox[] = new int[4];</span>
+
+
+ 115         AATileGenerator aatg =
+ 116             renderengine.getAATileGenerator(x, y, dx1, dy1, dx2, dy2, lw1, lw2,
+ 117                                             clip, abox);
+ 118         if (aatg == null) {
+ 119             // Nothing to render
+ 120             return;
+ 121         }
+ 122 
+ 123         // Note that bbox is of the original shape, not the wide path.
+ 124         // This is appropriate for handing to Paint methods...
+<a name="9" id="anc9"></a><span class="changed"> 125         renderTiles(sg, computeBBox(ux1, uy1, ux2, uy2), aatg, abox);</span>
+<span class="changed"> 126     }</span>
+<span class="changed"> 127 </span>
+<span class="changed"> 128     private static byte[] theTile;</span>
+<span class="changed"> 129 </span>
+<span class="changed"> 130     private synchronized static byte[] getAlphaTile(int len) {</span>
+<span class="changed"> 131         byte[] t = theTile;</span>
+<span class="changed"> 132         if (t == null || t.length &lt; len) {</span>
+<span class="changed"> 133             t = new byte[len];</span>
+<span class="changed"> 134         } else {</span>
+<span class="changed"> 135             theTile = null;</span>
+<span class="changed"> 136         }</span>
+<span class="changed"> 137         return t;</span>
+<span class="changed"> 138     }</span>
+<span class="changed"> 139 </span>
+<span class="changed"> 140     private synchronized static void dropAlphaTile(byte[] t) {</span>
+<span class="changed"> 141         theTile = t;</span>
+ 142     }
+ 143 
+ 144     public void renderPath(SunGraphics2D sg, Shape s, BasicStroke bs) {
+ 145         boolean adjust = (bs != null &amp;&amp;
+ 146                           sg.strokeHint != SunHints.INTVAL_STROKE_PURE);
+ 147         boolean thin = (sg.strokeState &lt;= SunGraphics2D.STROKE_THINDASHED);
+ 148 
+ 149         Region clip = sg.getCompClip();
+<a name="10" id="anc10"></a><span class="changed"> 150         int abox[] = new int[4];</span>
+
+
+ 151         AATileGenerator aatg =
+ 152             renderengine.getAATileGenerator(s, sg.transform, clip,
+ 153                                             bs, thin, adjust, abox);
+ 154         if (aatg == null) {
+ 155             // Nothing to render
+ 156             return;
+ 157         }
+ 158 
+<a name="11" id="anc11"></a><span class="changed"> 159         renderTiles(sg, s, aatg, abox);</span>
+ 160     }
+ 161 
+ 162     public void renderTiles(SunGraphics2D sg, Shape s,
+<a name="12" id="anc12"></a><span class="changed"> 163                             AATileGenerator aatg, int abox[])</span>
+ 164     {
+ 165         Object context = null;
+<a name="13" id="anc13"></a><span class="removed"> 166         byte alpha[] = null;</span>
+ 167         try {
+ 168             context = outpipe.startSequence(sg, s,
+<a name="14" id="anc14"></a><span class="changed"> 169                                             new Rectangle(abox[0], abox[1],</span>
+<span class="changed"> 170                                                           abox[2] - abox[0],</span>
+<span class="changed"> 171                                                           abox[3] - abox[1]),</span>
+ 172                                             abox);
+ 173 
+<a name="15" id="anc15"></a><span class="changed"> 174             int tw = aatg.getTileWidth();</span>
+<span class="changed"> 175             int th = aatg.getTileHeight();</span>
+<span class="changed"> 176             alpha = getAlphaTile(tw * th);</span>
+ 177 
+<a name="16" id="anc16"></a>
+
+ 178             byte[] atile;
+ 179 
+ 180             for (int y = abox[1]; y &lt; abox[3]; y += th) {
+<a name="17" id="anc17"></a>
+
+ 181                 for (int x = abox[0]; x &lt; abox[2]; x += tw) {
+ 182                     int w = Math.min(tw, abox[2] - x);
+<a name="18" id="anc18"></a><span class="removed"> 183                     int h = Math.min(th, abox[3] - y);</span>
+ 184 
+ 185                     int a = aatg.getTypicalAlpha();
+ 186                     if (a == 0x00 ||
+ 187                         outpipe.needTile(context, x, y, w, h) == false)
+ 188                     {
+ 189                         aatg.nextTile();
+ 190                         outpipe.skipTile(context, x, y);
+ 191                         continue;
+ 192                     }
+ 193                     if (a == 0xff) {
+ 194                         atile = null;
+ 195                         aatg.nextTile();
+ 196                     } else {
+ 197                         atile = alpha;
+ 198                         aatg.getAlpha(alpha, 0, tw);
+ 199                     }
+ 200 
+ 201                     outpipe.renderPathTile(context, atile, 0, tw,
+ 202                                            x, y, w, h);
+ 203                 }
+ 204             }
+ 205         } finally {
+ 206             aatg.dispose();
+ 207             if (context != null) {
+ 208                 outpipe.endSequence(context);
+ 209             }
+<a name="19" id="anc19"></a><span class="removed"> 210             if (alpha != null) {</span>
+<span class="removed"> 211                 dropAlphaTile(alpha);</span>
+ 212             }
+ 213         }
+<a name="20" id="anc20"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 214     }
+<a name="21" id="anc21"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 215 }
+<a name="22" id="anc22"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="22" type="hidden" /></form></body></html>

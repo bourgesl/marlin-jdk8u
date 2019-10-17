@@ -1,0 +1,299 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13693">13693</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8180055">8180055</a>: Upgrade the Marlin renderer in Java2D
+Summary: added the double-precision variant + MarlinFX backports + Improved MarlinTileGenerator + higher precision of the cubic / quadratic curve
+Reviewed-by: flar, pnarayanan</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2015, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 /**
+  29  * Marlin constant holder using System properties
+  30  */
+  31 interface MarlinConst {
+  32     // enable Logs (logger or stdout)
+  33     static final boolean ENABLE_LOGS = MarlinProperties.isLoggingEnabled();
+  34     // use Logger instead of stdout
+  35     static final boolean USE_LOGGER = ENABLE_LOGS &amp;&amp; MarlinProperties.isUseLogger();
+  36 
+  37     // log new RendererContext
+  38     static final boolean LOG_CREATE_CONTEXT = ENABLE_LOGS
+  39         &amp;&amp; MarlinProperties.isLogCreateContext();
+  40     // log misc.Unsafe alloc/realloc/free
+  41     static final boolean LOG_UNSAFE_MALLOC = ENABLE_LOGS
+  42         &amp;&amp; MarlinProperties.isLogUnsafeMalloc();
+  43     // do check unsafe alignment:
+  44     static final boolean DO_CHECK_UNSAFE = false;
+  45 
+  46     // do statistics
+  47     static final boolean DO_STATS = ENABLE_LOGS &amp;&amp; MarlinProperties.isDoStats();
+  48     // do monitors
+  49     // disabled to reduce byte-code size a bit...
+  50     static final boolean DO_MONITORS = false;
+  51 //    static final boolean DO_MONITORS = ENABLE_LOGS &amp;&amp; MarlinProperties.isDoMonitors();
+  52     // do checks
+  53     static final boolean DO_CHECKS = ENABLE_LOGS &amp;&amp; MarlinProperties.isDoChecks();
+  54 
+  55     // do AA range checks: disable when algorithm / code is stable
+  56     static final boolean DO_AA_RANGE_CHECK = false;
+  57 
+  58     // enable logs
+  59     static final boolean DO_LOG_WIDEN_ARRAY = ENABLE_LOGS &amp;&amp; false;
+  60     // enable oversize logs
+  61     static final boolean DO_LOG_OVERSIZE = ENABLE_LOGS &amp;&amp; false;
+  62     // enable traces
+  63     static final boolean DO_TRACE = ENABLE_LOGS &amp;&amp; false;
+  64 
+  65     // do flush stats
+  66     static final boolean DO_FLUSH_STATS = true;
+  67     // do flush monitors
+  68     static final boolean DO_FLUSH_MONITORS = true;
+  69     // use one polling thread to dump statistics/monitors
+  70     static final boolean USE_DUMP_THREAD = false;
+  71     // thread dump interval (ms)
+  72     static final long DUMP_INTERVAL = 5000L;
+  73 
+  74     // do clean dirty array
+  75     static final boolean DO_CLEAN_DIRTY = false;
+  76 
+  77     // flag to use line simplifier
+  78     static final boolean USE_SIMPLIFIER = MarlinProperties.isUseSimplifier();
+  79 
+  80     // flag to enable logs related bounds checks
+  81     static final boolean DO_LOG_BOUNDS = ENABLE_LOGS &amp;&amp; false;
+  82 
+  83     // Initial Array sizing (initial context capacity) ~ 450K
+  84 
+  85     // 2048 pixel (width x height) for initial capacity
+  86     static final int INITIAL_PIXEL_DIM
+  87         = MarlinProperties.getInitialImageSize();
+  88 
+  89     // typical array sizes: only odd numbers allowed below
+  90     static final int INITIAL_ARRAY        = 256;
+  91 
+  92     // alpha row dimension
+  93     static final int INITIAL_AA_ARRAY     = INITIAL_PIXEL_DIM;
+  94 
+  95     // 4096 edges for initial capacity
+  96     static final int INITIAL_EDGES_COUNT = MarlinProperties.getInitialEdges();
+  97 
+<a name="2" id="anc2"></a><span class="changed">  98     // initial edges = edges count (4096)</span>
+  99     // 6 ints per edges = 24 bytes
+<a name="3" id="anc3"></a><span class="changed"> 100     // edges capacity = 24 x initial edges = 24 * edges count (4096) = 96K</span>
+<span class="changed"> 101     static final int INITIAL_EDGES_CAPACITY = INITIAL_EDGES_COUNT * 24;</span>
+ 102 
+ 103     // zero value as byte
+ 104     static final byte BYTE_0 = (byte) 0;
+ 105 
+ 106     // subpixels expressed as log2
+ 107     public static final int SUBPIXEL_LG_POSITIONS_X
+ 108         = MarlinProperties.getSubPixel_Log2_X();
+ 109     public static final int SUBPIXEL_LG_POSITIONS_Y
+ 110         = MarlinProperties.getSubPixel_Log2_Y();
+ 111 
+ 112     // number of subpixels
+ 113     public static final int SUBPIXEL_POSITIONS_X = 1 &lt;&lt; (SUBPIXEL_LG_POSITIONS_X);
+ 114     public static final int SUBPIXEL_POSITIONS_Y = 1 &lt;&lt; (SUBPIXEL_LG_POSITIONS_Y);
+ 115 
+ 116     public static final float NORM_SUBPIXELS
+<a name="4" id="anc4"></a><span class="changed"> 117         = (float) Math.sqrt(( SUBPIXEL_POSITIONS_X * SUBPIXEL_POSITIONS_X</span>
+<span class="changed"> 118                             + SUBPIXEL_POSITIONS_Y * SUBPIXEL_POSITIONS_Y) / 2.0d);</span>
+ 119 
+ 120     public static final int MAX_AA_ALPHA
+ 121         = SUBPIXEL_POSITIONS_X * SUBPIXEL_POSITIONS_Y;
+ 122 
+<a name="5" id="anc5"></a><span class="changed"> 123     public static final int TILE_H_LG = MarlinProperties.getTileSize_Log2();</span>
+<span class="changed"> 124     public static final int TILE_H = 1 &lt;&lt; TILE_H_LG; // 32 by default</span>
+<span class="changed"> 125 </span>
+<span class="changed"> 126     public static final int TILE_W_LG = MarlinProperties.getTileWidth_Log2();</span>
+<span class="changed"> 127     public static final int TILE_W = 1 &lt;&lt; TILE_W_LG; // 32 by default</span>
+ 128 
+ 129     public static final int BLOCK_SIZE_LG = MarlinProperties.getBlockSize_Log2();
+ 130     public static final int BLOCK_SIZE    = 1 &lt;&lt; BLOCK_SIZE_LG;
+ 131 }
+<a name="6" id="anc6"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="6" type="hidden" /></form></body></html>

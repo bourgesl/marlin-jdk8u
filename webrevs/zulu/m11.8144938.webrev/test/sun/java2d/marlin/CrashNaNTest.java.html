@@ -1,0 +1,505 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New test/sun/java2d/marlin/CrashNaNTest.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  */
+  23 
+  24 import java.awt.BasicStroke;
+  25 import java.awt.Color;
+  26 import java.awt.Graphics2D;
+  27 import java.awt.RenderingHints;
+  28 import java.awt.Shape;
+  29 import java.awt.Stroke;
+  30 import java.awt.geom.Path2D;
+  31 import java.awt.geom.PathIterator;
+  32 import java.awt.image.BufferedImage;
+  33 import java.awt.image.Raster;
+  34 import java.io.File;
+  35 import java.io.IOException;
+  36 import static java.lang.Double.NEGATIVE_INFINITY;
+  37 import static java.lang.Double.POSITIVE_INFINITY;
+  38 import static java.lang.Double.NaN;
+  39 import java.util.Arrays;
+  40 import java.util.Locale;
+  41 import java.util.logging.Handler;
+  42 import java.util.logging.LogRecord;
+  43 import java.util.logging.Logger;
+  44 import javax.imageio.ImageIO;
+  45 
+  46 /**
+  47  * @test
+  48  * @bug 8149338 8144938
+  49  * @summary Verifies that Marlin supports NaN coordinates (no JVM crash)
+  50  * but also it skips properly point coordinates with NaN / Infinity values
+  51  * @run main CrashNaNTest
+  52  */
+  53 public class CrashNaNTest {
+  54 
+  55     static final boolean SAVE_IMAGE = false;
+  56 
+  57     public static void main(String argv[]) {
+  58         Locale.setDefault(Locale.US);
+  59 
+  60         // initialize j.u.l Looger:
+  61         final Logger log = Logger.getLogger("sun.java2d.marlin");
+  62         log.addHandler(new Handler() {
+  63             @Override
+  64             public void publish(LogRecord record) {
+  65                 Throwable th = record.getThrown();
+  66                 // detect any Throwable:
+  67                 if (th != null) {
+  68                     System.out.println("Test failed:\n" + record.getMessage());
+  69                     th.printStackTrace(System.out);
+  70 
+  71                     throw new RuntimeException("Test failed: ", th);
+  72                 }
+  73             }
+  74 
+  75             @Override
+  76             public void flush() {
+  77             }
+  78 
+  79             @Override
+  80             public void close() throws SecurityException {
+  81             }
+  82         });
+  83 
+  84         // enable Marlin logging &amp; internal checks:
+  85         System.setProperty("sun.java2d.renderer.log", "true");
+  86         System.setProperty("sun.java2d.renderer.useLogger", "true");
+  87         System.setProperty("sun.java2d.renderer.doChecks", "true");
+  88 
+  89         testFillDefaultAt();
+  90         testDrawComplexAt();
+  91 
+  92         testPathClosed();
+  93 
+  94         testStrokedShapes();
+  95     }
+  96 
+  97     private static void testFillDefaultAt() {
+  98         final int width = 400;
+  99         final int height = 400;
+ 100 
+ 101         final BufferedImage image = new BufferedImage(width, height,
+ 102                                             BufferedImage.TYPE_INT_ARGB);
+ 103 
+ 104         final Graphics2D g2d = (Graphics2D) image.getGraphics();
+ 105         try {
+ 106             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+ 107                                  RenderingHints.VALUE_ANTIALIAS_ON);
+ 108 
+ 109             g2d.setBackground(Color.WHITE);
+ 110             g2d.clearRect(0, 0, width, height);
+ 111 
+ 112             final Path2D.Double path = new Path2D.Double();
+ 113             path.moveTo(100, 100);
+ 114 
+ 115             for (int i = 0; i &lt; 20000; i++) {
+ 116                 path.lineTo(110 + 0.01 * i, 110);
+ 117                 path.lineTo(111 + 0.01 * i, 100);
+ 118             }
+ 119 
+ 120             path.lineTo(NaN, 200);
+ 121             path.lineTo(200, 200);
+ 122             path.lineTo(200, NaN);
+ 123             path.lineTo(300, 300);
+ 124             path.lineTo(NaN, NaN);
+ 125             path.lineTo(100, 200);
+ 126             path.closePath();
+ 127 
+ 128             final Path2D.Double path2 = new Path2D.Double();
+ 129             path2.moveTo(0, 0);
+ 130             path2.lineTo(100, height);
+ 131             path2.lineTo(0, 200);
+ 132             path2.closePath();
+ 133 
+ 134             g2d.setColor(Color.BLUE);
+ 135             g2d.fill(path);
+ 136             g2d.setColor(Color.GREEN);
+ 137             g2d.fill(path2);
+ 138 
+ 139             g2d.setColor(Color.BLACK);
+ 140             g2d.draw(path);
+ 141             g2d.draw(path2);
+ 142 
+ 143             if (SAVE_IMAGE) {
+ 144                 try {
+ 145                     final File file = new File("CrashNaNTest-fill.png");
+ 146                     System.out.println("Writing file: "
+ 147                                        + file.getAbsolutePath());
+ 148                     ImageIO.write(image, "PNG", file);
+ 149                 } catch (IOException ex) {
+ 150                     System.out.println("Writing file failure:");
+ 151                     ex.printStackTrace();
+ 152                 }
+ 153             }
+ 154 
+ 155             // Check image on few pixels:
+ 156             final Raster raster = image.getData();
+ 157 
+ 158             checkPixel(raster, 200, 195, Color.BLUE.getRGB());
+ 159             checkPixel(raster, 105, 195, Color.BLUE.getRGB());
+ 160             checkPixel(raster, 286, 290, Color.BLUE.getRGB());
+ 161 
+ 162             checkPixel(raster, 108, 105, Color.WHITE.getRGB());
+ 163             checkPixel(raster, 205, 200, Color.WHITE.getRGB());
+ 164 
+ 165             checkPixel(raster, 5, 200, Color.GREEN.getRGB());
+ 166 
+ 167         } finally {
+ 168             g2d.dispose();
+ 169         }
+ 170     }
+ 171 
+ 172     private static void testDrawComplexAt() {
+ 173         final int width = 400;
+ 174         final int height = 400;
+ 175 
+ 176         final BufferedImage image = new BufferedImage(width, height,
+ 177                                             BufferedImage.TYPE_INT_ARGB);
+ 178 
+ 179         final Graphics2D g2d = (Graphics2D) image.getGraphics();
+ 180         try {
+ 181             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+ 182                                  RenderingHints.VALUE_ANTIALIAS_ON);
+ 183             g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL,
+ 184                                  RenderingHints.VALUE_STROKE_PURE);
+ 185 
+ 186             g2d.setBackground(Color.WHITE);
+ 187             g2d.clearRect(0, 0, width, height);
+ 188 
+ 189             final Path2D.Double path = new Path2D.Double();
+ 190             path.moveTo(100, 100);
+ 191 
+ 192             for (int i = 0; i &lt; 20000; i++) {
+ 193                 path.lineTo(110 + 0.01 * i, 110);
+ 194                 path.lineTo(111 + 0.01 * i, 100);
+ 195             }
+ 196 
+ 197             path.lineTo(NaN, 200);
+ 198             path.lineTo(200, 200);
+ 199             path.lineTo(200, NaN);
+ 200             path.lineTo(300, 300);
+ 201             path.lineTo(NaN, NaN);
+ 202             path.lineTo(100, 200);
+ 203             path.closePath();
+ 204 
+ 205             final Path2D.Double path2 = new Path2D.Double();
+ 206             path2.moveTo(0, 0);
+ 207             path2.lineTo(100, height);
+ 208             path2.lineTo(0, 200);
+ 209             path2.closePath();
+ 210 
+ 211             // Define an non-uniform transform:
+ 212             g2d.scale(0.5, 1.0);
+ 213             g2d.rotate(Math.PI / 31);
+ 214 
+ 215             g2d.setColor(Color.BLACK);
+ 216             g2d.draw(path);
+ 217             g2d.draw(path2);
+ 218 
+ 219             if (SAVE_IMAGE) {
+ 220                 try {
+ 221                     final File file = new File("CrashNaNTest-draw.png");
+ 222                     System.out.println("Writing file: "
+ 223                                        + file.getAbsolutePath());
+ 224                     ImageIO.write(image, "PNG", file);
+ 225                 } catch (IOException ex) {
+ 226                     System.out.println("Writing file failure:");
+ 227                     ex.printStackTrace();
+ 228                 }
+ 229             }
+ 230 
+ 231             // Check image on few pixels:
+ 232             final Raster raster = image.getData();
+ 233 
+ 234             checkPixelNotWhite(raster, 40, 210);
+ 235             checkPixelNotWhite(raster, 44, 110);
+ 236             checkPixelNotWhite(raster, 60, 120);
+ 237             checkPixelNotWhite(raster, 89, 219);
+ 238             checkPixelNotWhite(raster, 28, 399);
+ 239             checkPixelNotWhite(raster, 134, 329);
+ 240 
+ 241         } finally {
+ 242             g2d.dispose();
+ 243         }
+ 244     }
+ 245     private static void testPathClosed() {
+ 246         final int width = 100;
+ 247         final int height = 100;
+ 248 
+ 249         final BufferedImage image = new BufferedImage(width, height,
+ 250                                             BufferedImage.TYPE_INT_ARGB);
+ 251 
+ 252         final Graphics2D g2d = (Graphics2D) image.getGraphics();
+ 253         try {
+ 254             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+ 255                                  RenderingHints.VALUE_ANTIALIAS_ON);
+ 256 
+ 257             g2d.setBackground(Color.WHITE);
+ 258             g2d.clearRect(0, 0, width, height);
+ 259 
+ 260             final Path2D.Double path = new Path2D.Double();
+ 261             path.moveTo(40, 40);
+ 262             path.lineTo(0,   0);
+ 263             path.lineTo(80, 0);
+ 264             path.closePath();
+ 265             path.lineTo(80, 80);
+ 266             path.lineTo(0, 80);
+ 267             path.closePath();
+ 268 
+ 269             g2d.setColor(Color.BLUE);
+ 270             g2d.fill(path);
+ 271 
+ 272             g2d.setColor(Color.BLACK);
+ 273             g2d.draw(path);
+ 274 
+ 275             if (SAVE_IMAGE) {
+ 276                 try {
+ 277                     final File file = new File("CrashNaNTest-path-closed.png");
+ 278                     System.out.println("Writing file: "
+ 279                                        + file.getAbsolutePath());
+ 280                     ImageIO.write(image, "PNG", file);
+ 281                 } catch (IOException ex) {
+ 282                     System.out.println("Writing file failure:");
+ 283                     ex.printStackTrace();
+ 284                 }
+ 285             }
+ 286 
+ 287             // Check image on few pixels:
+ 288             final Raster raster = image.getData();
+ 289 
+ 290             checkPixel(raster, 10, 05, Color.BLUE.getRGB());
+ 291             checkPixel(raster, 70, 05, Color.BLUE.getRGB());
+ 292             checkPixel(raster, 40, 35, Color.BLUE.getRGB());
+ 293 
+ 294             checkPixel(raster, 10, 75, Color.BLUE.getRGB());
+ 295             checkPixel(raster, 70, 75, Color.BLUE.getRGB());
+ 296             checkPixel(raster, 40, 45, Color.BLUE.getRGB());
+ 297 
+ 298         } finally {
+ 299             g2d.dispose();
+ 300         }
+ 301     }
+ 302 
+ 303     private static void testStrokedShapes() {
+ 304         final Stroke stroke = new BasicStroke();
+ 305 
+ 306         final Path2D.Double path = new Path2D.Double();
+ 307         Shape s;
+ 308 
+ 309         // Check filtering NaN values:
+ 310         path.reset();
+ 311         path.moveTo(100, NaN);
+ 312         path.lineTo(NaN, 100);
+ 313         path.lineTo(NaN, NaN);
+ 314 
+ 315         path.quadTo(NaN, 100, NaN, 100);
+ 316         path.quadTo(100, NaN, 100, NaN);
+ 317         path.quadTo(NaN, NaN, NaN, NaN);
+ 318 
+ 319         path.curveTo(NaN, 100, NaN, 100, NaN, 100);
+ 320         path.curveTo(100, NaN, 100, NaN, 100, NaN);
+ 321         path.curveTo(NaN, NaN, NaN, NaN, NaN, NaN);
+ 322         path.closePath();
+ 323 
+ 324         s = stroke.createStrokedShape(path);
+ 325         checkEmptyPath(s);
+ 326 
+ 327         // Check filtering +Infinity values:
+ 328         path.reset();
+ 329         path.moveTo(100, POSITIVE_INFINITY);
+ 330         path.lineTo(POSITIVE_INFINITY, 100);
+ 331         path.lineTo(POSITIVE_INFINITY, POSITIVE_INFINITY);
+ 332 
+ 333         path.quadTo(POSITIVE_INFINITY, 100,
+ 334                     POSITIVE_INFINITY, 100);
+ 335         path.quadTo(100, POSITIVE_INFINITY,
+ 336                     100, POSITIVE_INFINITY);
+ 337         path.quadTo(POSITIVE_INFINITY, POSITIVE_INFINITY,
+ 338                     POSITIVE_INFINITY, POSITIVE_INFINITY);
+ 339 
+ 340         path.curveTo(POSITIVE_INFINITY, 100,
+ 341                      POSITIVE_INFINITY, 100,
+ 342                      POSITIVE_INFINITY, 100);
+ 343         path.curveTo(100, POSITIVE_INFINITY,
+ 344                      100, POSITIVE_INFINITY,
+ 345                      100, POSITIVE_INFINITY);
+ 346         path.curveTo(POSITIVE_INFINITY, POSITIVE_INFINITY,
+ 347                      POSITIVE_INFINITY, POSITIVE_INFINITY,
+ 348                      POSITIVE_INFINITY, POSITIVE_INFINITY);
+ 349         path.closePath();
+ 350 
+ 351         s = stroke.createStrokedShape(path);
+ 352         checkEmptyPath(s);
+ 353 
+ 354         // Check filtering -Infinity values:
+ 355         path.reset();
+ 356         path.moveTo(100, NEGATIVE_INFINITY);
+ 357         path.lineTo(NEGATIVE_INFINITY, 100);
+ 358         path.lineTo(NEGATIVE_INFINITY, NEGATIVE_INFINITY);
+ 359 
+ 360         path.quadTo(NEGATIVE_INFINITY, 100,
+ 361                     NEGATIVE_INFINITY, 100);
+ 362         path.quadTo(100, NEGATIVE_INFINITY,
+ 363                     100, NEGATIVE_INFINITY);
+ 364         path.quadTo(NEGATIVE_INFINITY, NEGATIVE_INFINITY,
+ 365                     NEGATIVE_INFINITY, NEGATIVE_INFINITY);
+ 366 
+ 367         path.curveTo(NEGATIVE_INFINITY, 100,
+ 368                      NEGATIVE_INFINITY, 100,
+ 369                      NEGATIVE_INFINITY, 100);
+ 370         path.curveTo(100, NEGATIVE_INFINITY,
+ 371                      100, NEGATIVE_INFINITY,
+ 372                      100, NEGATIVE_INFINITY);
+ 373         path.curveTo(NEGATIVE_INFINITY, NEGATIVE_INFINITY,
+ 374                      NEGATIVE_INFINITY, NEGATIVE_INFINITY,
+ 375                      NEGATIVE_INFINITY, NEGATIVE_INFINITY);
+ 376         path.closePath();
+ 377 
+ 378         s = stroke.createStrokedShape(path);
+ 379         checkEmptyPath(s);
+ 380     }
+ 381 
+ 382     private static void checkEmptyPath(final Shape s) {
+ 383         final float[] coords = new float[6];
+ 384         final PathIterator it = s.getPathIterator(null);
+ 385 
+ 386         int n = 0;
+ 387         for (; !it.isDone(); it.next()) {
+ 388             int type = it.currentSegment(coords);
+ 389             System.out.println("unexpected segment type= " + type
+ 390                  + " with coords: " + Arrays.toString(coords));
+ 391             n++;
+ 392         }
+ 393         if (n != 0) {
+ 394             System.out.println("path elements = " + n);
+ 395             throw new IllegalStateException("Not empty path: "
+ 396                           + n + " path elements !");
+ 397         }
+ 398     }
+ 399 
+ 400     private static void checkPixel(final Raster raster,
+ 401                                    final int x, final int y,
+ 402                                    final int expected) {
+ 403 
+ 404         final int[] rgb = (int[]) raster.getDataElements(x, y, null);
+ 405 
+ 406         if (rgb[0] != expected) {
+ 407             throw new IllegalStateException("bad pixel at (" + x + ", " + y
+ 408                           + ") = " + rgb[0] + " expected: " + expected);
+ 409         }
+ 410     }
+ 411 
+ 412     private static void checkPixelNotWhite(final Raster raster,
+ 413                                            final int x, final int y) {
+ 414 
+ 415         final int[] rgb = (int[]) raster.getDataElements(x, y, null);
+ 416 
+ 417         if (rgb[0] == Color.WHITE.getRGB()) {
+ 418             throw new IllegalStateException("bad pixel at (" + x + ", " + y
+ 419                           + ") is white (empty)");
+ 420         }
+ 421     }
+ 422 }
+</pre></body></html>

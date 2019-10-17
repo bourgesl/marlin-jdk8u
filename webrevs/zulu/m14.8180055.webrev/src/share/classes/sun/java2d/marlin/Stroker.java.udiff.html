@@ -1,0 +1,1034 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/Stroker.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Stroker.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13693">13693</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8180055">8180055</a>: Upgrade the Marlin renderer in Java2D
+Summary: added the double-precision variant + MarlinFX backports + Improved MarlinTileGenerator + higher precision of the cubic / quadratic curve
+Reviewed-by: flar, pnarayanan</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -1,7 +1,7 @@</span>
+ /*
+<span class="removed">- * Copyright (c) 2007, 2016, Oracle and/or its affiliates. All rights reserved.</span>
+<span class="new">+ * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License version 2 only, as
+  * published by the Free Software Foundation.  Oracle designates this
+</pre><hr /><pre>
+<span class="newmarker">@@ -24,16 +24,12 @@</span>
+  */
+ 
+ package sun.java2d.marlin;
+ 
+ import java.util.Arrays;
+<span class="removed">-import static java.lang.Math.ulp;</span>
+<span class="removed">-import static java.lang.Math.sqrt;</span>
+ 
+ import sun.awt.geom.PathConsumer2D;
+<span class="removed">-import sun.java2d.marlin.Curve.BreakPtrIterator;</span>
+<span class="removed">-</span>
+ 
+ // TODO: some of the arithmetic here is too verbose and prone to hard to
+ // debug typos. We should consider making a small Point/Vector class that
+ // has methods like plus(Point), minus(Point), dot(Point), cross(Point)and such
+ final class Stroker implements PathConsumer2D, MarlinConst {
+</pre><hr /><pre>
+<span class="newmarker">@@ -73,11 +69,11 @@</span>
+     public static final int CAP_SQUARE = 2;
+ 
+     // pisces used to use fixed point arithmetic with 16 decimal digits. I
+     // didn't want to change the values of the constant below when I converted
+     // it to floating point, so that's why the divisions by 2^16 are there.
+<span class="removed">-    private static final float ROUND_JOIN_THRESHOLD = 1000/65536f;</span>
+<span class="new">+    private static final float ROUND_JOIN_THRESHOLD = 1000.0f/65536.0f;</span>
+ 
+     private static final float C = 0.5522847498307933f;
+ 
+     private static final int MAX_N_CURVES = 11;
+ 
+</pre><hr /><pre>
+<span class="newmarker">@@ -110,13 +106,12 @@</span>
+     private float smx, smy, cmx, cmy;
+ 
+     private final PolyStack reverse;
+ 
+     // This is where the curve to be processed is put. We give it
+<span class="removed">-    // enough room to store 2 curves: one for the current subdivision, the</span>
+<span class="removed">-    // other for the rest of the curve.</span>
+<span class="removed">-    private final float[] middle = new float[2 * 8];</span>
+<span class="new">+    // enough room to store all curves.</span>
+<span class="new">+    private final float[] middle = new float[MAX_N_CURVES * 6 + 2];</span>
+     private final float[] lp = new float[8];
+     private final float[] rp = new float[8];
+     private final float[] subdivTs = new float[MAX_N_CURVES - 1];
+ 
+     // per-thread renderer context
+</pre><hr /><pre>
+<span class="newmarker">@@ -156,12 +151,12 @@</span>
+               int joinStyle,
+               float miterLimit)
+     {
+         this.out = pc2d;
+ 
+<span class="removed">-        this.lineWidth2 = lineWidth / 2f;</span>
+<span class="removed">-        this.invHalfLineWidth2Sq = 1f / (2f * lineWidth2 * lineWidth2);</span>
+<span class="new">+        this.lineWidth2 = lineWidth / 2.0f;</span>
+<span class="new">+        this.invHalfLineWidth2Sq = 1.0f / (2.0f * lineWidth2 * lineWidth2);</span>
+         this.capStyle = capStyle;
+         this.joinStyle = joinStyle;
+ 
+         float limit = miterLimit * lineWidth2;
+         this.miterLimitSq = limit * limit;
+</pre><hr /><pre>
+<span class="newmarker">@@ -180,30 +175,30 @@</span>
+     void dispose() {
+         reverse.dispose();
+ 
+         if (DO_CLEAN_DIRTY) {
+             // Force zero-fill dirty arrays:
+<span class="removed">-            Arrays.fill(offset0, 0f);</span>
+<span class="removed">-            Arrays.fill(offset1, 0f);</span>
+<span class="removed">-            Arrays.fill(offset2, 0f);</span>
+<span class="removed">-            Arrays.fill(miter, 0f);</span>
+<span class="removed">-            Arrays.fill(middle, 0f);</span>
+<span class="removed">-            Arrays.fill(lp, 0f);</span>
+<span class="removed">-            Arrays.fill(rp, 0f);</span>
+<span class="removed">-            Arrays.fill(subdivTs, 0f);</span>
+<span class="new">+            Arrays.fill(offset0, 0.0f);</span>
+<span class="new">+            Arrays.fill(offset1, 0.0f);</span>
+<span class="new">+            Arrays.fill(offset2, 0.0f);</span>
+<span class="new">+            Arrays.fill(miter, 0.0f);</span>
+<span class="new">+            Arrays.fill(middle, 0.0f);</span>
+<span class="new">+            Arrays.fill(lp, 0.0f);</span>
+<span class="new">+            Arrays.fill(rp, 0.0f);</span>
+<span class="new">+            Arrays.fill(subdivTs, 0.0f);</span>
+         }
+     }
+ 
+     private static void computeOffset(final float lx, final float ly,
+                                       final float w, final float[] m)
+     {
+         float len = lx*lx + ly*ly;
+<span class="removed">-        if (len == 0f) {</span>
+<span class="removed">-            m[0] = 0f;</span>
+<span class="removed">-            m[1] = 0f;</span>
+<span class="new">+        if (len == 0.0f) {</span>
+<span class="new">+            m[0] = 0.0f;</span>
+<span class="new">+            m[1] = 0.0f;</span>
+         } else {
+<span class="removed">-            len = (float) sqrt(len);</span>
+<span class="new">+            len = (float) Math.sqrt(len);</span>
+             m[0] =  (ly * w) / len;
+             m[1] = -(lx * w) / len;
+         }
+     }
+ 
+</pre><hr /><pre>
+<span class="newmarker">@@ -224,11 +219,11 @@</span>
+     private void drawRoundJoin(float x, float y,
+                                float omx, float omy, float mx, float my,
+                                boolean rev,
+                                float threshold)
+     {
+<span class="removed">-        if ((omx == 0f &amp;&amp; omy == 0f) || (mx == 0f &amp;&amp; my == 0f)) {</span>
+<span class="new">+        if ((omx == 0.0f &amp;&amp; omy == 0.0f) || (mx == 0.0f &amp;&amp; my == 0.0f)) {</span>
+             return;
+         }
+ 
+         float domx = omx - mx;
+         float domy = omy - my;
+</pre><hr /><pre>
+<span class="newmarker">@@ -256,11 +251,11 @@</span>
+         // (ext is the angle between omx,omy and mx,my).
+         final float cosext = omx * mx + omy * my;
+         // If it is &gt;=0, we know that abs(ext) is &lt;= 90 degrees, so we only
+         // need 1 curve to approximate the circle section that joins omx,omy
+         // and mx,my.
+<span class="removed">-        final int numCurves = (cosext &gt;= 0f) ? 1 : 2;</span>
+<span class="new">+        final int numCurves = (cosext &gt;= 0.0f) ? 1 : 2;</span>
+ 
+         switch (numCurves) {
+         case 1:
+             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+             break;
+</pre><hr /><pre>
+<span class="newmarker">@@ -278,11 +273,11 @@</span>
+             // perpendicular bisector goes through the origin). This scaling doesn't
+             // have numerical problems because we know that lineWidth2 divided by
+             // this normal's length is at least 0.5 and at most sqrt(2)/2 (because
+             // we know the angle of the arc is &gt; 90 degrees).
+             float nx = my - omy, ny = omx - mx;
+<span class="removed">-            float nlen = (float) sqrt(nx*nx + ny*ny);</span>
+<span class="new">+            float nlen = (float) Math.sqrt(nx*nx + ny*ny);</span>
+             float scale = lineWidth2/nlen;
+             float mmx = nx * scale, mmy = ny * scale;
+ 
+             // if (isCW(omx, omy, mx, my) != isCW(mmx, mmy, mx, my)) then we've
+             // computed the wrong intersection so we get the other one.
+</pre><hr /><pre>
+<span class="newmarker">@@ -316,12 +311,12 @@</span>
+         // cv is the length of P1-P0 and P2-P3 divided by the radius of the arc
+         // (so, cv assumes the arc has radius 1). P0, P1, P2, P3 are the points that
+         // define the bezier curve we're computing.
+         // It is computed using the constraints that P1-P0 and P3-P2 are parallel
+         // to the arc tangents at the endpoints, and that |P1-P0|=|P3-P2|.
+<span class="removed">-        float cv = (float) ((4.0 / 3.0) * sqrt(0.5 - cosext2) /</span>
+<span class="removed">-                            (1.0 + sqrt(cosext2 + 0.5)));</span>
+<span class="new">+        float cv = (float) ((4.0d / 3.0d) * Math.sqrt(0.5d - cosext2) /</span>
+<span class="new">+                            (1.0d + Math.sqrt(cosext2 + 0.5d)));</span>
+         // if clockwise, we need to negate cv.
+         if (rev) { // rev is equivalent to isCW(omx, omy, mx, my)
+             cv = -cv;
+         }
+         final float x1 = cx + omx;
+</pre><hr /><pre>
+<span class="newmarker">@@ -346,25 +341,67 @@</span>
+         emitCurveTo(cx - my - Cmx, cy + mx - Cmy,
+                     cx - mx - Cmy, cy - my + Cmx,
+                     cx - mx,       cy - my);
+     }
+ 
+<span class="removed">-    // Put the intersection point of the lines (x0, y0) -&gt; (x1, y1)</span>
+<span class="removed">-    // and (x0p, y0p) -&gt; (x1p, y1p) in m[off] and m[off+1].</span>
+<span class="removed">-    // If the lines are parallel, it will put a non finite number in m.</span>
+<span class="removed">-    private static void computeIntersection(final float x0, final float y0,</span>
+<span class="new">+    // Return the intersection point of the lines (x0, y0) -&gt; (x1, y1)</span>
+<span class="new">+    // and (x0p, y0p) -&gt; (x1p, y1p) in m[off] and m[off+1]</span>
+<span class="new">+    private static void computeMiter(final float x0, final float y0,</span>
+<span class="new">+                                     final float x1, final float y1,</span>
+<span class="new">+                                     final float x0p, final float y0p,</span>
+<span class="new">+                                     final float x1p, final float y1p,</span>
+<span class="new">+                                     final float[] m, int off)</span>
+<span class="new">+    {</span>
+<span class="new">+        float x10 = x1 - x0;</span>
+<span class="new">+        float y10 = y1 - y0;</span>
+<span class="new">+        float x10p = x1p - x0p;</span>
+<span class="new">+        float y10p = y1p - y0p;</span>
+<span class="new">+</span>
+<span class="new">+        // if this is 0, the lines are parallel. If they go in the</span>
+<span class="new">+        // same direction, there is no intersection so m[off] and</span>
+<span class="new">+        // m[off+1] will contain infinity, so no miter will be drawn.</span>
+<span class="new">+        // If they go in the same direction that means that the start of the</span>
+<span class="new">+        // current segment and the end of the previous segment have the same</span>
+<span class="new">+        // tangent, in which case this method won't even be involved in</span>
+<span class="new">+        // miter drawing because it won't be called by drawMiter (because</span>
+<span class="new">+        // (mx == omx &amp;&amp; my == omy) will be true, and drawMiter will return</span>
+<span class="new">+        // immediately).</span>
+<span class="new">+        float den = x10*y10p - x10p*y10;</span>
+<span class="new">+        float t = x10p*(y0-y0p) - y10p*(x0-x0p);</span>
+<span class="new">+        t /= den;</span>
+<span class="new">+        m[off++] = x0 + t*x10;</span>
+<span class="new">+        m[off]   = y0 + t*y10;</span>
+<span class="new">+    }</span>
+<span class="new">+</span>
+<span class="new">+    // Return the intersection point of the lines (x0, y0) -&gt; (x1, y1)</span>
+<span class="new">+    // and (x0p, y0p) -&gt; (x1p, y1p) in m[off] and m[off+1]</span>
+<span class="new">+    private static void safeComputeMiter(final float x0, final float y0,</span>
+                                             final float x1, final float y1,
+                                             final float x0p, final float y0p,
+                                             final float x1p, final float y1p,
+                                             final float[] m, int off)
+     {
+         float x10 = x1 - x0;
+         float y10 = y1 - y0;
+         float x10p = x1p - x0p;
+         float y10p = y1p - y0p;
+ 
+<span class="new">+        // if this is 0, the lines are parallel. If they go in the</span>
+<span class="new">+        // same direction, there is no intersection so m[off] and</span>
+<span class="new">+        // m[off+1] will contain infinity, so no miter will be drawn.</span>
+<span class="new">+        // If they go in the same direction that means that the start of the</span>
+<span class="new">+        // current segment and the end of the previous segment have the same</span>
+<span class="new">+        // tangent, in which case this method won't even be involved in</span>
+<span class="new">+        // miter drawing because it won't be called by drawMiter (because</span>
+<span class="new">+        // (mx == omx &amp;&amp; my == omy) will be true, and drawMiter will return</span>
+<span class="new">+        // immediately).</span>
+         float den = x10*y10p - x10p*y10;
+<span class="new">+        if (den == 0.0f) {</span>
+<span class="new">+            m[off++] = (x0 + x0p) / 2.0f;</span>
+<span class="new">+            m[off]   = (y0 + y0p) / 2.0f;</span>
+<span class="new">+            return;</span>
+<span class="new">+        }</span>
+         float t = x10p*(y0-y0p) - y10p*(x0-x0p);
+         t /= den;
+         m[off++] = x0 + t*x10;
+         m[off]   = y0 + t*y10;
+     }
+</pre><hr /><pre>
+<span class="newmarker">@@ -374,12 +411,12 @@</span>
+                            final float dx, final float dy,
+                            float omx, float omy, float mx, float my,
+                            boolean rev)
+     {
+         if ((mx == omx &amp;&amp; my == omy) ||
+<span class="removed">-            (pdx == 0f &amp;&amp; pdy == 0f) ||</span>
+<span class="removed">-            (dx == 0f &amp;&amp; dy == 0f))</span>
+<span class="new">+            (pdx == 0.0f &amp;&amp; pdy == 0.0f) ||</span>
+<span class="new">+            (dx == 0.0f &amp;&amp; dy == 0.0f))</span>
+         {
+             return;
+         }
+ 
+         if (rev) {
+</pre><hr /><pre>
+<span class="newmarker">@@ -387,11 +424,11 @@</span>
+             omy = -omy;
+             mx  = -mx;
+             my  = -my;
+         }
+ 
+<span class="removed">-        computeIntersection((x0 - pdx) + omx, (y0 - pdy) + omy, x0 + omx, y0 + omy,</span>
+<span class="new">+        computeMiter((x0 - pdx) + omx, (y0 - pdy) + omy, x0 + omx, y0 + omy,</span>
+                             (dx + x0) + mx, (dy + y0) + my, x0 + mx, y0 + my,
+                             miter, 0);
+ 
+         final float miterX = miter[0];
+         final float miterY = miter[1];
+</pre><hr /><pre>
+<span class="newmarker">@@ -412,21 +449,21 @@</span>
+         if (prev == DRAWING_OP_TO) {
+             finish();
+         }
+         this.sx0 = this.cx0 = x0;
+         this.sy0 = this.cy0 = y0;
+<span class="removed">-        this.cdx = this.sdx = 1f;</span>
+<span class="removed">-        this.cdy = this.sdy = 0f;</span>
+<span class="new">+        this.cdx = this.sdx = 1.0f;</span>
+<span class="new">+        this.cdy = this.sdy = 0.0f;</span>
+         this.prev = MOVE_TO;
+     }
+ 
+     @Override
+     public void lineTo(float x1, float y1) {
+         float dx = x1 - cx0;
+         float dy = y1 - cy0;
+<span class="removed">-        if (dx == 0f &amp;&amp; dy == 0f) {</span>
+<span class="removed">-            dx = 1f;</span>
+<span class="new">+        if (dx == 0.0f &amp;&amp; dy == 0.0f) {</span>
+<span class="new">+            dx = 1.0f;</span>
+         }
+         computeOffset(dx, dy, lineWidth2, offset0);
+         final float mx = offset0[0];
+         final float my = offset0[1];
+ 
+</pre><hr /><pre>
+<span class="newmarker">@@ -452,14 +489,14 @@</span>
+         if (prev != DRAWING_OP_TO) {
+             if (prev == CLOSE) {
+                 return;
+             }
+             emitMoveTo(cx0, cy0 - lineWidth2);
+<span class="removed">-            this.cmx = this.smx = 0f;</span>
+<span class="new">+            this.cmx = this.smx = 0.0f;</span>
+             this.cmy = this.smy = -lineWidth2;
+<span class="removed">-            this.cdx = this.sdx = 1f;</span>
+<span class="removed">-            this.cdy = this.sdy = 0f;</span>
+<span class="new">+            this.cdx = this.sdx = 1.0f;</span>
+<span class="new">+            this.cdy = this.sdy = 0.0f;</span>
+             finish();
+             return;
+         }
+ 
+         if (cx0 != sx0 || cy0 != sy0) {
+</pre><hr /><pre>
+<span class="newmarker">@@ -638,11 +675,11 @@</span>
+     private int computeOffsetCubic(float[] pts, final int off,
+                                    float[] leftOff, float[] rightOff)
+     {
+         // if p1=p2 or p3=p4 it means that the derivative at the endpoint
+         // vanishes, which creates problems with computeOffset. Usually
+<span class="removed">-        // this happens when this stroker object is trying to winden</span>
+<span class="new">+        // this happens when this stroker object is trying to widen</span>
+         // a curve with a cusp. What happens is that curveTo splits
+         // the input curve at the cusp, and passes it to this function.
+         // because of inaccuracies in the splitting, we consider points
+         // equal if they're very close to each other.
+         final float x1 = pts[off + 0], y1 = pts[off + 1];
+</pre><hr /><pre>
+<span class="newmarker">@@ -655,12 +692,12 @@</span>
+         float dx1 = x2 - x1;
+         float dy1 = y2 - y1;
+ 
+         // if p1 == p2 &amp;&amp; p3 == p4: draw line from p1-&gt;p4, unless p1 == p4,
+         // in which case ignore if p1 == p2
+<span class="removed">-        final boolean p1eqp2 = within(x1,y1,x2,y2, 6f * ulp(y2));</span>
+<span class="removed">-        final boolean p3eqp4 = within(x3,y3,x4,y4, 6f * ulp(y4));</span>
+<span class="new">+        final boolean p1eqp2 = within(x1, y1, x2, y2, 6.0f * Math.ulp(y2));</span>
+<span class="new">+        final boolean p3eqp4 = within(x3, y3, x4, y4, 6.0f * Math.ulp(y4));</span>
+         if (p1eqp2 &amp;&amp; p3eqp4) {
+             getLineOffsets(x1, y1, x4, y4, leftOff, rightOff);
+             return 4;
+         } else if (p1eqp2) {
+             dx1 = x3 - x1;
+</pre><hr /><pre>
+<span class="newmarker">@@ -672,11 +709,11 @@</span>
+ 
+         // if p2-p1 and p4-p3 are parallel, that must mean this curve is a line
+         float dotsq = (dx1 * dx4 + dy1 * dy4);
+         dotsq *= dotsq;
+         float l1sq = dx1 * dx1 + dy1 * dy1, l4sq = dx4 * dx4 + dy4 * dy4;
+<span class="removed">-        if (Helpers.within(dotsq, l1sq * l4sq, 4f * ulp(dotsq))) {</span>
+<span class="new">+        if (Helpers.within(dotsq, l1sq * l4sq, 4.0f * Math.ulp(dotsq))) {</span>
+             getLineOffsets(x1, y1, x4, y4, leftOff, rightOff);
+             return 4;
+         }
+ 
+ //      What we're trying to do in this function is to approximate an ideal
+</pre><hr /><pre>
+<span class="newmarker">@@ -724,12 +761,12 @@</span>
+ //      [dy1, dy4][c2]
+ //      At this point we are left with a simple linear system and we solve it by
+ //      getting the inverse of the matrix above. Then we use [c1,c2] to compute
+ //      p2p and p3p.
+ 
+<span class="removed">-        float x = (x1 + 3f * (x2 + x3) + x4) / 8f;</span>
+<span class="removed">-        float y = (y1 + 3f * (y2 + y3) + y4) / 8f;</span>
+<span class="new">+        float x = (x1 + 3.0f * (x2 + x3) + x4) / 8.0f;</span>
+<span class="new">+        float y = (y1 + 3.0f * (y2 + y3) + y4) / 8.0f;</span>
+         // (dxm,dym) is some tangent of B at t=0.5. This means it's equal to
+         // c*B'(0.5) for some constant c.
+         float dxm = x3 + x4 - x1 - x2, dym = y3 + y4 - y1 - y2;
+ 
+         // this computes the offsets at t=0, 0.5, 1, using the property that
+</pre><hr /><pre>
+<span class="newmarker">@@ -743,14 +780,14 @@</span>
+         float xi  = x  + offset1[0]; // interpolation
+         float yi  = y  + offset1[1]; // point
+         float x4p = x4 + offset2[0]; // end
+         float y4p = y4 + offset2[1]; // point
+ 
+<span class="removed">-        float invdet43 = 4f / (3f * (dx1 * dy4 - dy1 * dx4));</span>
+<span class="new">+        float invdet43 = 4.0f / (3.0f * (dx1 * dy4 - dy1 * dx4));</span>
+ 
+<span class="removed">-        float two_pi_m_p1_m_p4x = 2f * xi - x1p - x4p;</span>
+<span class="removed">-        float two_pi_m_p1_m_p4y = 2f * yi - y1p - y4p;</span>
+<span class="new">+        float two_pi_m_p1_m_p4x = 2.0f * xi - x1p - x4p;</span>
+<span class="new">+        float two_pi_m_p1_m_p4y = 2.0f * yi - y1p - y4p;</span>
+         float c1 = invdet43 * (dy4 * two_pi_m_p1_m_p4x - dx4 * two_pi_m_p1_m_p4y);
+         float c2 = invdet43 * (dx1 * two_pi_m_p1_m_p4y - dy1 * two_pi_m_p1_m_p4x);
+ 
+         float x2p, y2p, x3p, y3p;
+         x2p = x1p + c1*dx1;
+</pre><hr /><pre>
+<span class="newmarker">@@ -762,15 +799,15 @@</span>
+         leftOff[2] = x2p; leftOff[3] = y2p;
+         leftOff[4] = x3p; leftOff[5] = y3p;
+         leftOff[6] = x4p; leftOff[7] = y4p;
+ 
+         x1p = x1 - offset0[0]; y1p = y1 - offset0[1];
+<span class="removed">-        xi = xi - 2f * offset1[0]; yi = yi - 2f * offset1[1];</span>
+<span class="new">+        xi = xi - 2.0f * offset1[0]; yi = yi - 2.0f * offset1[1];</span>
+         x4p = x4 - offset2[0]; y4p = y4 - offset2[1];
+ 
+<span class="removed">-        two_pi_m_p1_m_p4x = 2f * xi - x1p - x4p;</span>
+<span class="removed">-        two_pi_m_p1_m_p4y = 2f * yi - y1p - y4p;</span>
+<span class="new">+        two_pi_m_p1_m_p4x = 2.0f * xi - x1p - x4p;</span>
+<span class="new">+        two_pi_m_p1_m_p4y = 2.0f * yi - y1p - y4p;</span>
+         c1 = invdet43 * (dy4 * two_pi_m_p1_m_p4x - dx4 * two_pi_m_p1_m_p4y);
+         c2 = invdet43 * (dx1 * two_pi_m_p1_m_p4y - dy1 * two_pi_m_p1_m_p4x);
+ 
+         x2p = x1p + c1*dx1;
+         y2p = y1p + c1*dy1;
+</pre><hr /><pre>
+<span class="newmarker">@@ -782,10 +819,12 @@</span>
+         rightOff[4] = x3p; rightOff[5] = y3p;
+         rightOff[6] = x4p; rightOff[7] = y4p;
+         return 8;
+     }
+ 
+<span class="new">+    // compute offset curves using bezier spline through t=0.5 (i.e.</span>
+<span class="new">+    // ComputedCurve(0.5) == IdealParallelCurve(0.5))</span>
+     // return the kind of curve in the right and left arrays.
+     private int computeOffsetQuad(float[] pts, final int off,
+                                   float[] leftOff, float[] rightOff)
+     {
+         final float x1 = pts[off + 0], y1 = pts[off + 1];
+</pre><hr /><pre>
+<span class="newmarker">@@ -795,173 +834,57 @@</span>
+         final float dx3 = x3 - x2;
+         final float dy3 = y3 - y2;
+         final float dx1 = x2 - x1;
+         final float dy1 = y2 - y1;
+ 
+<span class="removed">-        // this computes the offsets at t = 0, 1</span>
+<span class="removed">-        computeOffset(dx1, dy1, lineWidth2, offset0);</span>
+<span class="removed">-        computeOffset(dx3, dy3, lineWidth2, offset1);</span>
+<span class="new">+        // if p1=p2 or p3=p4 it means that the derivative at the endpoint</span>
+<span class="new">+        // vanishes, which creates problems with computeOffset. Usually</span>
+<span class="new">+        // this happens when this stroker object is trying to widen</span>
+<span class="new">+        // a curve with a cusp. What happens is that curveTo splits</span>
+<span class="new">+        // the input curve at the cusp, and passes it to this function.</span>
+<span class="new">+        // because of inaccuracies in the splitting, we consider points</span>
+<span class="new">+        // equal if they're very close to each other.</span>
+ 
+<span class="removed">-        leftOff[0]  = x1 + offset0[0]; leftOff[1]  = y1 + offset0[1];</span>
+<span class="removed">-        leftOff[4]  = x3 + offset1[0]; leftOff[5]  = y3 + offset1[1];</span>
+<span class="removed">-        rightOff[0] = x1 - offset0[0]; rightOff[1] = y1 - offset0[1];</span>
+<span class="removed">-        rightOff[4] = x3 - offset1[0]; rightOff[5] = y3 - offset1[1];</span>
+<span class="removed">-</span>
+<span class="removed">-        float x1p = leftOff[0]; // start</span>
+<span class="removed">-        float y1p = leftOff[1]; // point</span>
+<span class="removed">-        float x3p = leftOff[4]; // end</span>
+<span class="removed">-        float y3p = leftOff[5]; // point</span>
+<span class="removed">-</span>
+<span class="removed">-        // Corner cases:</span>
+<span class="removed">-        // 1. If the two control vectors are parallel, we'll end up with NaN's</span>
+<span class="removed">-        //    in leftOff (and rightOff in the body of the if below), so we'll</span>
+<span class="removed">-        //    do getLineOffsets, which is right.</span>
+<span class="removed">-        // 2. If the first or second two points are equal, then (dx1,dy1)==(0,0)</span>
+<span class="removed">-        //    or (dx3,dy3)==(0,0), so (x1p, y1p)==(x1p+dx1, y1p+dy1)</span>
+<span class="removed">-        //    or (x3p, y3p)==(x3p-dx3, y3p-dy3), which means that</span>
+<span class="removed">-        //    computeIntersection will put NaN's in leftOff and right off, and</span>
+<span class="removed">-        //    we will do getLineOffsets, which is right.</span>
+<span class="removed">-        computeIntersection(x1p, y1p, x1p+dx1, y1p+dy1, x3p, y3p, x3p-dx3, y3p-dy3, leftOff, 2);</span>
+<span class="removed">-        float cx = leftOff[2];</span>
+<span class="removed">-        float cy = leftOff[3];</span>
+<span class="removed">-</span>
+<span class="removed">-        if (!(isFinite(cx) &amp;&amp; isFinite(cy))) {</span>
+<span class="removed">-            // maybe the right path is not degenerate.</span>
+<span class="removed">-            x1p = rightOff[0];</span>
+<span class="removed">-            y1p = rightOff[1];</span>
+<span class="removed">-            x3p = rightOff[4];</span>
+<span class="removed">-            y3p = rightOff[5];</span>
+<span class="removed">-            computeIntersection(x1p, y1p, x1p+dx1, y1p+dy1, x3p, y3p, x3p-dx3, y3p-dy3, rightOff, 2);</span>
+<span class="removed">-            cx = rightOff[2];</span>
+<span class="removed">-            cy = rightOff[3];</span>
+<span class="removed">-            if (!(isFinite(cx) &amp;&amp; isFinite(cy))) {</span>
+<span class="removed">-                // both are degenerate. This curve is a line.</span>
+<span class="new">+        // if p1 == p2 &amp;&amp; p3 == p4: draw line from p1-&gt;p4, unless p1 == p4,</span>
+<span class="new">+        // in which case ignore.</span>
+<span class="new">+        final boolean p1eqp2 = within(x1, y1, x2, y2, 6.0f * Math.ulp(y2));</span>
+<span class="new">+        final boolean p2eqp3 = within(x2, y2, x3, y3, 6.0f * Math.ulp(y3));</span>
+<span class="new">+        if (p1eqp2 || p2eqp3) {</span>
+                 getLineOffsets(x1, y1, x3, y3, leftOff, rightOff);
+                 return 4;
+             }
+<span class="removed">-            // {left,right}Off[0,1,4,5] are already set to the correct values.</span>
+<span class="removed">-            leftOff[2] = 2f * x2 - cx;</span>
+<span class="removed">-            leftOff[3] = 2f * y2 - cy;</span>
+<span class="removed">-            return 6;</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        // rightOff[2,3] = (x2,y2) - ((left_x2, left_y2) - (x2, y2))</span>
+<span class="removed">-        // == 2*(x2, y2) - (left_x2, left_y2)</span>
+<span class="removed">-        rightOff[2] = 2f * x2 - cx;</span>
+<span class="removed">-        rightOff[3] = 2f * y2 - cy;</span>
+<span class="removed">-        return 6;</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    private static boolean isFinite(float x) {</span>
+<span class="removed">-        return (Float.NEGATIVE_INFINITY &lt; x &amp;&amp; x &lt; Float.POSITIVE_INFINITY);</span>
+<span class="removed">-    }</span>
+ 
+<span class="removed">-    // If this class is compiled with ecj, then Hotspot crashes when OSR</span>
+<span class="removed">-    // compiling this function. See bugs 7004570 and 6675699</span>
+<span class="removed">-    // TODO: until those are fixed, we should work around that by</span>
+<span class="removed">-    // manually inlining this into curveTo and quadTo.</span>
+<span class="removed">-/******************************* WORKAROUND **********************************</span>
+<span class="removed">-    private void somethingTo(final int type) {</span>
+<span class="removed">-        // need these so we can update the state at the end of this method</span>
+<span class="removed">-        final float xf = middle[type-2], yf = middle[type-1];</span>
+<span class="removed">-        float dxs = middle[2] - middle[0];</span>
+<span class="removed">-        float dys = middle[3] - middle[1];</span>
+<span class="removed">-        float dxf = middle[type - 2] - middle[type - 4];</span>
+<span class="removed">-        float dyf = middle[type - 1] - middle[type - 3];</span>
+<span class="removed">-        switch(type) {</span>
+<span class="removed">-        case 6:</span>
+<span class="removed">-            if ((dxs == 0f &amp;&amp; dys == 0f) ||</span>
+<span class="removed">-                (dxf == 0f &amp;&amp; dyf == 0f)) {</span>
+<span class="removed">-               dxs = dxf = middle[4] - middle[0];</span>
+<span class="removed">-               dys = dyf = middle[5] - middle[1];</span>
+<span class="removed">-            }</span>
+<span class="removed">-            break;</span>
+<span class="removed">-        case 8:</span>
+<span class="removed">-            boolean p1eqp2 = (dxs == 0f &amp;&amp; dys == 0f);</span>
+<span class="removed">-            boolean p3eqp4 = (dxf == 0f &amp;&amp; dyf == 0f);</span>
+<span class="removed">-            if (p1eqp2) {</span>
+<span class="removed">-                dxs = middle[4] - middle[0];</span>
+<span class="removed">-                dys = middle[5] - middle[1];</span>
+<span class="removed">-                if (dxs == 0f &amp;&amp; dys == 0f) {</span>
+<span class="removed">-                    dxs = middle[6] - middle[0];</span>
+<span class="removed">-                    dys = middle[7] - middle[1];</span>
+<span class="removed">-                }</span>
+<span class="removed">-            }</span>
+<span class="removed">-            if (p3eqp4) {</span>
+<span class="removed">-                dxf = middle[6] - middle[2];</span>
+<span class="removed">-                dyf = middle[7] - middle[3];</span>
+<span class="removed">-                if (dxf == 0f &amp;&amp; dyf == 0f) {</span>
+<span class="removed">-                    dxf = middle[6] - middle[0];</span>
+<span class="removed">-                    dyf = middle[7] - middle[1];</span>
+<span class="removed">-                }</span>
+<span class="removed">-            }</span>
+<span class="removed">-        }</span>
+<span class="removed">-        if (dxs == 0f &amp;&amp; dys == 0f) {</span>
+<span class="removed">-            // this happens iff the "curve" is just a point</span>
+<span class="removed">-            lineTo(middle[0], middle[1]);</span>
+<span class="removed">-            return;</span>
+<span class="removed">-        }</span>
+<span class="removed">-        // if these vectors are too small, normalize them, to avoid future</span>
+<span class="removed">-        // precision problems.</span>
+<span class="removed">-        if (Math.abs(dxs) &lt; 0.1f &amp;&amp; Math.abs(dys) &lt; 0.1f) {</span>
+<span class="removed">-            float len = (float) sqrt(dxs*dxs + dys*dys);</span>
+<span class="removed">-            dxs /= len;</span>
+<span class="removed">-            dys /= len;</span>
+<span class="removed">-        }</span>
+<span class="removed">-        if (Math.abs(dxf) &lt; 0.1f &amp;&amp; Math.abs(dyf) &lt; 0.1f) {</span>
+<span class="removed">-            float len = (float) sqrt(dxf*dxf + dyf*dyf);</span>
+<span class="removed">-            dxf /= len;</span>
+<span class="removed">-            dyf /= len;</span>
+<span class="new">+        // if p2-p1 and p4-p3 are parallel, that must mean this curve is a line</span>
+<span class="new">+        float dotsq = (dx1 * dx3 + dy1 * dy3);</span>
+<span class="new">+        dotsq *= dotsq;</span>
+<span class="new">+        float l1sq = dx1 * dx1 + dy1 * dy1, l3sq = dx3 * dx3 + dy3 * dy3;</span>
+<span class="new">+        if (Helpers.within(dotsq, l1sq * l3sq, 4.0f * Math.ulp(dotsq))) {</span>
+<span class="new">+            getLineOffsets(x1, y1, x3, y3, leftOff, rightOff);</span>
+<span class="new">+            return 4;</span>
+         }
+ 
+<span class="removed">-        computeOffset(dxs, dys, lineWidth2, offset0);</span>
+<span class="removed">-        final float mx = offset0[0];</span>
+<span class="removed">-        final float my = offset0[1];</span>
+<span class="removed">-        drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, mx, my);</span>
+<span class="removed">-</span>
+<span class="removed">-        int nSplits = findSubdivPoints(curve, middle, subdivTs, type, lineWidth2);</span>
+<span class="removed">-</span>
+<span class="removed">-        int kind = 0;</span>
+<span class="removed">-        BreakPtrIterator it = curve.breakPtsAtTs(middle, type, subdivTs, nSplits);</span>
+<span class="removed">-        while(it.hasNext()) {</span>
+<span class="removed">-            int curCurveOff = it.next();</span>
+<span class="new">+        // this computes the offsets at t=0, 0.5, 1, using the property that</span>
+<span class="new">+        // for any bezier curve the vectors p2-p1 and p4-p3 are parallel to</span>
+<span class="new">+        // the (dx/dt, dy/dt) vectors at the endpoints.</span>
+<span class="new">+        computeOffset(dx1, dy1, lineWidth2, offset0);</span>
+<span class="new">+        computeOffset(dx3, dy3, lineWidth2, offset1);</span>
+ 
+<span class="removed">-            switch (type) {</span>
+<span class="removed">-            case 8:</span>
+<span class="removed">-                kind = computeOffsetCubic(middle, curCurveOff, lp, rp);</span>
+<span class="removed">-                break;</span>
+<span class="removed">-            case 6:</span>
+<span class="removed">-                kind = computeOffsetQuad(middle, curCurveOff, lp, rp);</span>
+<span class="removed">-                break;</span>
+<span class="removed">-            }</span>
+<span class="removed">-            emitLineTo(lp[0], lp[1]);</span>
+<span class="removed">-            switch(kind) {</span>
+<span class="removed">-            case 8:</span>
+<span class="removed">-                emitCurveTo(lp[2], lp[3], lp[4], lp[5], lp[6], lp[7]);</span>
+<span class="removed">-                emitCurveToRev(rp[0], rp[1], rp[2], rp[3], rp[4], rp[5]);</span>
+<span class="removed">-                break;</span>
+<span class="removed">-            case 6:</span>
+<span class="removed">-                emitQuadTo(lp[2], lp[3], lp[4], lp[5]);</span>
+<span class="removed">-                emitQuadToRev(rp[0], rp[1], rp[2], rp[3]);</span>
+<span class="removed">-                break;</span>
+<span class="removed">-            case 4:</span>
+<span class="removed">-                emitLineTo(lp[2], lp[3]);</span>
+<span class="removed">-                emitLineTo(rp[0], rp[1], true);</span>
+<span class="removed">-                break;</span>
+<span class="removed">-            }</span>
+<span class="removed">-            emitLineTo(rp[kind - 2], rp[kind - 1], true);</span>
+<span class="removed">-        }</span>
+<span class="new">+        float x1p = x1 + offset0[0]; // start</span>
+<span class="new">+        float y1p = y1 + offset0[1]; // point</span>
+<span class="new">+        float x3p = x3 + offset1[0]; // end</span>
+<span class="new">+        float y3p = y3 + offset1[1]; // point</span>
+<span class="new">+        safeComputeMiter(x1p, y1p, x1p+dx1, y1p+dy1, x3p, y3p, x3p-dx3, y3p-dy3, leftOff, 2);</span>
+<span class="new">+        leftOff[0] = x1p; leftOff[1] = y1p;</span>
+<span class="new">+        leftOff[4] = x3p; leftOff[5] = y3p;</span>
+ 
+<span class="removed">-        this.cmx = (lp[kind - 2] - rp[kind - 2]) / 2;</span>
+<span class="removed">-        this.cmy = (lp[kind - 1] - rp[kind - 1]) / 2;</span>
+<span class="removed">-        this.cdx = dxf;</span>
+<span class="removed">-        this.cdy = dyf;</span>
+<span class="removed">-        this.cx0 = xf;</span>
+<span class="removed">-        this.cy0 = yf;</span>
+<span class="removed">-        this.prev = DRAWING_OP_TO;</span>
+<span class="new">+        x1p = x1 - offset0[0]; y1p = y1 - offset0[1];</span>
+<span class="new">+        x3p = x3 - offset1[0]; y3p = y3 - offset1[1];</span>
+<span class="new">+        safeComputeMiter(x1p, y1p, x1p+dx1, y1p+dy1, x3p, y3p, x3p-dx3, y3p-dy3, rightOff, 2);</span>
+<span class="new">+        rightOff[0] = x1p; rightOff[1] = y1p;</span>
+<span class="new">+        rightOff[4] = x3p; rightOff[5] = y3p;</span>
+<span class="new">+        return 6;</span>
+     }
+<span class="removed">-****************************** END WORKAROUND *******************************/</span>
+ 
+     // finds values of t where the curve in pts should be subdivided in order
+     // to get good offset curves a distance of w away from the middle curve.
+     // Stores the points in ts, and returns how many of them there were.
+     private static int findSubdivPoints(final Curve c, float[] pts, float[] ts,
+</pre><hr /><pre>
+<span class="newmarker">@@ -969,15 +892,15 @@</span>
+     {
+         final float x12 = pts[2] - pts[0];
+         final float y12 = pts[3] - pts[1];
+         // if the curve is already parallel to either axis we gain nothing
+         // from rotating it.
+<span class="removed">-        if (y12 != 0f &amp;&amp; x12 != 0f) {</span>
+<span class="new">+        if (y12 != 0.0f &amp;&amp; x12 != 0.0f) {</span>
+             // we rotate it so that the first vector in the control polygon is
+             // parallel to the x-axis. This will ensure that rotated quarter
+             // circles won't be subdivided.
+<span class="removed">-            final float hypot = (float) sqrt(x12 * x12 + y12 * y12);</span>
+<span class="new">+            final float hypot = (float) Math.sqrt(x12 * x12 + y12 * y12);</span>
+             final float cos = x12 / hypot;
+             final float sin = y12 / hypot;
+             final float x1 = cos * pts[0] + sin * pts[1];
+             final float y1 = cos * pts[1] - sin * pts[0];
+             final float x2 = cos * pts[2] + sin * pts[3];
+</pre><hr /><pre>
+<span class="newmarker">@@ -1029,71 +952,74 @@</span>
+         mid[0] = cx0; mid[1] = cy0;
+         mid[2] = x1;  mid[3] = y1;
+         mid[4] = x2;  mid[5] = y2;
+         mid[6] = x3;  mid[7] = y3;
+ 
+<span class="removed">-        // inlined version of somethingTo(8);</span>
+<span class="removed">-        // See the TODO on somethingTo</span>
+<span class="removed">-</span>
+         // need these so we can update the state at the end of this method
+         final float xf = mid[6], yf = mid[7];
+         float dxs = mid[2] - mid[0];
+         float dys = mid[3] - mid[1];
+         float dxf = mid[6] - mid[4];
+         float dyf = mid[7] - mid[5];
+ 
+<span class="removed">-        boolean p1eqp2 = (dxs == 0f &amp;&amp; dys == 0f);</span>
+<span class="removed">-        boolean p3eqp4 = (dxf == 0f &amp;&amp; dyf == 0f);</span>
+<span class="new">+        boolean p1eqp2 = (dxs == 0.0f &amp;&amp; dys == 0.0f);</span>
+<span class="new">+        boolean p3eqp4 = (dxf == 0.0f &amp;&amp; dyf == 0.0f);</span>
+         if (p1eqp2) {
+             dxs = mid[4] - mid[0];
+             dys = mid[5] - mid[1];
+<span class="removed">-            if (dxs == 0f &amp;&amp; dys == 0f) {</span>
+<span class="new">+            if (dxs == 0.0f &amp;&amp; dys == 0.0f) {</span>
+                 dxs = mid[6] - mid[0];
+                 dys = mid[7] - mid[1];
+             }
+         }
+         if (p3eqp4) {
+             dxf = mid[6] - mid[2];
+             dyf = mid[7] - mid[3];
+<span class="removed">-            if (dxf == 0f &amp;&amp; dyf == 0f) {</span>
+<span class="new">+            if (dxf == 0.0f &amp;&amp; dyf == 0.0f) {</span>
+                 dxf = mid[6] - mid[0];
+                 dyf = mid[7] - mid[1];
+             }
+         }
+<span class="removed">-        if (dxs == 0f &amp;&amp; dys == 0f) {</span>
+<span class="new">+        if (dxs == 0.0f &amp;&amp; dys == 0.0f) {</span>
+             // this happens if the "curve" is just a point
+             lineTo(mid[0], mid[1]);
+             return;
+         }
+ 
+         // if these vectors are too small, normalize them, to avoid future
+         // precision problems.
+         if (Math.abs(dxs) &lt; 0.1f &amp;&amp; Math.abs(dys) &lt; 0.1f) {
+<span class="removed">-            float len = (float) sqrt(dxs*dxs + dys*dys);</span>
+<span class="new">+            float len = (float) Math.sqrt(dxs*dxs + dys*dys);</span>
+             dxs /= len;
+             dys /= len;
+         }
+         if (Math.abs(dxf) &lt; 0.1f &amp;&amp; Math.abs(dyf) &lt; 0.1f) {
+<span class="removed">-            float len = (float) sqrt(dxf*dxf + dyf*dyf);</span>
+<span class="new">+            float len = (float) Math.sqrt(dxf*dxf + dyf*dyf);</span>
+             dxf /= len;
+             dyf /= len;
+         }
+ 
+         computeOffset(dxs, dys, lineWidth2, offset0);
+         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1]);
+ 
+<span class="removed">-        int nSplits = findSubdivPoints(curve, mid, subdivTs, 8, lineWidth2);</span>
+<span class="new">+        final int nSplits = findSubdivPoints(curve, mid, subdivTs, 8, lineWidth2);</span>
+<span class="new">+</span>
+<span class="new">+        float prevT = 0.0f;</span>
+<span class="new">+        for (int i = 0, off = 0; i &lt; nSplits; i++, off += 6) {</span>
+<span class="new">+            final float t = subdivTs[i];</span>
+<span class="new">+            Helpers.subdivideCubicAt((t - prevT) / (1.0f - prevT),</span>
+<span class="new">+                                     mid, off, mid, off, mid, off + 6);</span>
+<span class="new">+            prevT = t;</span>
+<span class="new">+        }</span>
+ 
+         final float[] l = lp;
+         final float[] r = rp;
+ 
+         int kind = 0;
+<span class="removed">-        BreakPtrIterator it = curve.breakPtsAtTs(mid, 8, subdivTs, nSplits);</span>
+<span class="removed">-        while(it.hasNext()) {</span>
+<span class="removed">-            int curCurveOff = it.next();</span>
+<span class="new">+        for (int i = 0, off = 0; i &lt;= nSplits; i++, off += 6) {</span>
+<span class="new">+            kind = computeOffsetCubic(mid, off, l, r);</span>
+ 
+<span class="removed">-            kind = computeOffsetCubic(mid, curCurveOff, l, r);</span>
+             emitLineTo(l[0], l[1]);
+ 
+             switch(kind) {
+             case 8:
+                 emitCurveTo(l[2], l[3], l[4], l[5], l[6], l[7]);
+</pre><hr /><pre>
+<span class="newmarker">@@ -1106,12 +1032,12 @@</span>
+             default:
+             }
+             emitLineToRev(r[kind - 2], r[kind - 1]);
+         }
+ 
+<span class="removed">-        this.cmx = (l[kind - 2] - r[kind - 2]) / 2f;</span>
+<span class="removed">-        this.cmy = (l[kind - 1] - r[kind - 1]) / 2f;</span>
+<span class="new">+        this.cmx = (l[kind - 2] - r[kind - 2]) / 2.0f;</span>
+<span class="new">+        this.cmy = (l[kind - 1] - r[kind - 1]) / 2.0f;</span>
+         this.cdx = dxf;
+         this.cdy = dyf;
+         this.cx0 = xf;
+         this.cy0 = yf;
+         this.prev = DRAWING_OP_TO;
+</pre><hr /><pre>
+<span class="newmarker">@@ -1122,55 +1048,58 @@</span>
+ 
+         mid[0] = cx0; mid[1] = cy0;
+         mid[2] = x1;  mid[3] = y1;
+         mid[4] = x2;  mid[5] = y2;
+ 
+<span class="removed">-        // inlined version of somethingTo(8);</span>
+<span class="removed">-        // See the TODO on somethingTo</span>
+<span class="removed">-</span>
+         // need these so we can update the state at the end of this method
+         final float xf = mid[4], yf = mid[5];
+         float dxs = mid[2] - mid[0];
+         float dys = mid[3] - mid[1];
+         float dxf = mid[4] - mid[2];
+         float dyf = mid[5] - mid[3];
+<span class="removed">-        if ((dxs == 0f &amp;&amp; dys == 0f) || (dxf == 0f &amp;&amp; dyf == 0f)) {</span>
+<span class="new">+        if ((dxs == 0.0f &amp;&amp; dys == 0.0f) || (dxf == 0.0f &amp;&amp; dyf == 0.0f)) {</span>
+             dxs = dxf = mid[4] - mid[0];
+             dys = dyf = mid[5] - mid[1];
+         }
+<span class="removed">-        if (dxs == 0f &amp;&amp; dys == 0f) {</span>
+<span class="new">+        if (dxs == 0.0f &amp;&amp; dys == 0.0f) {</span>
+             // this happens if the "curve" is just a point
+             lineTo(mid[0], mid[1]);
+             return;
+         }
+         // if these vectors are too small, normalize them, to avoid future
+         // precision problems.
+         if (Math.abs(dxs) &lt; 0.1f &amp;&amp; Math.abs(dys) &lt; 0.1f) {
+<span class="removed">-            float len = (float) sqrt(dxs*dxs + dys*dys);</span>
+<span class="new">+            float len = (float) Math.sqrt(dxs*dxs + dys*dys);</span>
+             dxs /= len;
+             dys /= len;
+         }
+         if (Math.abs(dxf) &lt; 0.1f &amp;&amp; Math.abs(dyf) &lt; 0.1f) {
+<span class="removed">-            float len = (float) sqrt(dxf*dxf + dyf*dyf);</span>
+<span class="new">+            float len = (float) Math.sqrt(dxf*dxf + dyf*dyf);</span>
+             dxf /= len;
+             dyf /= len;
+         }
+ 
+         computeOffset(dxs, dys, lineWidth2, offset0);
+         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1]);
+ 
+         int nSplits = findSubdivPoints(curve, mid, subdivTs, 6, lineWidth2);
+ 
+<span class="new">+        float prevt = 0.0f;</span>
+<span class="new">+        for (int i = 0, off = 0; i &lt; nSplits; i++, off += 4) {</span>
+<span class="new">+            final float t = subdivTs[i];</span>
+<span class="new">+            Helpers.subdivideQuadAt((t - prevt) / (1.0f - prevt),</span>
+<span class="new">+                                    mid, off, mid, off, mid, off + 4);</span>
+<span class="new">+            prevt = t;</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+         final float[] l = lp;
+         final float[] r = rp;
+ 
+         int kind = 0;
+<span class="removed">-        BreakPtrIterator it = curve.breakPtsAtTs(mid, 6, subdivTs, nSplits);</span>
+<span class="removed">-        while(it.hasNext()) {</span>
+<span class="removed">-            int curCurveOff = it.next();</span>
+<span class="new">+        for (int i = 0, off = 0; i &lt;= nSplits; i++, off += 4) {</span>
+<span class="new">+            kind = computeOffsetQuad(mid, off, l, r);</span>
+ 
+<span class="removed">-            kind = computeOffsetQuad(mid, curCurveOff, l, r);</span>
+             emitLineTo(l[0], l[1]);
+ 
+             switch(kind) {
+             case 6:
+                 emitQuadTo(l[2], l[3], l[4], l[5]);
+</pre><hr /><pre>
+<span class="newmarker">@@ -1183,12 +1112,12 @@</span>
+             default:
+             }
+             emitLineToRev(r[kind - 2], r[kind - 1]);
+         }
+ 
+<span class="removed">-        this.cmx = (l[kind - 2] - r[kind - 2]) / 2f;</span>
+<span class="removed">-        this.cmy = (l[kind - 1] - r[kind - 1]) / 2f;</span>
+<span class="new">+        this.cmx = (l[kind - 2] - r[kind - 2]) / 2.0f;</span>
+<span class="new">+        this.cmy = (l[kind - 1] - r[kind - 1]) / 2.0f;</span>
+         this.cdx = dxf;
+         this.cdy = dyf;
+         this.cx0 = xf;
+         this.cy0 = yf;
+         this.prev = DRAWING_OP_TO;
+</pre><hr /><pre>
+<span class="newmarker">@@ -1203,15 +1132,15 @@</span>
+     static final class PolyStack {
+         private static final byte TYPE_LINETO  = (byte) 0;
+         private static final byte TYPE_QUADTO  = (byte) 1;
+         private static final byte TYPE_CUBICTO = (byte) 2;
+ 
+<span class="removed">-        // curves capacity = edges count (4096) = half edges x 2 (coords)</span>
+<span class="removed">-        private static final int INITIAL_CURVES_COUNT = INITIAL_EDGES_COUNT;</span>
+<span class="new">+        // curves capacity = edges count (8192) = edges x 2 (coords)</span>
+<span class="new">+        private static final int INITIAL_CURVES_COUNT = INITIAL_EDGES_COUNT &lt;&lt; 1;</span>
+ 
+<span class="removed">-        // types capacity = half edges count (2048)</span>
+<span class="removed">-        private static final int INITIAL_TYPES_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 1;</span>
+<span class="new">+        // types capacity = edges count (4096)</span>
+<span class="new">+        private static final int INITIAL_TYPES_COUNT = INITIAL_EDGES_COUNT;</span>
+ 
+         float[] curves;
+         int end;
+         byte[] curveTypes;
+         int numCurves;
+</pre><hr /><pre>
+<span class="newmarker">@@ -1233,14 +1162,14 @@</span>
+          * @param rdrCtx per-thread renderer context
+          */
+         PolyStack(final RendererContext rdrCtx) {
+             this.rdrCtx = rdrCtx;
+ 
+<span class="removed">-            curves_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_CURVES_COUNT); // 16K</span>
+<span class="new">+            curves_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_CURVES_COUNT); // 32K</span>
+             curves     = curves_ref.initial;
+ 
+<span class="removed">-            curveTypes_ref = rdrCtx.newDirtyByteArrayRef(INITIAL_TYPES_COUNT); // 2K</span>
+<span class="new">+            curveTypes_ref = rdrCtx.newDirtyByteArrayRef(INITIAL_TYPES_COUNT); // 4K</span>
+             curveTypes     = curveTypes_ref.initial;
+             numCurves = 0;
+             end = 0;
+ 
+             if (DO_STATS) {
+</pre><hr /><pre>
+<span class="newmarker">@@ -1367,11 +1296,11 @@</span>
+ 
+         @Override
+         public String toString() {
+             String ret = "";
+             int nc = numCurves;
+<span class="removed">-            int e  = end;</span>
+<span class="new">+            int last = end;</span>
+             int len;
+             while (nc != 0) {
+                 switch(curveTypes[--nc]) {
+                 case TYPE_LINETO:
+                     len = 2;
+</pre><hr /><pre>
+<span class="newmarker">@@ -1386,12 +1315,12 @@</span>
+                     ret += "cubic: ";
+                     break;
+                 default:
+                     len = 0;
+                 }
+<span class="removed">-                e -= len;</span>
+<span class="removed">-                ret += Arrays.toString(Arrays.copyOfRange(curves, e, e+len))</span>
+<span class="new">+                last -= len;</span>
+<span class="new">+                ret += Arrays.toString(Arrays.copyOfRange(curves, last, last+len))</span>
+                                        + "\n";
+             }
+             return ret;
+         }
+     }
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

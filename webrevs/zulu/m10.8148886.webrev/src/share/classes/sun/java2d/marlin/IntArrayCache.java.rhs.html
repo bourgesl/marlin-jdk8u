@@ -1,0 +1,320 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13689">13689</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8148886">8148886</a>: SEGV in sun.java2d.marlin.Renderer._endRendering
+Summary: handle reentrancy in both AAShapePipe and MarlinRenderingEngine using new sun.java2d.ReentrantContextProvider implementations
+Reviewed-by: flar, prr</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.util.ArrayDeque;
+  29 import java.util.Arrays;
+  30 import static sun.java2d.marlin.MarlinUtils.logException;
+  31 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  32 
+  33 final class IntArrayCache implements MarlinConst {
+  34 
+  35     private final int arraySize;
+  36     private final ArrayDeque&lt;int[]&gt; intArrays;
+  37     // stats
+  38     private int getOp = 0;
+  39     private int createOp = 0;
+  40     private int returnOp = 0;
+  41 
+  42     void dumpStats() {
+  43         if (getOp &gt; 0) {
+  44             logInfo("IntArrayCache[" + arraySize + "]: get: " + getOp
+  45                     + " created: " + createOp + " - returned: " + returnOp
+  46                     + " :: cache size: " + intArrays.size());
+  47         }
+  48     }
+  49 
+  50     IntArrayCache(final int arraySize) {
+  51         this.arraySize = arraySize;
+  52         // small but enough: almost 1 cache line
+  53         this.intArrays = new ArrayDeque&lt;int[]&gt;(6);
+  54     }
+  55 
+  56     int[] getArray() {
+  57         if (doStats) {
+  58             getOp++;
+  59         }
+  60 
+  61         // use cache:
+  62         final int[] array = intArrays.pollLast();
+  63         if (array != null) {
+  64             return array;
+  65         }
+  66 
+  67         if (doStats) {
+  68             createOp++;
+  69         }
+  70 
+  71         return new int[arraySize];
+  72     }
+  73 
+  74     void putDirtyArray(final int[] array, final int length) {
+  75         if (length != arraySize) {
+  76             if (doChecks) {
+  77                 MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+  78             }
+  79             return;
+  80         }
+  81         if (doStats) {
+  82             returnOp++;
+  83         }
+  84 
+  85         // NO clean-up of array data = DIRTY ARRAY
+  86 
+  87         if (doCleanDirty) {
+  88             // Force zero-fill dirty arrays:
+  89             Arrays.fill(array, 0, array.length, 0);
+  90         }
+  91 
+  92         // fill cache:
+  93         intArrays.addLast(array);
+  94     }
+  95 
+  96     void putArray(final int[] array, final int length,
+  97                   final int fromIndex, final int toIndex)
+  98     {
+  99         if (length != arraySize) {
+ 100             if (doChecks) {
+ 101                 MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+ 102             }
+ 103             return;
+ 104         }
+ 105         if (doStats) {
+ 106             returnOp++;
+ 107         }
+ 108 
+ 109         // clean-up array of dirty part[fromIndex; toIndex[
+ 110         fill(array, fromIndex, toIndex, 0);
+ 111 
+ 112         // fill cache:
+ 113         intArrays.addLast(array);
+ 114     }
+ 115 
+ 116     static void fill(final int[] array, final int fromIndex,
+ 117                      final int toIndex, final int value)
+ 118     {
+ 119         // clear array data:
+ 120         /*
+ 121          * Arrays.fill is faster than System.arraycopy(empty array)
+ 122          * or Unsafe.setMemory(byte 0)
+ 123          */
+ 124         if (toIndex != 0) {
+ 125             Arrays.fill(array, fromIndex, toIndex, value);
+ 126         }
+ 127 
+ 128         if (doChecks) {
+<a name="2" id="anc2"></a><span class="changed"> 129             check(array, fromIndex, toIndex, value);</span>
+ 130         }
+ 131     }
+ 132 
+ 133     static void check(final int[] array, final int fromIndex,
+ 134                       final int toIndex, final int value)
+ 135     {
+ 136         if (doChecks) {
+ 137             // check zero on full array:
+<a name="3" id="anc3"></a><span class="changed"> 138             for (int i = 0; i &lt; array.length; i++) {</span>
+ 139                 if (array[i] != value) {
+<a name="4" id="anc4"></a><span class="changed"> 140                     logException("Invalid value at: " + i + " = " + array[i]</span>
+<span class="changed"> 141                             + " from: " + fromIndex + " to: " + toIndex + "\n"</span>
+ 142                             + Arrays.toString(array), new Throwable());
+ 143 
+ 144                     // ensure array is correctly filled:
+ 145                     Arrays.fill(array, value);
+ 146 
+ 147                     return;
+ 148                 }
+ 149             }
+ 150         }
+ 151     }
+ 152 }
+<a name="5" id="anc5"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="5" type="hidden" /></form></body></html>

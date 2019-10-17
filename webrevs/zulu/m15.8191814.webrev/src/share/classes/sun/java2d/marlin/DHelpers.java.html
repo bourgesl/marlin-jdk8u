@@ -1,0 +1,893 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New src/share/classes/sun/java2d/marlin/DHelpers.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import static java.lang.Math.PI;
+  29 import java.util.Arrays;
+  30 import sun.java2d.marlin.stats.Histogram;
+  31 import sun.java2d.marlin.stats.StatLong;
+  32 
+  33 final class DHelpers implements MarlinConst {
+  34 
+  35     private DHelpers() {
+  36         throw new Error("This is a non instantiable class");
+  37     }
+  38 
+  39     static boolean within(final double x, final double y, final double err) {
+  40         final double d = y - x;
+  41         return (d &lt;= err &amp;&amp; d &gt;= -err);
+  42     }
+  43 
+  44     static int quadraticRoots(final double a, final double b,
+  45                               final double c, double[] zeroes, final int off)
+  46     {
+  47         int ret = off;
+  48         double t;
+  49         if (a != 0.0d) {
+  50             final double dis = b*b - 4*a*c;
+  51             if (dis &gt; 0.0d) {
+  52                 final double sqrtDis = Math.sqrt(dis);
+  53                 // depending on the sign of b we use a slightly different
+  54                 // algorithm than the traditional one to find one of the roots
+  55                 // so we can avoid adding numbers of different signs (which
+  56                 // might result in loss of precision).
+  57                 if (b &gt;= 0.0d) {
+  58                     zeroes[ret++] = (2.0d * c) / (-b - sqrtDis);
+  59                     zeroes[ret++] = (-b - sqrtDis) / (2.0d * a);
+  60                 } else {
+  61                     zeroes[ret++] = (-b + sqrtDis) / (2.0d * a);
+  62                     zeroes[ret++] = (2.0d * c) / (-b + sqrtDis);
+  63                 }
+  64             } else if (dis == 0.0d) {
+  65                 t = (-b) / (2.0d * a);
+  66                 zeroes[ret++] = t;
+  67             }
+  68         } else {
+  69             if (b != 0.0d) {
+  70                 t = (-c) / b;
+  71                 zeroes[ret++] = t;
+  72             }
+  73         }
+  74         return ret - off;
+  75     }
+  76 
+  77     // find the roots of g(t) = d*t^3 + a*t^2 + b*t + c in [A,B)
+  78     static int cubicRootsInAB(double d, double a, double b, double c,
+  79                               double[] pts, final int off,
+  80                               final double A, final double B)
+  81     {
+  82         if (d == 0.0d) {
+  83             int num = quadraticRoots(a, b, c, pts, off);
+  84             return filterOutNotInAB(pts, off, num, A, B) - off;
+  85         }
+  86         // From Graphics Gems:
+  87         // http://tog.acm.org/resources/GraphicsGems/gems/Roots3And4.c
+  88         // (also from awt.geom.CubicCurve2D. But here we don't need as
+  89         // much accuracy and we don't want to create arrays so we use
+  90         // our own customized version).
+  91 
+  92         // normal form: x^3 + ax^2 + bx + c = 0
+  93         a /= d;
+  94         b /= d;
+  95         c /= d;
+  96 
+  97         //  substitute x = y - A/3 to eliminate quadratic term:
+  98         //     x^3 +Px + Q = 0
+  99         //
+ 100         // Since we actually need P/3 and Q/2 for all of the
+ 101         // calculations that follow, we will calculate
+ 102         // p = P/3
+ 103         // q = Q/2
+ 104         // instead and use those values for simplicity of the code.
+ 105         double sq_A = a * a;
+ 106         double p = (1.0d/3.0d) * ((-1.0d/3.0d) * sq_A + b);
+ 107         double q = (1.0d/2.0d) * ((2.0d/27.0d) * a * sq_A - (1.0d/3.0d) * a * b + c);
+ 108 
+ 109         // use Cardano's formula
+ 110 
+ 111         double cb_p = p * p * p;
+ 112         double D = q * q + cb_p;
+ 113 
+ 114         int num;
+ 115         if (D &lt; 0.0d) {
+ 116             // see: http://en.wikipedia.org/wiki/Cubic_function#Trigonometric_.28and_hyperbolic.29_method
+ 117             final double phi = (1.0d/3.0d) * Math.acos(-q / Math.sqrt(-cb_p));
+ 118             final double t = 2.0d * Math.sqrt(-p);
+ 119 
+ 120             pts[ off+0 ] = ( t * Math.cos(phi));
+ 121             pts[ off+1 ] = (-t * Math.cos(phi + (PI / 3.0d)));
+ 122             pts[ off+2 ] = (-t * Math.cos(phi - (PI / 3.0d)));
+ 123             num = 3;
+ 124         } else {
+ 125             final double sqrt_D = Math.sqrt(D);
+ 126             final double u =   Math.cbrt(sqrt_D - q);
+ 127             final double v = - Math.cbrt(sqrt_D + q);
+ 128 
+ 129             pts[ off ] = (u + v);
+ 130             num = 1;
+ 131 
+ 132             if (within(D, 0.0d, 1e-8d)) {
+ 133                 pts[off+1] = -(pts[off] / 2.0d);
+ 134                 num = 2;
+ 135             }
+ 136         }
+ 137 
+ 138         final double sub = (1.0d/3.0d) * a;
+ 139 
+ 140         for (int i = 0; i &lt; num; ++i) {
+ 141             pts[ off+i ] -= sub;
+ 142         }
+ 143 
+ 144         return filterOutNotInAB(pts, off, num, A, B) - off;
+ 145     }
+ 146 
+ 147     static double evalCubic(final double a, final double b,
+ 148                            final double c, final double d,
+ 149                            final double t)
+ 150     {
+ 151         return t * (t * (t * a + b) + c) + d;
+ 152     }
+ 153 
+ 154     static double evalQuad(final double a, final double b,
+ 155                           final double c, final double t)
+ 156     {
+ 157         return t * (t * a + b) + c;
+ 158     }
+ 159 
+ 160     // returns the index 1 past the last valid element remaining after filtering
+ 161     static int filterOutNotInAB(double[] nums, final int off, final int len,
+ 162                                 final double a, final double b)
+ 163     {
+ 164         int ret = off;
+ 165         for (int i = off, end = off + len; i &lt; end; i++) {
+ 166             if (nums[i] &gt;= a &amp;&amp; nums[i] &lt; b) {
+ 167                 nums[ret++] = nums[i];
+ 168             }
+ 169         }
+ 170         return ret;
+ 171     }
+ 172 
+ 173     static double linelen(double x1, double y1, double x2, double y2) {
+ 174         final double dx = x2 - x1;
+ 175         final double dy = y2 - y1;
+ 176         return Math.sqrt(dx*dx + dy*dy);
+ 177     }
+ 178 
+ 179     static void subdivide(double[] src, int srcoff, double[] left, int leftoff,
+ 180                           double[] right, int rightoff, int type)
+ 181     {
+ 182         switch(type) {
+ 183         case 6:
+ 184             DHelpers.subdivideQuad(src, srcoff, left, leftoff, right, rightoff);
+ 185             return;
+ 186         case 8:
+ 187             DHelpers.subdivideCubic(src, srcoff, left, leftoff, right, rightoff);
+ 188             return;
+ 189         default:
+ 190             throw new InternalError("Unsupported curve type");
+ 191         }
+ 192     }
+ 193 
+ 194     static void isort(double[] a, int off, int len) {
+ 195         for (int i = off + 1, end = off + len; i &lt; end; i++) {
+ 196             double ai = a[i];
+ 197             int j = i - 1;
+ 198             for (; j &gt;= off &amp;&amp; a[j] &gt; ai; j--) {
+ 199                 a[j+1] = a[j];
+ 200             }
+ 201             a[j+1] = ai;
+ 202         }
+ 203     }
+ 204 
+ 205     // Most of these are copied from classes in java.awt.geom because we need
+ 206     // both single and double precision variants of these functions, and Line2D,
+ 207     // CubicCurve2D, QuadCurve2D don't provide them.
+ 208     /**
+ 209      * Subdivides the cubic curve specified by the coordinates
+ 210      * stored in the &lt;code&gt;src&lt;/code&gt; array at indices &lt;code&gt;srcoff&lt;/code&gt;
+ 211      * through (&lt;code&gt;srcoff&lt;/code&gt;&amp;nbsp;+&amp;nbsp;7) and stores the
+ 212      * resulting two subdivided curves into the two result arrays at the
+ 213      * corresponding indices.
+ 214      * Either or both of the &lt;code&gt;left&lt;/code&gt; and &lt;code&gt;right&lt;/code&gt;
+ 215      * arrays may be &lt;code&gt;null&lt;/code&gt; or a reference to the same array
+ 216      * as the &lt;code&gt;src&lt;/code&gt; array.
+ 217      * Note that the last point in the first subdivided curve is the
+ 218      * same as the first point in the second subdivided curve. Thus,
+ 219      * it is possible to pass the same array for &lt;code&gt;left&lt;/code&gt;
+ 220      * and &lt;code&gt;right&lt;/code&gt; and to use offsets, such as &lt;code&gt;rightoff&lt;/code&gt;
+ 221      * equals (&lt;code&gt;leftoff&lt;/code&gt; + 6), in order
+ 222      * to avoid allocating extra storage for this common point.
+ 223      * @param src the array holding the coordinates for the source curve
+ 224      * @param srcoff the offset into the array of the beginning of the
+ 225      * the 6 source coordinates
+ 226      * @param left the array for storing the coordinates for the first
+ 227      * half of the subdivided curve
+ 228      * @param leftoff the offset into the array of the beginning of the
+ 229      * the 6 left coordinates
+ 230      * @param right the array for storing the coordinates for the second
+ 231      * half of the subdivided curve
+ 232      * @param rightoff the offset into the array of the beginning of the
+ 233      * the 6 right coordinates
+ 234      * @since 1.7
+ 235      */
+ 236     static void subdivideCubic(double[] src, int srcoff,
+ 237                                double[] left, int leftoff,
+ 238                                double[] right, int rightoff)
+ 239     {
+ 240         double x1 = src[srcoff + 0];
+ 241         double y1 = src[srcoff + 1];
+ 242         double ctrlx1 = src[srcoff + 2];
+ 243         double ctrly1 = src[srcoff + 3];
+ 244         double ctrlx2 = src[srcoff + 4];
+ 245         double ctrly2 = src[srcoff + 5];
+ 246         double x2 = src[srcoff + 6];
+ 247         double y2 = src[srcoff + 7];
+ 248         if (left != null) {
+ 249             left[leftoff + 0] = x1;
+ 250             left[leftoff + 1] = y1;
+ 251         }
+ 252         if (right != null) {
+ 253             right[rightoff + 6] = x2;
+ 254             right[rightoff + 7] = y2;
+ 255         }
+ 256         x1 = (x1 + ctrlx1) / 2.0d;
+ 257         y1 = (y1 + ctrly1) / 2.0d;
+ 258         x2 = (x2 + ctrlx2) / 2.0d;
+ 259         y2 = (y2 + ctrly2) / 2.0d;
+ 260         double centerx = (ctrlx1 + ctrlx2) / 2.0d;
+ 261         double centery = (ctrly1 + ctrly2) / 2.0d;
+ 262         ctrlx1 = (x1 + centerx) / 2.0d;
+ 263         ctrly1 = (y1 + centery) / 2.0d;
+ 264         ctrlx2 = (x2 + centerx) / 2.0d;
+ 265         ctrly2 = (y2 + centery) / 2.0d;
+ 266         centerx = (ctrlx1 + ctrlx2) / 2.0d;
+ 267         centery = (ctrly1 + ctrly2) / 2.0d;
+ 268         if (left != null) {
+ 269             left[leftoff + 2] = x1;
+ 270             left[leftoff + 3] = y1;
+ 271             left[leftoff + 4] = ctrlx1;
+ 272             left[leftoff + 5] = ctrly1;
+ 273             left[leftoff + 6] = centerx;
+ 274             left[leftoff + 7] = centery;
+ 275         }
+ 276         if (right != null) {
+ 277             right[rightoff + 0] = centerx;
+ 278             right[rightoff + 1] = centery;
+ 279             right[rightoff + 2] = ctrlx2;
+ 280             right[rightoff + 3] = ctrly2;
+ 281             right[rightoff + 4] = x2;
+ 282             right[rightoff + 5] = y2;
+ 283         }
+ 284     }
+ 285 
+ 286 
+ 287     static void subdivideCubicAt(double t, double[] src, int srcoff,
+ 288                                  double[] left, int leftoff,
+ 289                                  double[] right, int rightoff)
+ 290     {
+ 291         double x1 = src[srcoff + 0];
+ 292         double y1 = src[srcoff + 1];
+ 293         double ctrlx1 = src[srcoff + 2];
+ 294         double ctrly1 = src[srcoff + 3];
+ 295         double ctrlx2 = src[srcoff + 4];
+ 296         double ctrly2 = src[srcoff + 5];
+ 297         double x2 = src[srcoff + 6];
+ 298         double y2 = src[srcoff + 7];
+ 299         if (left != null) {
+ 300             left[leftoff + 0] = x1;
+ 301             left[leftoff + 1] = y1;
+ 302         }
+ 303         if (right != null) {
+ 304             right[rightoff + 6] = x2;
+ 305             right[rightoff + 7] = y2;
+ 306         }
+ 307         x1 = x1 + t * (ctrlx1 - x1);
+ 308         y1 = y1 + t * (ctrly1 - y1);
+ 309         x2 = ctrlx2 + t * (x2 - ctrlx2);
+ 310         y2 = ctrly2 + t * (y2 - ctrly2);
+ 311         double centerx = ctrlx1 + t * (ctrlx2 - ctrlx1);
+ 312         double centery = ctrly1 + t * (ctrly2 - ctrly1);
+ 313         ctrlx1 = x1 + t * (centerx - x1);
+ 314         ctrly1 = y1 + t * (centery - y1);
+ 315         ctrlx2 = centerx + t * (x2 - centerx);
+ 316         ctrly2 = centery + t * (y2 - centery);
+ 317         centerx = ctrlx1 + t * (ctrlx2 - ctrlx1);
+ 318         centery = ctrly1 + t * (ctrly2 - ctrly1);
+ 319         if (left != null) {
+ 320             left[leftoff + 2] = x1;
+ 321             left[leftoff + 3] = y1;
+ 322             left[leftoff + 4] = ctrlx1;
+ 323             left[leftoff + 5] = ctrly1;
+ 324             left[leftoff + 6] = centerx;
+ 325             left[leftoff + 7] = centery;
+ 326         }
+ 327         if (right != null) {
+ 328             right[rightoff + 0] = centerx;
+ 329             right[rightoff + 1] = centery;
+ 330             right[rightoff + 2] = ctrlx2;
+ 331             right[rightoff + 3] = ctrly2;
+ 332             right[rightoff + 4] = x2;
+ 333             right[rightoff + 5] = y2;
+ 334         }
+ 335     }
+ 336 
+ 337     static void subdivideQuad(double[] src, int srcoff,
+ 338                               double[] left, int leftoff,
+ 339                               double[] right, int rightoff)
+ 340     {
+ 341         double x1 = src[srcoff + 0];
+ 342         double y1 = src[srcoff + 1];
+ 343         double ctrlx = src[srcoff + 2];
+ 344         double ctrly = src[srcoff + 3];
+ 345         double x2 = src[srcoff + 4];
+ 346         double y2 = src[srcoff + 5];
+ 347         if (left != null) {
+ 348             left[leftoff + 0] = x1;
+ 349             left[leftoff + 1] = y1;
+ 350         }
+ 351         if (right != null) {
+ 352             right[rightoff + 4] = x2;
+ 353             right[rightoff + 5] = y2;
+ 354         }
+ 355         x1 = (x1 + ctrlx) / 2.0d;
+ 356         y1 = (y1 + ctrly) / 2.0d;
+ 357         x2 = (x2 + ctrlx) / 2.0d;
+ 358         y2 = (y2 + ctrly) / 2.0d;
+ 359         ctrlx = (x1 + x2) / 2.0d;
+ 360         ctrly = (y1 + y2) / 2.0d;
+ 361         if (left != null) {
+ 362             left[leftoff + 2] = x1;
+ 363             left[leftoff + 3] = y1;
+ 364             left[leftoff + 4] = ctrlx;
+ 365             left[leftoff + 5] = ctrly;
+ 366         }
+ 367         if (right != null) {
+ 368             right[rightoff + 0] = ctrlx;
+ 369             right[rightoff + 1] = ctrly;
+ 370             right[rightoff + 2] = x2;
+ 371             right[rightoff + 3] = y2;
+ 372         }
+ 373     }
+ 374 
+ 375     static void subdivideQuadAt(double t, double[] src, int srcoff,
+ 376                                 double[] left, int leftoff,
+ 377                                 double[] right, int rightoff)
+ 378     {
+ 379         double x1 = src[srcoff + 0];
+ 380         double y1 = src[srcoff + 1];
+ 381         double ctrlx = src[srcoff + 2];
+ 382         double ctrly = src[srcoff + 3];
+ 383         double x2 = src[srcoff + 4];
+ 384         double y2 = src[srcoff + 5];
+ 385         if (left != null) {
+ 386             left[leftoff + 0] = x1;
+ 387             left[leftoff + 1] = y1;
+ 388         }
+ 389         if (right != null) {
+ 390             right[rightoff + 4] = x2;
+ 391             right[rightoff + 5] = y2;
+ 392         }
+ 393         x1 = x1 + t * (ctrlx - x1);
+ 394         y1 = y1 + t * (ctrly - y1);
+ 395         x2 = ctrlx + t * (x2 - ctrlx);
+ 396         y2 = ctrly + t * (y2 - ctrly);
+ 397         ctrlx = x1 + t * (x2 - x1);
+ 398         ctrly = y1 + t * (y2 - y1);
+ 399         if (left != null) {
+ 400             left[leftoff + 2] = x1;
+ 401             left[leftoff + 3] = y1;
+ 402             left[leftoff + 4] = ctrlx;
+ 403             left[leftoff + 5] = ctrly;
+ 404         }
+ 405         if (right != null) {
+ 406             right[rightoff + 0] = ctrlx;
+ 407             right[rightoff + 1] = ctrly;
+ 408             right[rightoff + 2] = x2;
+ 409             right[rightoff + 3] = y2;
+ 410         }
+ 411     }
+ 412 
+ 413     static void subdivideAt(double t, double[] src, int srcoff,
+ 414                             double[] left, int leftoff,
+ 415                             double[] right, int rightoff, int size)
+ 416     {
+ 417         switch(size) {
+ 418         case 8:
+ 419             subdivideCubicAt(t, src, srcoff, left, leftoff, right, rightoff);
+ 420             return;
+ 421         case 6:
+ 422             subdivideQuadAt(t, src, srcoff, left, leftoff, right, rightoff);
+ 423             return;
+ 424         }
+ 425     }
+ 426 
+ 427     // From sun.java2d.loops.GeneralRenderer:
+ 428 
+ 429     static int outcode(final double x, final double y,
+ 430                        final double[] clipRect)
+ 431     {
+ 432         int code;
+ 433         if (y &lt; clipRect[0]) {
+ 434             code = OUTCODE_TOP;
+ 435         } else if (y &gt;= clipRect[1]) {
+ 436             code = OUTCODE_BOTTOM;
+ 437         } else {
+ 438             code = 0;
+ 439         }
+ 440         if (x &lt; clipRect[2]) {
+ 441             code |= OUTCODE_LEFT;
+ 442         } else if (x &gt;= clipRect[3]) {
+ 443             code |= OUTCODE_RIGHT;
+ 444         }
+ 445         return code;
+ 446     }
+ 447 
+ 448     // a stack of polynomial curves where each curve shares endpoints with
+ 449     // adjacent ones.
+ 450     static final class PolyStack {
+ 451         private static final byte TYPE_LINETO  = (byte) 0;
+ 452         private static final byte TYPE_QUADTO  = (byte) 1;
+ 453         private static final byte TYPE_CUBICTO = (byte) 2;
+ 454 
+ 455         // curves capacity = edges count (8192) = edges x 2 (coords)
+ 456         private static final int INITIAL_CURVES_COUNT = INITIAL_EDGES_COUNT &lt;&lt; 1;
+ 457 
+ 458         // types capacity = edges count (4096)
+ 459         private static final int INITIAL_TYPES_COUNT = INITIAL_EDGES_COUNT;
+ 460 
+ 461         double[] curves;
+ 462         int end;
+ 463         byte[] curveTypes;
+ 464         int numCurves;
+ 465 
+ 466         // curves ref (dirty)
+ 467         final DoubleArrayCache.Reference curves_ref;
+ 468         // curveTypes ref (dirty)
+ 469         final ByteArrayCache.Reference curveTypes_ref;
+ 470 
+ 471         // used marks (stats only)
+ 472         int curveTypesUseMark;
+ 473         int curvesUseMark;
+ 474 
+ 475         private final StatLong stat_polystack_types;
+ 476         private final StatLong stat_polystack_curves;
+ 477         private final Histogram hist_polystack_curves;
+ 478         private final StatLong stat_array_polystack_curves;
+ 479         private final StatLong stat_array_polystack_curveTypes;
+ 480 
+ 481         PolyStack(final DRendererContext rdrCtx) {
+ 482             this(rdrCtx, null, null, null, null, null);
+ 483         }
+ 484 
+ 485         PolyStack(final DRendererContext rdrCtx,
+ 486                   final StatLong stat_polystack_types,
+ 487                   final StatLong stat_polystack_curves,
+ 488                   final Histogram hist_polystack_curves,
+ 489                   final StatLong stat_array_polystack_curves,
+ 490                   final StatLong stat_array_polystack_curveTypes)
+ 491         {
+ 492             curves_ref = rdrCtx.newDirtyDoubleArrayRef(INITIAL_CURVES_COUNT); // 32K
+ 493             curves     = curves_ref.initial;
+ 494 
+ 495             curveTypes_ref = rdrCtx.newDirtyByteArrayRef(INITIAL_TYPES_COUNT); // 4K
+ 496             curveTypes     = curveTypes_ref.initial;
+ 497             numCurves = 0;
+ 498             end = 0;
+ 499 
+ 500             if (DO_STATS) {
+ 501                 curveTypesUseMark = 0;
+ 502                 curvesUseMark = 0;
+ 503             }
+ 504             this.stat_polystack_types = stat_polystack_types;
+ 505             this.stat_polystack_curves = stat_polystack_curves;
+ 506             this.hist_polystack_curves = hist_polystack_curves;
+ 507             this.stat_array_polystack_curves = stat_array_polystack_curves;
+ 508             this.stat_array_polystack_curveTypes = stat_array_polystack_curveTypes;
+ 509         }
+ 510 
+ 511         /**
+ 512          * Disposes this PolyStack:
+ 513          * clean up before reusing this instance
+ 514          */
+ 515         void dispose() {
+ 516             end = 0;
+ 517             numCurves = 0;
+ 518 
+ 519             if (DO_STATS) {
+ 520                 stat_polystack_types.add(curveTypesUseMark);
+ 521                 stat_polystack_curves.add(curvesUseMark);
+ 522                 hist_polystack_curves.add(curvesUseMark);
+ 523 
+ 524                 // reset marks
+ 525                 curveTypesUseMark = 0;
+ 526                 curvesUseMark = 0;
+ 527             }
+ 528 
+ 529             // Return arrays:
+ 530             // curves and curveTypes are kept dirty
+ 531             curves     = curves_ref.putArray(curves);
+ 532             curveTypes = curveTypes_ref.putArray(curveTypes);
+ 533         }
+ 534 
+ 535         private void ensureSpace(final int n) {
+ 536             // use substraction to avoid integer overflow:
+ 537             if (curves.length - end &lt; n) {
+ 538                 if (DO_STATS) {
+ 539                     stat_array_polystack_curves.add(end + n);
+ 540                 }
+ 541                 curves = curves_ref.widenArray(curves, end, end + n);
+ 542             }
+ 543             if (curveTypes.length &lt;= numCurves) {
+ 544                 if (DO_STATS) {
+ 545                     stat_array_polystack_curveTypes.add(numCurves + 1);
+ 546                 }
+ 547                 curveTypes = curveTypes_ref.widenArray(curveTypes,
+ 548                                                        numCurves,
+ 549                                                        numCurves + 1);
+ 550             }
+ 551         }
+ 552 
+ 553         void pushCubic(double x0, double y0,
+ 554                        double x1, double y1,
+ 555                        double x2, double y2)
+ 556         {
+ 557             ensureSpace(6);
+ 558             curveTypes[numCurves++] = TYPE_CUBICTO;
+ 559             // we reverse the coordinate order to make popping easier
+ 560             final double[] _curves = curves;
+ 561             int e = end;
+ 562             _curves[e++] = x2;    _curves[e++] = y2;
+ 563             _curves[e++] = x1;    _curves[e++] = y1;
+ 564             _curves[e++] = x0;    _curves[e++] = y0;
+ 565             end = e;
+ 566         }
+ 567 
+ 568         void pushQuad(double x0, double y0,
+ 569                       double x1, double y1)
+ 570         {
+ 571             ensureSpace(4);
+ 572             curveTypes[numCurves++] = TYPE_QUADTO;
+ 573             final double[] _curves = curves;
+ 574             int e = end;
+ 575             _curves[e++] = x1;    _curves[e++] = y1;
+ 576             _curves[e++] = x0;    _curves[e++] = y0;
+ 577             end = e;
+ 578         }
+ 579 
+ 580         void pushLine(double x, double y) {
+ 581             ensureSpace(2);
+ 582             curveTypes[numCurves++] = TYPE_LINETO;
+ 583             curves[end++] = x;    curves[end++] = y;
+ 584         }
+ 585 
+ 586         void pullAll(final DPathConsumer2D io) {
+ 587             final int nc = numCurves;
+ 588             if (nc == 0) {
+ 589                 return;
+ 590             }
+ 591             if (DO_STATS) {
+ 592                 // update used marks:
+ 593                 if (numCurves &gt; curveTypesUseMark) {
+ 594                     curveTypesUseMark = numCurves;
+ 595                 }
+ 596                 if (end &gt; curvesUseMark) {
+ 597                     curvesUseMark = end;
+ 598                 }
+ 599             }
+ 600             final byte[]  _curveTypes = curveTypes;
+ 601             final double[] _curves = curves;
+ 602             int e = 0;
+ 603 
+ 604             for (int i = 0; i &lt; nc; i++) {
+ 605                 switch(_curveTypes[i]) {
+ 606                 case TYPE_LINETO:
+ 607                     io.lineTo(_curves[e], _curves[e+1]);
+ 608                     e += 2;
+ 609                     continue;
+ 610                 case TYPE_QUADTO:
+ 611                     io.quadTo(_curves[e+0], _curves[e+1],
+ 612                               _curves[e+2], _curves[e+3]);
+ 613                     e += 4;
+ 614                     continue;
+ 615                 case TYPE_CUBICTO:
+ 616                     io.curveTo(_curves[e+0], _curves[e+1],
+ 617                                _curves[e+2], _curves[e+3],
+ 618                                _curves[e+4], _curves[e+5]);
+ 619                     e += 6;
+ 620                     continue;
+ 621                 default:
+ 622                 }
+ 623             }
+ 624             numCurves = 0;
+ 625             end = 0;
+ 626         }
+ 627 
+ 628         void popAll(final DPathConsumer2D io) {
+ 629             int nc = numCurves;
+ 630             if (nc == 0) {
+ 631                 return;
+ 632             }
+ 633             if (DO_STATS) {
+ 634                 // update used marks:
+ 635                 if (numCurves &gt; curveTypesUseMark) {
+ 636                     curveTypesUseMark = numCurves;
+ 637                 }
+ 638                 if (end &gt; curvesUseMark) {
+ 639                     curvesUseMark = end;
+ 640                 }
+ 641             }
+ 642             final byte[]  _curveTypes = curveTypes;
+ 643             final double[] _curves = curves;
+ 644             int e  = end;
+ 645 
+ 646             while (nc != 0) {
+ 647                 switch(_curveTypes[--nc]) {
+ 648                 case TYPE_LINETO:
+ 649                     e -= 2;
+ 650                     io.lineTo(_curves[e], _curves[e+1]);
+ 651                     continue;
+ 652                 case TYPE_QUADTO:
+ 653                     e -= 4;
+ 654                     io.quadTo(_curves[e+0], _curves[e+1],
+ 655                               _curves[e+2], _curves[e+3]);
+ 656                     continue;
+ 657                 case TYPE_CUBICTO:
+ 658                     e -= 6;
+ 659                     io.curveTo(_curves[e+0], _curves[e+1],
+ 660                                _curves[e+2], _curves[e+3],
+ 661                                _curves[e+4], _curves[e+5]);
+ 662                     continue;
+ 663                 default:
+ 664                 }
+ 665             }
+ 666             numCurves = 0;
+ 667             end = 0;
+ 668         }
+ 669 
+ 670         @Override
+ 671         public String toString() {
+ 672             String ret = "";
+ 673             int nc = numCurves;
+ 674             int last = end;
+ 675             int len;
+ 676             while (nc != 0) {
+ 677                 switch(curveTypes[--nc]) {
+ 678                 case TYPE_LINETO:
+ 679                     len = 2;
+ 680                     ret += "line: ";
+ 681                     break;
+ 682                 case TYPE_QUADTO:
+ 683                     len = 4;
+ 684                     ret += "quad: ";
+ 685                     break;
+ 686                 case TYPE_CUBICTO:
+ 687                     len = 6;
+ 688                     ret += "cubic: ";
+ 689                     break;
+ 690                 default:
+ 691                     len = 0;
+ 692                 }
+ 693                 last -= len;
+ 694                 ret += Arrays.toString(Arrays.copyOfRange(curves, last, last+len))
+ 695                                        + "\n";
+ 696             }
+ 697             return ret;
+ 698         }
+ 699     }
+ 700 
+ 701     // a stack of integer indices
+ 702     static final class IndexStack {
+ 703 
+ 704         // integer capacity = edges count / 4 ~ 1024
+ 705         private static final int INITIAL_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 2;
+ 706 
+ 707         private int end;
+ 708         private int[] indices;
+ 709 
+ 710         // indices ref (dirty)
+ 711         private final IntArrayCache.Reference indices_ref;
+ 712 
+ 713         // used marks (stats only)
+ 714         private int indicesUseMark;
+ 715 
+ 716         private final StatLong stat_idxstack_indices;
+ 717         private final Histogram hist_idxstack_indices;
+ 718         private final StatLong stat_array_idxstack_indices;
+ 719 
+ 720         IndexStack(final DRendererContext rdrCtx) {
+ 721             this(rdrCtx, null, null, null);
+ 722         }
+ 723 
+ 724         IndexStack(final DRendererContext rdrCtx,
+ 725                    final StatLong stat_idxstack_indices,
+ 726                    final Histogram hist_idxstack_indices,
+ 727                    final StatLong stat_array_idxstack_indices)
+ 728         {
+ 729             indices_ref = rdrCtx.newDirtyIntArrayRef(INITIAL_COUNT); // 4K
+ 730             indices     = indices_ref.initial;
+ 731             end = 0;
+ 732 
+ 733             if (DO_STATS) {
+ 734                 indicesUseMark = 0;
+ 735             }
+ 736             this.stat_idxstack_indices = stat_idxstack_indices;
+ 737             this.hist_idxstack_indices = hist_idxstack_indices;
+ 738             this.stat_array_idxstack_indices = stat_array_idxstack_indices;
+ 739         }
+ 740 
+ 741         /**
+ 742          * Disposes this PolyStack:
+ 743          * clean up before reusing this instance
+ 744          */
+ 745         void dispose() {
+ 746             end = 0;
+ 747 
+ 748             if (DO_STATS) {
+ 749                 stat_idxstack_indices.add(indicesUseMark);
+ 750                 hist_idxstack_indices.add(indicesUseMark);
+ 751 
+ 752                 // reset marks
+ 753                 indicesUseMark = 0;
+ 754             }
+ 755 
+ 756             // Return arrays:
+ 757             // values is kept dirty
+ 758             indices = indices_ref.putArray(indices);
+ 759         }
+ 760 
+ 761         boolean isEmpty() {
+ 762             return (end == 0);
+ 763         }
+ 764 
+ 765         void reset() {
+ 766             end = 0;
+ 767         }
+ 768 
+ 769         void push(final int v) {
+ 770             // remove redundant values (reverse order):
+ 771             int[] _values = indices;
+ 772             final int nc = end;
+ 773             if (nc != 0) {
+ 774                 if (_values[nc - 1] == v) {
+ 775                     // remove both duplicated values:
+ 776                     end--;
+ 777                     return;
+ 778                 }
+ 779             }
+ 780             if (_values.length &lt;= nc) {
+ 781                 if (DO_STATS) {
+ 782                     stat_array_idxstack_indices.add(nc + 1);
+ 783                 }
+ 784                 indices = _values = indices_ref.widenArray(_values, nc, nc + 1);
+ 785             }
+ 786             _values[end++] = v;
+ 787 
+ 788             if (DO_STATS) {
+ 789                 // update used marks:
+ 790                 if (end &gt; indicesUseMark) {
+ 791                     indicesUseMark = end;
+ 792                 }
+ 793             }
+ 794         }
+ 795 
+ 796         void pullAll(final double[] points, final DPathConsumer2D io) {
+ 797             final int nc = end;
+ 798             if (nc == 0) {
+ 799                 return;
+ 800             }
+ 801             final int[] _values = indices;
+ 802 
+ 803             for (int i = 0, j; i &lt; nc; i++) {
+ 804                 j = _values[i] &lt;&lt; 1;
+ 805                 io.lineTo(points[j], points[j + 1]);
+ 806             }
+ 807             end = 0;
+ 808         }
+ 809     }
+ 810 }
+</pre></body></html>

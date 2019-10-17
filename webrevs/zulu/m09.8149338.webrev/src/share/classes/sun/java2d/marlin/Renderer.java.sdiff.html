@@ -1,0 +1,855 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../test/sun/java2d/marlin/TextClipErrorTest.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Renderer.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13688">13688</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8149338">8149338</a>: JVM Crash caused by Marlin renderer not handling NaN coordinates
+Summary: use first / last Y crossings to compute edge min/max Y and ensure consistency with edgeBuckets / edgeBucketCounts arrays
+Reviewed-by: flar, prr</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 131     private int edgeCount;
+ 132     private int[] edgePtrs;
+ 133     // auxiliary storage for edge pointers (merge sort)
+ 134     private int[] aux_edgePtrs;
+ 135 
+ 136     // max used for both edgePtrs and crossings (stats only)
+ 137     private int activeEdgeMaxUsed;
+ 138 
+ 139     // per-thread initial arrays (large enough to satisfy most usages) (1024)
+ 140     private final int[] crossings_initial = new int[INITIAL_SMALL_ARRAY]; // 4K
+ 141     // +1 to avoid recycling in Helpers.widenArray()
+ 142     private final int[] edgePtrs_initial  = new int[INITIAL_SMALL_ARRAY + 1]; // 4K
+ 143     // merge sort initial arrays (large enough to satisfy most usages) (1024)
+ 144     private final int[] aux_crossings_initial = new int[INITIAL_SMALL_ARRAY]; // 4K
+ 145     // +1 to avoid recycling in Helpers.widenArray()
+ 146     private final int[] aux_edgePtrs_initial  = new int[INITIAL_SMALL_ARRAY + 1]; // 4K
+ 147 
+ 148 //////////////////////////////////////////////////////////////////////////////
+ 149 //  EDGE LIST
+ 150 //////////////////////////////////////////////////////////////////////////////
+<span class="changed"> 151     private float edgeMinY = Float.POSITIVE_INFINITY;</span>
+<span class="changed"> 152     private float edgeMaxY = Float.NEGATIVE_INFINITY;</span>
+ 153     private float edgeMinX = Float.POSITIVE_INFINITY;
+ 154     private float edgeMaxX = Float.NEGATIVE_INFINITY;
+ 155 
+ 156     // edges [floats|ints] stored in off-heap memory
+ 157     private final OffHeapArray edges;
+ 158 
+ 159     private int[] edgeBuckets;
+ 160     private int[] edgeBucketCounts; // 2*newedges + (1 if pruning needed)
+ 161     // used range for edgeBuckets / edgeBucketCounts
+ 162     private int buckets_minY;
+ 163     private int buckets_maxY;
+ 164     // sum of each edge delta Y (subpixels)
+ 165     private int edgeSumDeltaY;
+ 166 
+ 167     // +1 to avoid recycling in Helpers.widenArray()
+ 168     private final int[] edgeBuckets_initial
+ 169         = new int[INITIAL_BUCKET_ARRAY + 1]; // 64K
+ 170     private final int[] edgeBucketCounts_initial
+ 171         = new int[INITIAL_BUCKET_ARRAY + 1]; // 64K
+ 172 
+
+</pre><hr></hr><pre>
+ 340         // Since y1 and y2 are biased by -0.5 in tosubpixy(), this is simply
+ 341         // ceil(y1) or ceil(y2)
+ 342         // upper integer (inclusive)
+ 343         final int firstCrossing = FloatMath.max(FloatMath.ceil_int(y1), boundsMinY);
+ 344 
+ 345         // note: use boundsMaxY (last Y exclusive) to compute correct coverage
+ 346         // upper integer (exclusive)
+ 347         final int lastCrossing  = FloatMath.min(FloatMath.ceil_int(y2), boundsMaxY);
+ 348 
+ 349         /* skip horizontal lines in pixel space and clip edges
+ 350            out of y range [boundsMinY; boundsMaxY] */
+ 351         if (firstCrossing &gt;= lastCrossing) {
+ 352             if (doMonitors) {
+ 353                 RendererContext.stats.mon_rdr_addLine.stop();
+ 354             }
+ 355             if (doStats) {
+ 356                 RendererContext.stats.stat_rdr_addLine_skip.add(1);
+ 357             }
+ 358             return;
+ 359         }
+<span class="changed"> 360         // edge min/max X/Y are in subpixel space (inclusive)</span>
+<span class="changed"> 361         if (y1 &lt; edgeMinY) {</span>
+<span class="changed"> 362             edgeMinY = y1;</span>
+
+
+
+ 363         }
+<span class="changed"> 364         if (y2 &gt; edgeMaxY) {</span>
+<span class="changed"> 365             edgeMaxY = y2;</span>
+ 366         }
+ 367 
+ 368         // Use double-precision for improved accuracy:
+ 369         final double x1d   = x1;
+ 370         final double y1d   = y1;
+<span class="changed"> 371         final double slope = (x2 - x1d) / (y2 - y1d);</span>
+ 372 
+ 373         if (slope &gt;= 0.0) { // &lt;==&gt; x1 &lt; x2
+ 374             if (x1 &lt; edgeMinX) {
+ 375                 edgeMinX = x1;
+ 376             }
+ 377             if (x2 &gt; edgeMaxX) {
+ 378                 edgeMaxX = x2;
+ 379             }
+ 380         } else {
+ 381             if (x2 &lt; edgeMinX) {
+ 382                 edgeMinX = x2;
+ 383             }
+ 384             if (x1 &gt; edgeMaxX) {
+ 385                 edgeMaxX = x1;
+ 386             }
+ 387         }
+ 388 
+ 389         // local variables for performance:
+ 390         final int _SIZEOF_EDGE_BYTES = SIZEOF_EDGE_BYTES;
+ 391 
+
+</pre><hr></hr><pre>
+ 487             RendererContext.stats.mon_rdr_addLine.stop();
+ 488         }
+ 489     }
+ 490 
+ 491 // END EDGE LIST
+ 492 //////////////////////////////////////////////////////////////////////////////
+ 493 
+ 494     // Cache to store RLE-encoded coverage mask of the current primitive
+ 495     final MarlinCache cache;
+ 496 
+ 497     // Bounds of the drawing region, at subpixel precision.
+ 498     private int boundsMinX, boundsMinY, boundsMaxX, boundsMaxY;
+ 499 
+ 500     // Current winding rule
+ 501     private int windingRule;
+ 502 
+ 503     // Current drawing position, i.e., final point of last segment
+ 504     private float x0, y0;
+ 505 
+ 506     // Position of most recent 'moveTo' command
+<span class="changed"> 507     private float pix_sx0, pix_sy0;</span>
+ 508 
+ 509     // per-thread renderer context
+ 510     final RendererContext rdrCtx;
+ 511     // dirty curve
+ 512     private final Curve curve;
+ 513 
+ 514     Renderer(final RendererContext rdrCtx) {
+ 515         this.rdrCtx = rdrCtx;
+ 516 
+ 517         this.edges = new OffHeapArray(rdrCtx, INITIAL_EDGES_CAPACITY); // 96K
+ 518 
+ 519         this.curve = rdrCtx.curve;
+ 520 
+ 521         edgeBuckets = edgeBuckets_initial;
+ 522         edgeBucketCounts = edgeBucketCounts_initial;
+ 523 
+ 524         alphaLine  = alphaLine_initial;
+ 525 
+ 526         this.cache = rdrCtx.cache;
+ 527 
+
+</pre><hr></hr><pre>
+ 553             MarlinUtils.logInfo("boundsXY = [" + boundsMinX + " ... "
+ 554                                 + boundsMaxX + "[ [" + boundsMinY + " ... "
+ 555                                 + boundsMaxY + "[");
+ 556         }
+ 557 
+ 558         // see addLine: ceil(boundsMaxY) =&gt; boundsMaxY + 1
+ 559         // +1 for edgeBucketCounts
+ 560         final int edgeBucketsLength = (boundsMaxY - boundsMinY) + 1;
+ 561 
+ 562         if (edgeBucketsLength &gt; INITIAL_BUCKET_ARRAY) {
+ 563             if (doStats) {
+ 564                 RendererContext.stats.stat_array_renderer_edgeBuckets
+ 565                     .add(edgeBucketsLength);
+ 566                 RendererContext.stats.stat_array_renderer_edgeBucketCounts
+ 567                     .add(edgeBucketsLength);
+ 568             }
+ 569             edgeBuckets = rdrCtx.getIntArray(edgeBucketsLength);
+ 570             edgeBucketCounts = rdrCtx.getIntArray(edgeBucketsLength);
+ 571         }
+ 572 
+<span class="changed"> 573         edgeMinY = Float.POSITIVE_INFINITY;</span>
+<span class="changed"> 574         edgeMaxY = Float.NEGATIVE_INFINITY;</span>
+ 575         edgeMinX = Float.POSITIVE_INFINITY;
+ 576         edgeMaxX = Float.NEGATIVE_INFINITY;
+ 577 
+ 578         // reset used mark:
+ 579         edgeCount = 0;
+ 580         activeEdgeMaxUsed = 0;
+ 581         edges.used = 0;
+ 582 
+ 583         edgeSumDeltaY = 0;
+ 584 
+ 585         return this; // fluent API
+ 586     }
+ 587 
+ 588     /**
+ 589      * Disposes this renderer and recycle it clean up before reusing this instance
+ 590      */
+ 591     void dispose() {
+ 592         if (doStats) {
+ 593             RendererContext.stats.stat_rdr_activeEdges.add(activeEdgeMaxUsed);
+ 594             RendererContext.stats.stat_rdr_edges.add(edges.used);
+
+</pre><hr></hr><pre>
+ 611                 aux_crossings = aux_crossings_initial;
+ 612             }
+ 613         }
+ 614         if (edgePtrs != edgePtrs_initial) {
+ 615             rdrCtx.putDirtyIntArray(edgePtrs);
+ 616             edgePtrs = edgePtrs_initial;
+ 617             if (aux_edgePtrs != aux_edgePtrs_initial) {
+ 618                 rdrCtx.putDirtyIntArray(aux_edgePtrs);
+ 619                 aux_edgePtrs = aux_edgePtrs_initial;
+ 620             }
+ 621         }
+ 622         if (alphaLine != alphaLine_initial) {
+ 623             rdrCtx.putIntArray(alphaLine, 0, 0); // already zero filled
+ 624             alphaLine = alphaLine_initial;
+ 625         }
+ 626         if (blkFlags != blkFlags_initial) {
+ 627             rdrCtx.putIntArray(blkFlags, 0, 0); // already zero filled
+ 628             blkFlags = blkFlags_initial;
+ 629         }
+ 630 
+<span class="changed"> 631         if (edgeMinY != Float.POSITIVE_INFINITY) {</span>
+ 632             // if context is maked as DIRTY:
+ 633             if (rdrCtx.dirty) {
+ 634                 // may happen if an exception if thrown in the pipeline processing:
+ 635                 // clear completely buckets arrays:
+ 636                 buckets_minY = 0;
+ 637                 buckets_maxY = boundsMaxY - boundsMinY;
+ 638             }
+ 639             // clear used part
+ 640             if (edgeBuckets == edgeBuckets_initial) {
+ 641                 // fill only used part
+ 642                 IntArrayCache.fill(edgeBuckets,      buckets_minY,
+ 643                                                      buckets_maxY,     0);
+ 644                 IntArrayCache.fill(edgeBucketCounts, buckets_minY,
+ 645                                                      buckets_maxY + 1, 0);
+ 646             } else {
+ 647                  // clear only used part
+ 648                 rdrCtx.putIntArray(edgeBuckets,      buckets_minY,
+ 649                                                      buckets_maxY);
+ 650                 edgeBuckets = edgeBuckets_initial;
+ 651 
+
+</pre><hr></hr><pre>
+ 671             // Force zero-fill dirty arrays:
+ 672             edges.fill(BYTE_0);
+ 673         }
+ 674         if (doMonitors) {
+ 675             RendererContext.stats.mon_rdr_endRendering.stop();
+ 676         }
+ 677     }
+ 678 
+ 679     private static float tosubpixx(final float pix_x) {
+ 680         return f_SUBPIXEL_POSITIONS_X * pix_x;
+ 681     }
+ 682 
+ 683     private static float tosubpixy(final float pix_y) {
+ 684         // shift y by -0.5 for fast ceil(y - 0.5):
+ 685         return f_SUBPIXEL_POSITIONS_Y * pix_y - 0.5f;
+ 686     }
+ 687 
+ 688     @Override
+ 689     public void moveTo(float pix_x0, float pix_y0) {
+ 690         closePath();
+<span class="changed"> 691         this.pix_sx0 = pix_x0;</span>
+<span class="changed"> 692         this.pix_sy0 = pix_y0;</span>
+<span class="changed"> 693         this.y0 = tosubpixy(pix_y0);</span>
+<span class="changed"> 694         this.x0 = tosubpixx(pix_x0);</span>
+
+
+ 695     }
+ 696 
+ 697     @Override
+ 698     public void lineTo(float pix_x1, float pix_y1) {
+<span class="changed"> 699         float x1 = tosubpixx(pix_x1);</span>
+<span class="changed"> 700         float y1 = tosubpixy(pix_y1);</span>
+ 701         addLine(x0, y0, x1, y1);
+ 702         x0 = x1;
+ 703         y0 = y1;
+ 704     }
+ 705 
+ 706     @Override
+ 707     public void curveTo(float x1, float y1,
+ 708             float x2, float y2,
+ 709             float x3, float y3)
+ 710     {
+ 711         final float xe = tosubpixx(x3);
+ 712         final float ye = tosubpixy(y3);
+ 713         curve.set(x0, y0, tosubpixx(x1), tosubpixy(y1),
+ 714                           tosubpixx(x2), tosubpixy(y2), xe, ye);
+ 715         curveBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 716         x0 = xe;
+ 717         y0 = ye;
+ 718     }
+ 719 
+ 720     @Override
+ 721     public void quadTo(float x1, float y1, float x2, float y2) {
+ 722         final float xe = tosubpixx(x2);
+ 723         final float ye = tosubpixy(y2);
+ 724         curve.set(x0, y0, tosubpixx(x1), tosubpixy(y1), xe, ye);
+ 725         quadBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 726         x0 = xe;
+ 727         y0 = ye;
+ 728     }
+ 729 
+ 730     @Override
+ 731     public void closePath() {
+<span class="changed"> 732         // lineTo expects its input in pixel coordinates.</span>
+<span class="changed"> 733         lineTo(pix_sx0, pix_sy0);</span>
+
+ 734     }
+ 735 
+ 736     @Override
+ 737     public void pathDone() {
+ 738         closePath();
+ 739     }
+ 740 
+ 741     @Override
+ 742     public long getNativeConsumer() {
+ 743         throw new InternalError("Renderer does not use a native consumer.");
+ 744     }
+ 745 
+ 746     // clean alpha array (zero filled)
+ 747     private int[] alphaLine;
+ 748     // 2048 (pixelsize) pixel large
+ 749     private final int[] alphaLine_initial = new int[INITIAL_AA_ARRAY]; // 8K
+ 750 
+ 751     private void _endRendering(final int ymin, final int ymax) {
+ 752         if (DISABLE_RENDER) {
+ 753             return;
+
+</pre><hr></hr><pre>
+1379             // fix range [x0; x1[
+1380             copyAARow(_alpha, y, minX, maxX + 2, useBlkFlags);
+1381         } else if (y != lastY) {
+1382             _cache.clearAARow(y);
+1383         }
+1384 
+1385         // update member:
+1386         edgeCount = numCrossings;
+1387         prevUseBlkFlags = useBlkFlags;
+1388 
+1389         if (doStats) {
+1390             // update max used mark
+1391             activeEdgeMaxUsed = _arrayMaxUsed;
+1392         }
+1393     }
+1394 
+1395     boolean endRendering() {
+1396         if (doMonitors) {
+1397             RendererContext.stats.mon_rdr_endRendering.start();
+1398         }
+<span class="changed">1399         if (edgeMinY == Float.POSITIVE_INFINITY) {</span>
+1400             return false; // undefined edges bounds
+1401         }
+1402 
+1403         final int _boundsMinY = boundsMinY;
+1404         final int _boundsMaxY = boundsMaxY;
+1405 
+1406         // bounds as inclusive intervals
+1407         final int spminX = FloatMath.max(FloatMath.ceil_int(edgeMinX - 0.5f), boundsMinX);
+1408         final int spmaxX = FloatMath.min(FloatMath.ceil_int(edgeMaxX - 0.5f), boundsMaxX - 1);
+1409 
+<span class="changed">1410         // y1 (and y2) are already biased by -0.5 in tosubpixy():</span>
+<span class="changed">1411         final int spminY = FloatMath.max(FloatMath.ceil_int(edgeMinY), _boundsMinY);</span>
+<span class="changed">1412         int maxY = FloatMath.ceil_int(edgeMaxY);</span>
+<span class="changed">1413 </span>
+1414         final int spmaxY;
+
+1415 
+1416         if (maxY &lt;= _boundsMaxY - 1) {
+1417             spmaxY = maxY;
+1418         } else {
+1419             spmaxY = _boundsMaxY - 1;
+1420             maxY   = _boundsMaxY;
+1421         }
+1422         buckets_minY = spminY - _boundsMinY;
+1423         buckets_maxY = maxY   - _boundsMinY;
+1424 
+1425         if (doLogBounds) {
+1426             MarlinUtils.logInfo("edgesXY = [" + edgeMinX + " ... " + edgeMaxX
+1427                                 + "][" + edgeMinY + " ... " + edgeMaxY + "]");
+1428             MarlinUtils.logInfo("spXY    = [" + spminX + " ... " + spmaxX
+1429                                 + "][" + spminY + " ... " + spmaxY + "]");
+1430         }
+1431 
+1432         // test clipping for shapes out of bounds
+1433         if ((spminX &gt; spmaxX) || (spminY &gt; spmaxY)) {
+1434             return false;
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 131     private int edgeCount;
+ 132     private int[] edgePtrs;
+ 133     // auxiliary storage for edge pointers (merge sort)
+ 134     private int[] aux_edgePtrs;
+ 135 
+ 136     // max used for both edgePtrs and crossings (stats only)
+ 137     private int activeEdgeMaxUsed;
+ 138 
+ 139     // per-thread initial arrays (large enough to satisfy most usages) (1024)
+ 140     private final int[] crossings_initial = new int[INITIAL_SMALL_ARRAY]; // 4K
+ 141     // +1 to avoid recycling in Helpers.widenArray()
+ 142     private final int[] edgePtrs_initial  = new int[INITIAL_SMALL_ARRAY + 1]; // 4K
+ 143     // merge sort initial arrays (large enough to satisfy most usages) (1024)
+ 144     private final int[] aux_crossings_initial = new int[INITIAL_SMALL_ARRAY]; // 4K
+ 145     // +1 to avoid recycling in Helpers.widenArray()
+ 146     private final int[] aux_edgePtrs_initial  = new int[INITIAL_SMALL_ARRAY + 1]; // 4K
+ 147 
+ 148 //////////////////////////////////////////////////////////////////////////////
+ 149 //  EDGE LIST
+ 150 //////////////////////////////////////////////////////////////////////////////
+<span class="changed"> 151     private int edgeMinY = Integer.MAX_VALUE;</span>
+<span class="changed"> 152     private int edgeMaxY = Integer.MIN_VALUE;</span>
+ 153     private float edgeMinX = Float.POSITIVE_INFINITY;
+ 154     private float edgeMaxX = Float.NEGATIVE_INFINITY;
+ 155 
+ 156     // edges [floats|ints] stored in off-heap memory
+ 157     private final OffHeapArray edges;
+ 158 
+ 159     private int[] edgeBuckets;
+ 160     private int[] edgeBucketCounts; // 2*newedges + (1 if pruning needed)
+ 161     // used range for edgeBuckets / edgeBucketCounts
+ 162     private int buckets_minY;
+ 163     private int buckets_maxY;
+ 164     // sum of each edge delta Y (subpixels)
+ 165     private int edgeSumDeltaY;
+ 166 
+ 167     // +1 to avoid recycling in Helpers.widenArray()
+ 168     private final int[] edgeBuckets_initial
+ 169         = new int[INITIAL_BUCKET_ARRAY + 1]; // 64K
+ 170     private final int[] edgeBucketCounts_initial
+ 171         = new int[INITIAL_BUCKET_ARRAY + 1]; // 64K
+ 172 
+
+</pre><hr></hr><pre>
+ 340         // Since y1 and y2 are biased by -0.5 in tosubpixy(), this is simply
+ 341         // ceil(y1) or ceil(y2)
+ 342         // upper integer (inclusive)
+ 343         final int firstCrossing = FloatMath.max(FloatMath.ceil_int(y1), boundsMinY);
+ 344 
+ 345         // note: use boundsMaxY (last Y exclusive) to compute correct coverage
+ 346         // upper integer (exclusive)
+ 347         final int lastCrossing  = FloatMath.min(FloatMath.ceil_int(y2), boundsMaxY);
+ 348 
+ 349         /* skip horizontal lines in pixel space and clip edges
+ 350            out of y range [boundsMinY; boundsMaxY] */
+ 351         if (firstCrossing &gt;= lastCrossing) {
+ 352             if (doMonitors) {
+ 353                 RendererContext.stats.mon_rdr_addLine.stop();
+ 354             }
+ 355             if (doStats) {
+ 356                 RendererContext.stats.stat_rdr_addLine_skip.add(1);
+ 357             }
+ 358             return;
+ 359         }
+<span class="changed"> 360 </span>
+<span class="changed"> 361         // edge min/max X/Y are in subpixel space (inclusive) within bounds:</span>
+<span class="changed"> 362         // note: Use integer crossings to ensure consistent range within</span>
+<span class="changed"> 363         // edgeBuckets / edgeBucketCounts arrays in case of NaN values (int = 0)</span>
+<span class="changed"> 364         if (firstCrossing &lt; edgeMinY) {</span>
+<span class="changed"> 365             edgeMinY = firstCrossing;</span>
+ 366         }
+<span class="changed"> 367         if (lastCrossing &gt; edgeMaxY) {</span>
+<span class="changed"> 368             edgeMaxY = lastCrossing;</span>
+ 369         }
+ 370 
+ 371         // Use double-precision for improved accuracy:
+ 372         final double x1d   = x1;
+ 373         final double y1d   = y1;
+<span class="changed"> 374         final double slope = (x1d - x2) / (y1d - y2);</span>
+ 375 
+ 376         if (slope &gt;= 0.0) { // &lt;==&gt; x1 &lt; x2
+ 377             if (x1 &lt; edgeMinX) {
+ 378                 edgeMinX = x1;
+ 379             }
+ 380             if (x2 &gt; edgeMaxX) {
+ 381                 edgeMaxX = x2;
+ 382             }
+ 383         } else {
+ 384             if (x2 &lt; edgeMinX) {
+ 385                 edgeMinX = x2;
+ 386             }
+ 387             if (x1 &gt; edgeMaxX) {
+ 388                 edgeMaxX = x1;
+ 389             }
+ 390         }
+ 391 
+ 392         // local variables for performance:
+ 393         final int _SIZEOF_EDGE_BYTES = SIZEOF_EDGE_BYTES;
+ 394 
+
+</pre><hr></hr><pre>
+ 490             RendererContext.stats.mon_rdr_addLine.stop();
+ 491         }
+ 492     }
+ 493 
+ 494 // END EDGE LIST
+ 495 //////////////////////////////////////////////////////////////////////////////
+ 496 
+ 497     // Cache to store RLE-encoded coverage mask of the current primitive
+ 498     final MarlinCache cache;
+ 499 
+ 500     // Bounds of the drawing region, at subpixel precision.
+ 501     private int boundsMinX, boundsMinY, boundsMaxX, boundsMaxY;
+ 502 
+ 503     // Current winding rule
+ 504     private int windingRule;
+ 505 
+ 506     // Current drawing position, i.e., final point of last segment
+ 507     private float x0, y0;
+ 508 
+ 509     // Position of most recent 'moveTo' command
+<span class="changed"> 510     private float sx0, sy0;</span>
+ 511 
+ 512     // per-thread renderer context
+ 513     final RendererContext rdrCtx;
+ 514     // dirty curve
+ 515     private final Curve curve;
+ 516 
+ 517     Renderer(final RendererContext rdrCtx) {
+ 518         this.rdrCtx = rdrCtx;
+ 519 
+ 520         this.edges = new OffHeapArray(rdrCtx, INITIAL_EDGES_CAPACITY); // 96K
+ 521 
+ 522         this.curve = rdrCtx.curve;
+ 523 
+ 524         edgeBuckets = edgeBuckets_initial;
+ 525         edgeBucketCounts = edgeBucketCounts_initial;
+ 526 
+ 527         alphaLine  = alphaLine_initial;
+ 528 
+ 529         this.cache = rdrCtx.cache;
+ 530 
+
+</pre><hr></hr><pre>
+ 556             MarlinUtils.logInfo("boundsXY = [" + boundsMinX + " ... "
+ 557                                 + boundsMaxX + "[ [" + boundsMinY + " ... "
+ 558                                 + boundsMaxY + "[");
+ 559         }
+ 560 
+ 561         // see addLine: ceil(boundsMaxY) =&gt; boundsMaxY + 1
+ 562         // +1 for edgeBucketCounts
+ 563         final int edgeBucketsLength = (boundsMaxY - boundsMinY) + 1;
+ 564 
+ 565         if (edgeBucketsLength &gt; INITIAL_BUCKET_ARRAY) {
+ 566             if (doStats) {
+ 567                 RendererContext.stats.stat_array_renderer_edgeBuckets
+ 568                     .add(edgeBucketsLength);
+ 569                 RendererContext.stats.stat_array_renderer_edgeBucketCounts
+ 570                     .add(edgeBucketsLength);
+ 571             }
+ 572             edgeBuckets = rdrCtx.getIntArray(edgeBucketsLength);
+ 573             edgeBucketCounts = rdrCtx.getIntArray(edgeBucketsLength);
+ 574         }
+ 575 
+<span class="changed"> 576         edgeMinY = Integer.MAX_VALUE;</span>
+<span class="changed"> 577         edgeMaxY = Integer.MIN_VALUE;</span>
+ 578         edgeMinX = Float.POSITIVE_INFINITY;
+ 579         edgeMaxX = Float.NEGATIVE_INFINITY;
+ 580 
+ 581         // reset used mark:
+ 582         edgeCount = 0;
+ 583         activeEdgeMaxUsed = 0;
+ 584         edges.used = 0;
+ 585 
+ 586         edgeSumDeltaY = 0;
+ 587 
+ 588         return this; // fluent API
+ 589     }
+ 590 
+ 591     /**
+ 592      * Disposes this renderer and recycle it clean up before reusing this instance
+ 593      */
+ 594     void dispose() {
+ 595         if (doStats) {
+ 596             RendererContext.stats.stat_rdr_activeEdges.add(activeEdgeMaxUsed);
+ 597             RendererContext.stats.stat_rdr_edges.add(edges.used);
+
+</pre><hr></hr><pre>
+ 614                 aux_crossings = aux_crossings_initial;
+ 615             }
+ 616         }
+ 617         if (edgePtrs != edgePtrs_initial) {
+ 618             rdrCtx.putDirtyIntArray(edgePtrs);
+ 619             edgePtrs = edgePtrs_initial;
+ 620             if (aux_edgePtrs != aux_edgePtrs_initial) {
+ 621                 rdrCtx.putDirtyIntArray(aux_edgePtrs);
+ 622                 aux_edgePtrs = aux_edgePtrs_initial;
+ 623             }
+ 624         }
+ 625         if (alphaLine != alphaLine_initial) {
+ 626             rdrCtx.putIntArray(alphaLine, 0, 0); // already zero filled
+ 627             alphaLine = alphaLine_initial;
+ 628         }
+ 629         if (blkFlags != blkFlags_initial) {
+ 630             rdrCtx.putIntArray(blkFlags, 0, 0); // already zero filled
+ 631             blkFlags = blkFlags_initial;
+ 632         }
+ 633 
+<span class="changed"> 634         if (edgeMinY != Integer.MAX_VALUE) {</span>
+ 635             // if context is maked as DIRTY:
+ 636             if (rdrCtx.dirty) {
+ 637                 // may happen if an exception if thrown in the pipeline processing:
+ 638                 // clear completely buckets arrays:
+ 639                 buckets_minY = 0;
+ 640                 buckets_maxY = boundsMaxY - boundsMinY;
+ 641             }
+ 642             // clear used part
+ 643             if (edgeBuckets == edgeBuckets_initial) {
+ 644                 // fill only used part
+ 645                 IntArrayCache.fill(edgeBuckets,      buckets_minY,
+ 646                                                      buckets_maxY,     0);
+ 647                 IntArrayCache.fill(edgeBucketCounts, buckets_minY,
+ 648                                                      buckets_maxY + 1, 0);
+ 649             } else {
+ 650                  // clear only used part
+ 651                 rdrCtx.putIntArray(edgeBuckets,      buckets_minY,
+ 652                                                      buckets_maxY);
+ 653                 edgeBuckets = edgeBuckets_initial;
+ 654 
+
+</pre><hr></hr><pre>
+ 674             // Force zero-fill dirty arrays:
+ 675             edges.fill(BYTE_0);
+ 676         }
+ 677         if (doMonitors) {
+ 678             RendererContext.stats.mon_rdr_endRendering.stop();
+ 679         }
+ 680     }
+ 681 
+ 682     private static float tosubpixx(final float pix_x) {
+ 683         return f_SUBPIXEL_POSITIONS_X * pix_x;
+ 684     }
+ 685 
+ 686     private static float tosubpixy(final float pix_y) {
+ 687         // shift y by -0.5 for fast ceil(y - 0.5):
+ 688         return f_SUBPIXEL_POSITIONS_Y * pix_y - 0.5f;
+ 689     }
+ 690 
+ 691     @Override
+ 692     public void moveTo(float pix_x0, float pix_y0) {
+ 693         closePath();
+<span class="changed"> 694         final float sx = tosubpixx(pix_x0);</span>
+<span class="changed"> 695         final float sy = tosubpixy(pix_y0);</span>
+<span class="changed"> 696         this.sx0 = sx;</span>
+<span class="changed"> 697         this.sy0 = sy;</span>
+<span class="changed"> 698         this.x0 = sx;</span>
+<span class="changed"> 699         this.y0 = sy;</span>
+ 700     }
+ 701 
+ 702     @Override
+ 703     public void lineTo(float pix_x1, float pix_y1) {
+<span class="changed"> 704         final float x1 = tosubpixx(pix_x1);</span>
+<span class="changed"> 705         final float y1 = tosubpixy(pix_y1);</span>
+ 706         addLine(x0, y0, x1, y1);
+ 707         x0 = x1;
+ 708         y0 = y1;
+ 709     }
+ 710 
+ 711     @Override
+ 712     public void curveTo(float x1, float y1,
+ 713             float x2, float y2,
+ 714             float x3, float y3)
+ 715     {
+ 716         final float xe = tosubpixx(x3);
+ 717         final float ye = tosubpixy(y3);
+ 718         curve.set(x0, y0, tosubpixx(x1), tosubpixy(y1),
+ 719                           tosubpixx(x2), tosubpixy(y2), xe, ye);
+ 720         curveBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 721         x0 = xe;
+ 722         y0 = ye;
+ 723     }
+ 724 
+ 725     @Override
+ 726     public void quadTo(float x1, float y1, float x2, float y2) {
+ 727         final float xe = tosubpixx(x2);
+ 728         final float ye = tosubpixy(y2);
+ 729         curve.set(x0, y0, tosubpixx(x1), tosubpixy(y1), xe, ye);
+ 730         quadBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 731         x0 = xe;
+ 732         y0 = ye;
+ 733     }
+ 734 
+ 735     @Override
+ 736     public void closePath() {
+<span class="changed"> 737         addLine(x0, y0, sx0, sy0);</span>
+<span class="changed"> 738         x0 = sx0;</span>
+<span class="changed"> 739         y0 = sy0;</span>
+ 740     }
+ 741 
+ 742     @Override
+ 743     public void pathDone() {
+ 744         closePath();
+ 745     }
+ 746 
+ 747     @Override
+ 748     public long getNativeConsumer() {
+ 749         throw new InternalError("Renderer does not use a native consumer.");
+ 750     }
+ 751 
+ 752     // clean alpha array (zero filled)
+ 753     private int[] alphaLine;
+ 754     // 2048 (pixelsize) pixel large
+ 755     private final int[] alphaLine_initial = new int[INITIAL_AA_ARRAY]; // 8K
+ 756 
+ 757     private void _endRendering(final int ymin, final int ymax) {
+ 758         if (DISABLE_RENDER) {
+ 759             return;
+
+</pre><hr></hr><pre>
+1385             // fix range [x0; x1[
+1386             copyAARow(_alpha, y, minX, maxX + 2, useBlkFlags);
+1387         } else if (y != lastY) {
+1388             _cache.clearAARow(y);
+1389         }
+1390 
+1391         // update member:
+1392         edgeCount = numCrossings;
+1393         prevUseBlkFlags = useBlkFlags;
+1394 
+1395         if (doStats) {
+1396             // update max used mark
+1397             activeEdgeMaxUsed = _arrayMaxUsed;
+1398         }
+1399     }
+1400 
+1401     boolean endRendering() {
+1402         if (doMonitors) {
+1403             RendererContext.stats.mon_rdr_endRendering.start();
+1404         }
+<span class="changed">1405         if (edgeMinY == Integer.MAX_VALUE) {</span>
+1406             return false; // undefined edges bounds
+1407         }
+1408 
+1409         final int _boundsMinY = boundsMinY;
+1410         final int _boundsMaxY = boundsMaxY;
+1411 
+1412         // bounds as inclusive intervals
+1413         final int spminX = FloatMath.max(FloatMath.ceil_int(edgeMinX - 0.5f), boundsMinX);
+1414         final int spmaxX = FloatMath.min(FloatMath.ceil_int(edgeMaxX - 0.5f), boundsMaxX - 1);
+1415 
+<span class="changed">1416         // edge Min/Max Y are already rounded to subpixels within bounds:</span>
+<span class="changed">1417         final int spminY = edgeMinY;</span>
+
+
+1418         final int spmaxY;
+<span class="new">1419         int maxY = edgeMaxY;</span>
+1420 
+1421         if (maxY &lt;= _boundsMaxY - 1) {
+1422             spmaxY = maxY;
+1423         } else {
+1424             spmaxY = _boundsMaxY - 1;
+1425             maxY   = _boundsMaxY;
+1426         }
+1427         buckets_minY = spminY - _boundsMinY;
+1428         buckets_maxY = maxY   - _boundsMinY;
+1429 
+1430         if (doLogBounds) {
+1431             MarlinUtils.logInfo("edgesXY = [" + edgeMinX + " ... " + edgeMaxX
+1432                                 + "][" + edgeMinY + " ... " + edgeMaxY + "]");
+1433             MarlinUtils.logInfo("spXY    = [" + spminX + " ... " + spmaxX
+1434                                 + "][" + spminY + " ... " + spmaxY + "]");
+1435         }
+1436 
+1437         // test clipping for shapes out of bounds
+1438         if ((spminX &gt; spmaxX) || (spminY &gt; spmaxY)) {
+1439             return false;
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../test/sun/java2d/marlin/TextClipErrorTest.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

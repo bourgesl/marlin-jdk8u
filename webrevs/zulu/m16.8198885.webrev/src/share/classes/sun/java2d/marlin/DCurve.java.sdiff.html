@@ -1,0 +1,649 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Curve.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DDasher.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/DCurve.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 final class DCurve {
+  29 
+  30     double ax, ay, bx, by, cx, cy, dx, dy;
+  31     double dax, day, dbx, dby;
+  32 
+  33     DCurve() {
+  34     }
+  35 
+<span class="changed">  36     void set(double[] points, int type) {</span>
+<span class="changed">  37         switch(type) {</span>
+<span class="changed">  38         case 8:</span>
+  39             set(points[0], points[1],
+  40                 points[2], points[3],
+  41                 points[4], points[5],
+  42                 points[6], points[7]);
+<span class="changed">  43             return;</span>
+<span class="changed">  44         case 6:</span>
+
+
+  45             set(points[0], points[1],
+  46                 points[2], points[3],
+  47                 points[4], points[5]);
+<span class="removed">  48             return;</span>
+<span class="removed">  49         default:</span>
+<span class="removed">  50             throw new InternalError("Curves can only be cubic or quadratic");</span>
+  51         }
+  52     }
+  53 
+<span class="changed">  54     void set(double x1, double y1,</span>
+<span class="changed">  55              double x2, double y2,</span>
+<span class="changed">  56              double x3, double y3,</span>
+<span class="changed">  57              double x4, double y4)</span>
+  58     {
+  59         final double dx32 = 3.0d * (x3 - x2);
+  60         final double dy32 = 3.0d * (y3 - y2);
+  61         final double dx21 = 3.0d * (x2 - x1);
+  62         final double dy21 = 3.0d * (y2 - y1);
+<span class="changed">  63         ax = (x4 - x1) - dx32;</span>
+  64         ay = (y4 - y1) - dy32;
+<span class="changed">  65         bx = (dx32 - dx21);</span>
+  66         by = (dy32 - dy21);
+<span class="changed">  67         cx = dx21;</span>
+  68         cy = dy21;
+<span class="changed">  69         dx = x1;</span>
+  70         dy = y1;
+<span class="changed">  71         dax = 3.0d * ax; day = 3.0d * ay;</span>
+<span class="changed">  72         dbx = 2.0d * bx; dby = 2.0d * by;</span>
+
+
+  73     }
+  74 
+<span class="changed">  75     void set(double x1, double y1,</span>
+<span class="changed">  76              double x2, double y2,</span>
+<span class="changed">  77              double x3, double y3)</span>
+  78     {
+  79         final double dx21 = (x2 - x1);
+  80         final double dy21 = (y2 - y1);
+<span class="changed">  81         ax = 0.0d; ay = 0.0d;</span>
+<span class="changed">  82         bx = (x3 - x2) - dx21;</span>
+
+  83         by = (y3 - y2) - dy21;
+<span class="changed">  84         cx = 2.0d * dx21;</span>
+  85         cy = 2.0d * dy21;
+<span class="changed">  86         dx = x1;</span>
+  87         dy = y1;
+<span class="changed">  88         dax = 0.0d; day = 0.0d;</span>
+<span class="changed">  89         dbx = 2.0d * bx; dby = 2.0d * by;</span>
+<span class="changed">  90     }</span>
+<span class="changed">  91 </span>
+<span class="changed">  92     double xat(double t) {</span>
+<span class="changed">  93         return t * (t * (t * ax + bx) + cx) + dx;</span>
+<span class="changed">  94     }</span>
+<span class="changed">  95     double yat(double t) {</span>
+<span class="changed">  96         return t * (t * (t * ay + by) + cy) + dy;</span>
+<span class="changed">  97     }</span>
+<span class="changed">  98 </span>
+<span class="changed">  99     double dxat(double t) {</span>
+<span class="changed"> 100         return t * (t * dax + dbx) + cx;</span>
+ 101     }
+ 102 
+<span class="changed"> 103     double dyat(double t) {</span>
+<span class="changed"> 104         return t * (t * day + dby) + cy;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 105     }
+ 106 
+<span class="changed"> 107     int dxRoots(double[] roots, int off) {</span>
+ 108         return DHelpers.quadraticRoots(dax, dbx, cx, roots, off);
+ 109     }
+ 110 
+<span class="changed"> 111     int dyRoots(double[] roots, int off) {</span>
+ 112         return DHelpers.quadraticRoots(day, dby, cy, roots, off);
+ 113     }
+ 114 
+<span class="changed"> 115     int infPoints(double[] pts, int off) {</span>
+ 116         // inflection point at t if -f'(t)x*f''(t)y + f'(t)y*f''(t)x == 0
+ 117         // Fortunately, this turns out to be quadratic, so there are at
+ 118         // most 2 inflection points.
+ 119         final double a = dax * dby - dbx * day;
+ 120         final double b = 2.0d * (cy * dax - day * cx);
+ 121         final double c = cy * dbx - cx * dby;
+ 122 
+ 123         return DHelpers.quadraticRoots(a, b, c, pts, off);
+ 124     }
+ 125 
+
+
+
+
+
+
+
+
+
+
+ 126     // finds points where the first and second derivative are
+ 127     // perpendicular. This happens when g(t) = f'(t)*f''(t) == 0 (where
+ 128     // * is a dot product). Unfortunately, we have to solve a cubic.
+<span class="changed"> 129     private int perpendiculardfddf(double[] pts, int off) {</span>
+ 130         assert pts.length &gt;= off + 4;
+ 131 
+ 132         // these are the coefficients of some multiple of g(t) (not g(t),
+ 133         // because the roots of a polynomial are not changed after multiplication
+ 134         // by a constant, and this way we save a few multiplications).
+<span class="changed"> 135         final double a = 2.0d * (dax*dax + day*day);</span>
+<span class="changed"> 136         final double b = 3.0d * (dax*dbx + day*dby);</span>
+<span class="changed"> 137         final double c = 2.0d * (dax*cx + day*cy) + dbx*dbx + dby*dby;</span>
+<span class="changed"> 138         final double d = dbx*cx + dby*cy;</span>
+
+ 139         return DHelpers.cubicRootsInAB(a, b, c, d, pts, off, 0.0d, 1.0d);
+ 140     }
+ 141 
+ 142     // Tries to find the roots of the function ROC(t)-w in [0, 1). It uses
+ 143     // a variant of the false position algorithm to find the roots. False
+ 144     // position requires that 2 initial values x0,x1 be given, and that the
+ 145     // function must have opposite signs at those values. To find such
+ 146     // values, we need the local extrema of the ROC function, for which we
+ 147     // need the roots of its derivative; however, it's harder to find the
+ 148     // roots of the derivative in this case than it is to find the roots
+ 149     // of the original function. So, we find all points where this curve's
+ 150     // first and second derivative are perpendicular, and we pretend these
+ 151     // are our local extrema. There are at most 3 of these, so we will check
+ 152     // at most 4 sub-intervals of (0,1). ROC has asymptotes at inflection
+ 153     // points, so roc-w can have at least 6 roots. This shouldn't be a
+ 154     // problem for what we're trying to do (draw a nice looking curve).
+<span class="changed"> 155     int rootsOfROCMinusW(double[] roots, int off, final double w, final double err) {</span>
+ 156         // no OOB exception, because by now off&lt;=6, and roots.length &gt;= 10
+ 157         assert off &lt;= 6 &amp;&amp; roots.length &gt;= 10;
+
+ 158         int ret = off;
+<span class="changed"> 159         int numPerpdfddf = perpendiculardfddf(roots, off);</span>
+<span class="changed"> 160         double t0 = 0.0d, ft0 = ROCsq(t0) - w*w;</span>
+<span class="changed"> 161         roots[off + numPerpdfddf] = 1.0d; // always check interval end points</span>
+<span class="changed"> 162         numPerpdfddf++;</span>
+<span class="changed"> 163         for (int i = off; i &lt; off + numPerpdfddf; i++) {</span>
+<span class="changed"> 164             double t1 = roots[i], ft1 = ROCsq(t1) - w*w;</span>
+
+ 165             if (ft0 == 0.0d) {
+ 166                 roots[ret++] = t0;
+ 167             } else if (ft1 * ft0 &lt; 0.0d) { // have opposite signs
+ 168                 // (ROC(t)^2 == w^2) == (ROC(t) == w) is true because
+ 169                 // ROC(t) &gt;= 0 for all t.
+<span class="changed"> 170                 roots[ret++] = falsePositionROCsqMinusX(t0, t1, w*w, err);</span>
+ 171             }
+ 172             t0 = t1;
+ 173             ft0 = ft1;
+ 174         }
+ 175 
+ 176         return ret - off;
+ 177     }
+ 178 
+<span class="changed"> 179     private static double eliminateInf(double x) {</span>
+ 180         return (x == Double.POSITIVE_INFINITY ? Double.MAX_VALUE :
+ 181             (x == Double.NEGATIVE_INFINITY ? Double.MIN_VALUE : x));
+ 182     }
+ 183 
+ 184     // A slight modification of the false position algorithm on wikipedia.
+ 185     // This only works for the ROCsq-x functions. It might be nice to have
+ 186     // the function as an argument, but that would be awkward in java6.
+ 187     // TODO: It is something to consider for java8 (or whenever lambda
+ 188     // expressions make it into the language), depending on how closures
+ 189     // and turn out. Same goes for the newton's method
+ 190     // algorithm in DHelpers.java
+<span class="changed"> 191     private double falsePositionROCsqMinusX(double x0, double x1,</span>
+<span class="changed"> 192                                            final double x, final double err)</span>
+ 193     {
+ 194         final int iterLimit = 100;
+ 195         int side = 0;
+<span class="changed"> 196         double t = x1, ft = eliminateInf(ROCsq(t) - x);</span>
+<span class="changed"> 197         double s = x0, fs = eliminateInf(ROCsq(s) - x);</span>
+ 198         double r = s, fr;
+
+ 199         for (int i = 0; i &lt; iterLimit &amp;&amp; Math.abs(t - s) &gt; err * Math.abs(t + s); i++) {
+ 200             r = (fs * t - ft * s) / (fs - ft);
+<span class="changed"> 201             fr = ROCsq(r) - x;</span>
+ 202             if (sameSign(fr, ft)) {
+ 203                 ft = fr; t = r;
+ 204                 if (side &lt; 0) {
+ 205                     fs /= (1 &lt;&lt; (-side));
+ 206                     side--;
+ 207                 } else {
+ 208                     side = -1;
+ 209                 }
+<span class="changed"> 210             } else if (fr * fs &gt; 0) {</span>
+ 211                 fs = fr; s = r;
+ 212                 if (side &gt; 0) {
+ 213                     ft /= (1 &lt;&lt; side);
+ 214                     side++;
+ 215                 } else {
+ 216                     side = 1;
+ 217                 }
+ 218             } else {
+ 219                 break;
+ 220             }
+ 221         }
+ 222         return r;
+ 223     }
+ 224 
+<span class="changed"> 225     private static boolean sameSign(double x, double y) {</span>
+ 226         // another way is to test if x*y &gt; 0. This is bad for small x, y.
+ 227         return (x &lt; 0.0d &amp;&amp; y &lt; 0.0d) || (x &gt; 0.0d &amp;&amp; y &gt; 0.0d);
+ 228     }
+ 229 
+ 230     // returns the radius of curvature squared at t of this curve
+ 231     // see http://en.wikipedia.org/wiki/Radius_of_curvature_(applications)
+ 232     private double ROCsq(final double t) {
+<span class="removed"> 233         // dx=xat(t) and dy=yat(t). These calls have been inlined for efficiency</span>
+ 234         final double dx = t * (t * dax + dbx) + cx;
+ 235         final double dy = t * (t * day + dby) + cy;
+ 236         final double ddx = 2.0d * dax * t + dbx;
+ 237         final double ddy = 2.0d * day * t + dby;
+<span class="changed"> 238         final double dx2dy2 = dx*dx + dy*dy;</span>
+<span class="changed"> 239         final double ddx2ddy2 = ddx*ddx + ddy*ddy;</span>
+<span class="changed"> 240         final double ddxdxddydy = ddx*dx + ddy*dy;</span>
+<span class="changed"> 241         return dx2dy2*((dx2dy2*dx2dy2) / (dx2dy2 * ddx2ddy2 - ddxdxddydy*ddxdxddydy));</span>
+ 242     }
+ 243 }
+</pre></td><td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2018, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 final class DCurve {
+  29 
+  30     double ax, ay, bx, by, cx, cy, dx, dy;
+  31     double dax, day, dbx, dby;
+  32 
+  33     DCurve() {
+  34     }
+  35 
+<span class="changed">  36     void set(final double[] points, final int type) {</span>
+<span class="changed">  37         // if instead of switch (perf + most probable cases first)</span>
+<span class="changed">  38         if (type == 8) {</span>
+  39             set(points[0], points[1],
+  40                 points[2], points[3],
+  41                 points[4], points[5],
+  42                 points[6], points[7]);
+<span class="changed">  43         } else if (type == 4) {</span>
+<span class="changed">  44             set(points[0], points[1],</span>
+<span class="changed">  45                 points[2], points[3]);</span>
+<span class="changed">  46         } else {</span>
+  47             set(points[0], points[1],
+  48                 points[2], points[3],
+  49                 points[4], points[5]);
+
+
+
+  50         }
+  51     }
+  52 
+<span class="changed">  53     void set(final double x1, final double y1,</span>
+<span class="changed">  54              final double x2, final double y2,</span>
+<span class="changed">  55              final double x3, final double y3,</span>
+<span class="changed">  56              final double x4, final double y4)</span>
+  57     {
+  58         final double dx32 = 3.0d * (x3 - x2);
+  59         final double dy32 = 3.0d * (y3 - y2);
+  60         final double dx21 = 3.0d * (x2 - x1);
+  61         final double dy21 = 3.0d * (y2 - y1);
+<span class="changed">  62         ax = (x4 - x1) - dx32;  // A = P3 - P0 - 3 (P2 - P1) = (P3 - P0) + 3 (P1 - P2)</span>
+  63         ay = (y4 - y1) - dy32;
+<span class="changed">  64         bx = (dx32 - dx21);     // B = 3 (P2 - P1) - 3(P1 - P0) = 3 (P2 + P0) - 6 P1</span>
+  65         by = (dy32 - dy21);
+<span class="changed">  66         cx = dx21;              // C = 3 (P1 - P0)</span>
+  67         cy = dy21;
+<span class="changed">  68         dx = x1;                // D = P0</span>
+  69         dy = y1;
+<span class="changed">  70         dax = 3.0d * ax;</span>
+<span class="changed">  71         day = 3.0d * ay;</span>
+<span class="changed">  72         dbx = 2.0d * bx;</span>
+<span class="changed">  73         dby = 2.0d * by;</span>
+  74     }
+  75 
+<span class="changed">  76     void set(final double x1, final double y1,</span>
+<span class="changed">  77              final double x2, final double y2,</span>
+<span class="changed">  78              final double x3, final double y3)</span>
+  79     {
+  80         final double dx21 = (x2 - x1);
+  81         final double dy21 = (y2 - y1);
+<span class="changed">  82         ax = 0.0d;              // A = 0</span>
+<span class="changed">  83         ay = 0.0d;</span>
+<span class="changed">  84         bx = (x3 - x2) - dx21;  // B = P3 - P0 - 2 P2</span>
+  85         by = (y3 - y2) - dy21;
+<span class="changed">  86         cx = 2.0d * dx21;       // C = 2 (P2 - P1)</span>
+  87         cy = 2.0d * dy21;
+<span class="changed">  88         dx = x1;                // D = P1</span>
+  89         dy = y1;
+<span class="changed">  90         dax = 0.0d;</span>
+<span class="changed">  91         day = 0.0d;</span>
+<span class="changed">  92         dbx = 2.0d * bx;</span>
+<span class="changed">  93         dby = 2.0d * by;</span>
+
+
+
+
+
+
+
+
+
+  94     }
+  95 
+<span class="changed">  96     void set(final double x1, final double y1,</span>
+<span class="changed">  97              final double x2, final double y2)</span>
+<span class="changed">  98     {</span>
+<span class="changed">  99         final double dx21 = (x2 - x1);</span>
+<span class="changed"> 100         final double dy21 = (y2 - y1);</span>
+<span class="changed"> 101         ax = 0.0d;              // A = 0</span>
+<span class="changed"> 102         ay = 0.0d;</span>
+<span class="changed"> 103         bx = 0.0d;              // B = 0</span>
+<span class="changed"> 104         by = 0.0d;</span>
+<span class="changed"> 105         cx = dx21;              // C = (P2 - P1)</span>
+<span class="changed"> 106         cy = dy21;</span>
+<span class="changed"> 107         dx = x1;                // D = P1</span>
+<span class="changed"> 108         dy = y1;</span>
+<span class="changed"> 109         dax = 0.0d;</span>
+<span class="changed"> 110         day = 0.0d;</span>
+<span class="changed"> 111         dbx = 0.0d;</span>
+<span class="changed"> 112         dby = 0.0d;</span>
+ 113     }
+ 114 
+<span class="changed"> 115     int dxRoots(final double[] roots, final int off) {</span>
+ 116         return DHelpers.quadraticRoots(dax, dbx, cx, roots, off);
+ 117     }
+ 118 
+<span class="changed"> 119     int dyRoots(final double[] roots, final int off) {</span>
+ 120         return DHelpers.quadraticRoots(day, dby, cy, roots, off);
+ 121     }
+ 122 
+<span class="changed"> 123     int infPoints(final double[] pts, final int off) {</span>
+ 124         // inflection point at t if -f'(t)x*f''(t)y + f'(t)y*f''(t)x == 0
+ 125         // Fortunately, this turns out to be quadratic, so there are at
+ 126         // most 2 inflection points.
+ 127         final double a = dax * dby - dbx * day;
+ 128         final double b = 2.0d * (cy * dax - day * cx);
+ 129         final double c = cy * dbx - cx * dby;
+ 130 
+ 131         return DHelpers.quadraticRoots(a, b, c, pts, off);
+ 132     }
+ 133 
+<span class="new"> 134     int xPoints(final double[] ts, final int off, final double x)</span>
+<span class="new"> 135     {</span>
+<span class="new"> 136         return DHelpers.cubicRootsInAB(ax, bx, cx, dx - x, ts, off, 0.0d, 1.0d);</span>
+<span class="new"> 137     }</span>
+<span class="new"> 138 </span>
+<span class="new"> 139     int yPoints(final double[] ts, final int off, final double y)</span>
+<span class="new"> 140     {</span>
+<span class="new"> 141         return DHelpers.cubicRootsInAB(ay, by, cy, dy - y, ts, off, 0.0d, 1.0d);</span>
+<span class="new"> 142     }</span>
+<span class="new"> 143 </span>
+ 144     // finds points where the first and second derivative are
+ 145     // perpendicular. This happens when g(t) = f'(t)*f''(t) == 0 (where
+ 146     // * is a dot product). Unfortunately, we have to solve a cubic.
+<span class="changed"> 147     private int perpendiculardfddf(final double[] pts, final int off) {</span>
+ 148         assert pts.length &gt;= off + 4;
+ 149 
+ 150         // these are the coefficients of some multiple of g(t) (not g(t),
+ 151         // because the roots of a polynomial are not changed after multiplication
+ 152         // by a constant, and this way we save a few multiplications).
+<span class="changed"> 153         final double a = 2.0d * (dax * dax + day * day);</span>
+<span class="changed"> 154         final double b = 3.0d * (dax * dbx + day * dby);</span>
+<span class="changed"> 155         final double c = 2.0d * (dax * cx + day * cy) + dbx * dbx + dby * dby;</span>
+<span class="changed"> 156         final double d = dbx * cx + dby * cy;</span>
+<span class="changed"> 157 </span>
+ 158         return DHelpers.cubicRootsInAB(a, b, c, d, pts, off, 0.0d, 1.0d);
+ 159     }
+ 160 
+ 161     // Tries to find the roots of the function ROC(t)-w in [0, 1). It uses
+ 162     // a variant of the false position algorithm to find the roots. False
+ 163     // position requires that 2 initial values x0,x1 be given, and that the
+ 164     // function must have opposite signs at those values. To find such
+ 165     // values, we need the local extrema of the ROC function, for which we
+ 166     // need the roots of its derivative; however, it's harder to find the
+ 167     // roots of the derivative in this case than it is to find the roots
+ 168     // of the original function. So, we find all points where this curve's
+ 169     // first and second derivative are perpendicular, and we pretend these
+ 170     // are our local extrema. There are at most 3 of these, so we will check
+ 171     // at most 4 sub-intervals of (0,1). ROC has asymptotes at inflection
+ 172     // points, so roc-w can have at least 6 roots. This shouldn't be a
+ 173     // problem for what we're trying to do (draw a nice looking curve).
+<span class="changed"> 174     int rootsOfROCMinusW(final double[] roots, final int off, final double w2, final double err) {</span>
+ 175         // no OOB exception, because by now off&lt;=6, and roots.length &gt;= 10
+ 176         assert off &lt;= 6 &amp;&amp; roots.length &gt;= 10;
+<span class="new"> 177 </span>
+ 178         int ret = off;
+<span class="changed"> 179         final int end = off + perpendiculardfddf(roots, off);</span>
+<span class="changed"> 180         roots[end] = 1.0d; // always check interval end points</span>
+<span class="changed"> 181 </span>
+<span class="changed"> 182         double t0 = 0.0d, ft0 = ROCsq(t0) - w2;</span>
+<span class="changed"> 183 </span>
+<span class="changed"> 184         for (int i = off; i &lt;= end; i++) {</span>
+<span class="changed"> 185             double t1 = roots[i], ft1 = ROCsq(t1) - w2;</span>
+ 186             if (ft0 == 0.0d) {
+ 187                 roots[ret++] = t0;
+ 188             } else if (ft1 * ft0 &lt; 0.0d) { // have opposite signs
+ 189                 // (ROC(t)^2 == w^2) == (ROC(t) == w) is true because
+ 190                 // ROC(t) &gt;= 0 for all t.
+<span class="changed"> 191                 roots[ret++] = falsePositionROCsqMinusX(t0, t1, w2, err);</span>
+ 192             }
+ 193             t0 = t1;
+ 194             ft0 = ft1;
+ 195         }
+ 196 
+ 197         return ret - off;
+ 198     }
+ 199 
+<span class="changed"> 200     private static double eliminateInf(final double x) {</span>
+ 201         return (x == Double.POSITIVE_INFINITY ? Double.MAX_VALUE :
+ 202                (x == Double.NEGATIVE_INFINITY ? Double.MIN_VALUE : x));
+ 203     }
+ 204 
+ 205     // A slight modification of the false position algorithm on wikipedia.
+ 206     // This only works for the ROCsq-x functions. It might be nice to have
+ 207     // the function as an argument, but that would be awkward in java6.
+ 208     // TODO: It is something to consider for java8 (or whenever lambda
+ 209     // expressions make it into the language), depending on how closures
+ 210     // and turn out. Same goes for the newton's method
+ 211     // algorithm in DHelpers.java
+<span class="changed"> 212     private double falsePositionROCsqMinusX(final double t0, final double t1,</span>
+<span class="changed"> 213                                             final double w2, final double err)</span>
+ 214     {
+ 215         final int iterLimit = 100;
+ 216         int side = 0;
+<span class="changed"> 217         double t = t1, ft = eliminateInf(ROCsq(t) - w2);</span>
+<span class="changed"> 218         double s = t0, fs = eliminateInf(ROCsq(s) - w2);</span>
+ 219         double r = s, fr;
+<span class="new"> 220 </span>
+ 221         for (int i = 0; i &lt; iterLimit &amp;&amp; Math.abs(t - s) &gt; err * Math.abs(t + s); i++) {
+ 222             r = (fs * t - ft * s) / (fs - ft);
+<span class="changed"> 223             fr = ROCsq(r) - w2;</span>
+ 224             if (sameSign(fr, ft)) {
+ 225                 ft = fr; t = r;
+ 226                 if (side &lt; 0) {
+ 227                     fs /= (1 &lt;&lt; (-side));
+ 228                     side--;
+ 229                 } else {
+ 230                     side = -1;
+ 231                 }
+<span class="changed"> 232             } else if (fr * fs &gt; 0.0d) {</span>
+ 233                 fs = fr; s = r;
+ 234                 if (side &gt; 0) {
+ 235                     ft /= (1 &lt;&lt; side);
+ 236                     side++;
+ 237                 } else {
+ 238                     side = 1;
+ 239                 }
+ 240             } else {
+ 241                 break;
+ 242             }
+ 243         }
+ 244         return r;
+ 245     }
+ 246 
+<span class="changed"> 247     private static boolean sameSign(final double x, final double y) {</span>
+ 248         // another way is to test if x*y &gt; 0. This is bad for small x, y.
+ 249         return (x &lt; 0.0d &amp;&amp; y &lt; 0.0d) || (x &gt; 0.0d &amp;&amp; y &gt; 0.0d);
+ 250     }
+ 251 
+ 252     // returns the radius of curvature squared at t of this curve
+ 253     // see http://en.wikipedia.org/wiki/Radius_of_curvature_(applications)
+ 254     private double ROCsq(final double t) {
+
+ 255         final double dx = t * (t * dax + dbx) + cx;
+ 256         final double dy = t * (t * day + dby) + cy;
+ 257         final double ddx = 2.0d * dax * t + dbx;
+ 258         final double ddy = 2.0d * day * t + dby;
+<span class="changed"> 259         final double dx2dy2 = dx * dx + dy * dy;</span>
+<span class="changed"> 260         final double ddx2ddy2 = ddx * ddx + ddy * ddy;</span>
+<span class="changed"> 261         final double ddxdxddydy = ddx * dx + ddy * dy;</span>
+<span class="changed"> 262         return dx2dy2 * ((dx2dy2 * dx2dy2) / (dx2dy2 * ddx2ddy2 - ddxdxddydy * ddxdxddydy));</span>
+ 263     }
+ 264 }
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Curve.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DDasher.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

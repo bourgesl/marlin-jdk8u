@@ -1,0 +1,363 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererStats.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Version.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Stroker.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+1188         this.cmx = (l[kind - 2] - r[kind - 2]) / 2f;
+1189         this.cmy = (l[kind - 1] - r[kind - 1]) / 2f;
+1190         this.cdx = dxf;
+1191         this.cdy = dyf;
+1192         this.cx0 = xf;
+1193         this.cy0 = yf;
+1194         this.prev = DRAWING_OP_TO;
+1195     }
+1196 
+1197     @Override public long getNativeConsumer() {
+1198         throw new InternalError("Stroker doesn't use a native consumer");
+1199     }
+1200 
+1201     // a stack of polynomial curves where each curve shares endpoints with
+1202     // adjacent ones.
+1203     static final class PolyStack {
+1204         private static final byte TYPE_LINETO  = (byte) 0;
+1205         private static final byte TYPE_QUADTO  = (byte) 1;
+1206         private static final byte TYPE_CUBICTO = (byte) 2;
+1207 
+
+
+
+
+
+
+1208         float[] curves;
+1209         int end;
+1210         byte[] curveTypes;
+1211         int numCurves;
+1212 
+1213         // per-thread renderer context
+1214         final RendererContext rdrCtx;
+1215 
+<span class="changed">1216         // per-thread initial arrays (large enough to satisfy most usages: 8192)</span>
+<span class="changed">1217         // +1 to avoid recycling in Helpers.widenArray()</span>
+<span class="changed">1218         private final float[] curves_initial = new float[INITIAL_LARGE_ARRAY + 1]; // 32K</span>
+<span class="changed">1219         private final byte[] curveTypes_initial = new byte[INITIAL_LARGE_ARRAY + 1]; // 8K</span>
+1220 
+1221         // used marks (stats only)
+1222         int curveTypesUseMark;
+1223         int curvesUseMark;
+1224 
+1225         /**
+1226          * Constructor
+1227          * @param rdrCtx per-thread renderer context
+1228          */
+1229         PolyStack(final RendererContext rdrCtx) {
+1230             this.rdrCtx = rdrCtx;
+1231 
+<span class="changed">1232             curves = curves_initial;</span>
+<span class="changed">1233             curveTypes = curveTypes_initial;</span>
+<span class="changed">1234             end = 0;</span>
+
+
+1235             numCurves = 0;
+
+1236 
+1237             if (DO_STATS) {
+1238                 curveTypesUseMark = 0;
+1239                 curvesUseMark = 0;
+1240             }
+1241         }
+1242 
+1243         /**
+1244          * Disposes this PolyStack:
+1245          * clean up before reusing this instance
+1246          */
+1247         void dispose() {
+1248             end = 0;
+1249             numCurves = 0;
+1250 
+1251             if (DO_STATS) {
+<span class="changed">1252                 rdrCtx.stats.stat_rdr_poly_stack_types</span>
+<span class="changed">1253                     .add(curveTypesUseMark);</span>
+<span class="changed">1254                 rdrCtx.stats.stat_rdr_poly_stack_curves</span>
+<span class="changed">1255                     .add(curvesUseMark);</span>
+1256                 // reset marks
+1257                 curveTypesUseMark = 0;
+1258                 curvesUseMark = 0;
+1259             }
+1260 
+1261             // Return arrays:
+1262             // curves and curveTypes are kept dirty
+<span class="changed">1263             if (curves != curves_initial) {</span>
+<span class="changed">1264                 rdrCtx.putDirtyFloatArray(curves);</span>
+<span class="changed">1265                 curves = curves_initial;</span>
+<span class="changed">1266             }</span>
+<span class="changed">1267 </span>
+<span class="changed">1268             if (curveTypes != curveTypes_initial) {</span>
+<span class="changed">1269                 rdrCtx.putDirtyByteArray(curveTypes);</span>
+<span class="changed">1270                 curveTypes = curveTypes_initial;</span>
+<span class="changed">1271             }</span>
+1272         }
+1273 
+1274         private void ensureSpace(final int n) {
+1275             // use substraction to avoid integer overflow:
+1276             if (curves.length - end &lt; n) {
+1277                 if (DO_STATS) {
+1278                     rdrCtx.stats.stat_array_stroker_polystack_curves
+1279                         .add(end + n);
+1280                 }
+<span class="changed">1281                 curves = rdrCtx.widenDirtyFloatArray(curves, end, end + n);</span>
+1282             }
+1283             if (curveTypes.length &lt;= numCurves) {
+1284                 if (DO_STATS) {
+1285                     rdrCtx.stats.stat_array_stroker_polystack_curveTypes
+1286                         .add(numCurves + 1);
+1287                 }
+<span class="changed">1288                 curveTypes = rdrCtx.widenDirtyByteArray(curveTypes,</span>
+1289                                                         numCurves,
+1290                                                         numCurves + 1);
+1291             }
+1292         }
+1293 
+1294         void pushCubic(float x0, float y0,
+1295                        float x1, float y1,
+1296                        float x2, float y2)
+1297         {
+1298             ensureSpace(6);
+1299             curveTypes[numCurves++] = TYPE_CUBICTO;
+1300             // we reverse the coordinate order to make popping easier
+1301             final float[] _curves = curves;
+1302             int e = end;
+1303             _curves[e++] = x2;    _curves[e++] = y2;
+1304             _curves[e++] = x1;    _curves[e++] = y1;
+1305             _curves[e++] = x0;    _curves[e++] = y0;
+1306             end = e;
+1307         }
+1308 
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+1188         this.cmx = (l[kind - 2] - r[kind - 2]) / 2f;
+1189         this.cmy = (l[kind - 1] - r[kind - 1]) / 2f;
+1190         this.cdx = dxf;
+1191         this.cdy = dyf;
+1192         this.cx0 = xf;
+1193         this.cy0 = yf;
+1194         this.prev = DRAWING_OP_TO;
+1195     }
+1196 
+1197     @Override public long getNativeConsumer() {
+1198         throw new InternalError("Stroker doesn't use a native consumer");
+1199     }
+1200 
+1201     // a stack of polynomial curves where each curve shares endpoints with
+1202     // adjacent ones.
+1203     static final class PolyStack {
+1204         private static final byte TYPE_LINETO  = (byte) 0;
+1205         private static final byte TYPE_QUADTO  = (byte) 1;
+1206         private static final byte TYPE_CUBICTO = (byte) 2;
+1207 
+<span class="new">1208         // curves capacity = edges count (4096) = half edges x 2 (coords)</span>
+<span class="new">1209         private static final int INITIAL_CURVES_COUNT = INITIAL_EDGES_COUNT;</span>
+<span class="new">1210 </span>
+<span class="new">1211         // types capacity = half edges count (2048)</span>
+<span class="new">1212         private static final int INITIAL_TYPES_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 1;</span>
+<span class="new">1213 </span>
+1214         float[] curves;
+1215         int end;
+1216         byte[] curveTypes;
+1217         int numCurves;
+1218 
+1219         // per-thread renderer context
+1220         final RendererContext rdrCtx;
+1221 
+<span class="changed">1222         // curves ref (dirty)</span>
+<span class="changed">1223         final FloatArrayCache.Reference curves_ref;</span>
+<span class="changed">1224         // curveTypes ref (dirty)</span>
+<span class="changed">1225         final ByteArrayCache.Reference curveTypes_ref;</span>
+1226 
+1227         // used marks (stats only)
+1228         int curveTypesUseMark;
+1229         int curvesUseMark;
+1230 
+1231         /**
+1232          * Constructor
+1233          * @param rdrCtx per-thread renderer context
+1234          */
+1235         PolyStack(final RendererContext rdrCtx) {
+1236             this.rdrCtx = rdrCtx;
+1237 
+<span class="changed">1238             curves_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_CURVES_COUNT); // 16K</span>
+<span class="changed">1239             curves     = curves_ref.initial;</span>
+<span class="changed">1240 </span>
+<span class="changed">1241             curveTypes_ref = rdrCtx.newDirtyByteArrayRef(INITIAL_TYPES_COUNT); // 2K</span>
+<span class="changed">1242             curveTypes     = curveTypes_ref.initial;</span>
+1243             numCurves = 0;
+<span class="new">1244             end = 0;</span>
+1245 
+1246             if (DO_STATS) {
+1247                 curveTypesUseMark = 0;
+1248                 curvesUseMark = 0;
+1249             }
+1250         }
+1251 
+1252         /**
+1253          * Disposes this PolyStack:
+1254          * clean up before reusing this instance
+1255          */
+1256         void dispose() {
+1257             end = 0;
+1258             numCurves = 0;
+1259 
+1260             if (DO_STATS) {
+<span class="changed">1261                 rdrCtx.stats.stat_rdr_poly_stack_types.add(curveTypesUseMark);</span>
+<span class="changed">1262                 rdrCtx.stats.stat_rdr_poly_stack_curves.add(curvesUseMark);</span>
+<span class="changed">1263                 rdrCtx.stats.hist_rdr_poly_stack_curves.add(curvesUseMark);</span>
+<span class="changed">1264 </span>
+1265                 // reset marks
+1266                 curveTypesUseMark = 0;
+1267                 curvesUseMark = 0;
+1268             }
+1269 
+1270             // Return arrays:
+1271             // curves and curveTypes are kept dirty
+<span class="changed">1272             curves     = curves_ref.putArray(curves);</span>
+<span class="changed">1273             curveTypes = curveTypes_ref.putArray(curveTypes);</span>
+
+
+
+
+
+
+
+1274         }
+1275 
+1276         private void ensureSpace(final int n) {
+1277             // use substraction to avoid integer overflow:
+1278             if (curves.length - end &lt; n) {
+1279                 if (DO_STATS) {
+1280                     rdrCtx.stats.stat_array_stroker_polystack_curves
+1281                         .add(end + n);
+1282                 }
+<span class="changed">1283                 curves = curves_ref.widenArray(curves, end, end + n);</span>
+1284             }
+1285             if (curveTypes.length &lt;= numCurves) {
+1286                 if (DO_STATS) {
+1287                     rdrCtx.stats.stat_array_stroker_polystack_curveTypes
+1288                         .add(numCurves + 1);
+1289                 }
+<span class="changed">1290                 curveTypes = curveTypes_ref.widenArray(curveTypes,</span>
+1291                                                        numCurves,
+1292                                                        numCurves + 1);
+1293             }
+1294         }
+1295 
+1296         void pushCubic(float x0, float y0,
+1297                        float x1, float y1,
+1298                        float x2, float y2)
+1299         {
+1300             ensureSpace(6);
+1301             curveTypes[numCurves++] = TYPE_CUBICTO;
+1302             // we reverse the coordinate order to make popping easier
+1303             final float[] _curves = curves;
+1304             int e = end;
+1305             _curves[e++] = x2;    _curves[e++] = y2;
+1306             _curves[e++] = x1;    _curves[e++] = y1;
+1307             _curves[e++] = x0;    _curves[e++] = y0;
+1308             end = e;
+1309         }
+1310 
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererStats.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Version.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

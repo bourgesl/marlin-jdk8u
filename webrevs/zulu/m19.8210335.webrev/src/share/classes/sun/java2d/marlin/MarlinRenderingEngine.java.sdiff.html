@@ -1,0 +1,547 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinConst.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13698">13698</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8210335">8210335</a>: Clipping problems with complex affine transforms: negative scaling factors or small scaling factors
+Summary: fixed clipping rectangle to take into account the inverse transform (scale/shear)
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.BasicStroke;
+  29 import java.awt.Shape;
+  30 import java.awt.geom.AffineTransform;
+  31 import java.awt.geom.Path2D;
+  32 import java.awt.geom.PathIterator;
+  33 import java.security.AccessController;
+
+  34 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  35 import sun.awt.geom.PathConsumer2D;
+  36 import sun.java2d.ReentrantContextProvider;
+  37 import sun.java2d.ReentrantContextProviderCLQ;
+  38 import sun.java2d.ReentrantContextProviderTL;
+  39 import sun.java2d.pipe.AATileGenerator;
+  40 import sun.java2d.pipe.Region;
+  41 import sun.java2d.pipe.RenderingEngine;
+  42 import sun.security.action.GetPropertyAction;
+  43 
+  44 /**
+  45  * Marlin RendererEngine implementation (derived from Pisces)
+  46  */
+  47 public final class MarlinRenderingEngine extends RenderingEngine
+  48                                          implements MarlinConst
+  49 {
+  50     // slightly slower ~2% if enabled stroker clipping (lines) but skipping cap / join handling is few percents faster in specific cases
+  51     static final boolean DISABLE_2ND_STROKER_CLIPPING = true;
+  52 
+  53     static final boolean DO_TRACE_PATH = false;
+
+</pre><hr></hr><pre>
+ 316                   float dashphase,
+ 317                   PathConsumer2D pc2d)
+ 318     {
+ 319         // We use strokerat so that in Stroker and Dasher we can work only
+ 320         // with the pre-transformation coordinates. This will repeat a lot of
+ 321         // computations done in the path iterator, but the alternative is to
+ 322         // work with transformed paths and compute untransformed coordinates
+ 323         // as needed. This would be faster but I do not think the complexity
+ 324         // of working with both untransformed and transformed coordinates in
+ 325         // the same code is worth it.
+ 326         // However, if a path's width is constant after a transformation,
+ 327         // we can skip all this untransforming.
+ 328 
+ 329         // As pathTo() will check transformed coordinates for invalid values
+ 330         // (NaN / Infinity) to ignore such points, it is necessary to apply the
+ 331         // transformation before the path processing.
+ 332         AffineTransform strokerat = null;
+ 333 
+ 334         int dashLen = -1;
+ 335         boolean recycleDashes = false;
+<span class="removed"> 336         float scale = 1.0f;</span>
+ 337 
+ 338         if (at != null &amp;&amp; !at.isIdentity()) {
+ 339             final double a = at.getScaleX();
+ 340             final double b = at.getShearX();
+ 341             final double c = at.getShearY();
+ 342             final double d = at.getScaleY();
+ 343             final double det = a * d - c * b;
+ 344 
+ 345             if (Math.abs(det) &lt;= (2.0f * Float.MIN_VALUE)) {
+ 346                 // this rendering engine takes one dimensional curves and turns
+ 347                 // them into 2D shapes by giving them width.
+ 348                 // However, if everything is to be passed through a singular
+ 349                 // transformation, these 2D shapes will be squashed down to 1D
+ 350                 // again so, nothing can be drawn.
+ 351 
+ 352                 // Every path needs an initial moveTo and a pathDone. If these
+ 353                 // are not there this causes a SIGSEGV in libawt.so (at the time
+ 354                 // of writing of this comment (September 16, 2010)). Actually,
+ 355                 // I am not sure if the moveTo is necessary to avoid the SIGSEGV
+ 356                 // but the pathDone is definitely needed.
+ 357                 pc2d.moveTo(0.0f, 0.0f);
+ 358                 pc2d.pathDone();
+ 359                 return;
+ 360             }
+ 361 
+ 362             // If the transform is a constant multiple of an orthogonal transformation
+ 363             // then every length is just multiplied by a constant, so we just
+ 364             // need to transform input paths to stroker and tell stroker
+ 365             // the scaled width. This condition is satisfied if
+ 366             // a*b == -c*d &amp;&amp; a*a+c*c == b*b+d*d. In the actual check below, we
+ 367             // leave a bit of room for error.
+ 368             if (nearZero(a*b + c*d) &amp;&amp; nearZero(a*a + c*c - (b*b + d*d))) {
+<span class="changed"> 369                 scale = (float) Math.sqrt(a*a + c*c);</span>
+ 370 
+ 371                 if (dashes != null) {
+ 372                     recycleDashes = true;
+ 373                     dashLen = dashes.length;
+ 374                     dashes = rdrCtx.dasher.copyDashArray(dashes);
+ 375                     for (int i = 0; i &lt; dashLen; i++) {
+ 376                         dashes[i] *= scale;
+ 377                     }
+ 378                     dashphase *= scale;
+ 379                 }
+ 380                 width *= scale;
+ 381 
+ 382                 // by now strokerat == null. Input paths to
+ 383                 // stroker (and maybe dasher) will have the full transform at
+ 384                 // applied to them and nothing will happen to the output paths.
+ 385             } else {
+ 386                 strokerat = at;
+ 387 
+ 388                 // by now strokerat == at. Input paths to
+ 389                 // stroker (and maybe dasher) will have the full transform at
+
+</pre><hr></hr><pre>
+ 404             at = null;
+ 405         }
+ 406 
+ 407         final TransformingPathConsumer2D transformerPC2D = rdrCtx.transformerPC2D;
+ 408 
+ 409         if (DO_TRACE_PATH) {
+ 410             // trace Stroker:
+ 411             pc2d = transformerPC2D.traceStroker(pc2d);
+ 412         }
+ 413 
+ 414         if (USE_SIMPLIFIER) {
+ 415             // Use simplifier after stroker before Renderer
+ 416             // to remove collinear segments (notably due to cap square)
+ 417             pc2d = rdrCtx.simplifier.init(pc2d);
+ 418         }
+ 419 
+ 420         // deltaTransformConsumer may adjust the clip rectangle:
+ 421         pc2d = transformerPC2D.deltaTransformConsumer(pc2d, strokerat);
+ 422 
+ 423         // stroker will adjust the clip rectangle (width / miter limit):
+<span class="changed"> 424         pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit, scale,</span>
+ 425                 (dashes == null));
+ 426 
+ 427         // Curve Monotizer:
+ 428         rdrCtx.monotonizer.init(width);
+ 429 
+ 430         if (dashes != null) {
+ 431             if (!recycleDashes) {
+ 432                 dashLen = dashes.length;
+ 433             }
+ 434             if (DO_TRACE_PATH) {
+ 435                 pc2d = transformerPC2D.traceDasher(pc2d);
+ 436             }
+ 437             pc2d = rdrCtx.dasher.init(pc2d, dashes, dashLen, dashphase,
+ 438                                       recycleDashes);
+ 439 
+ 440             if (DISABLE_2ND_STROKER_CLIPPING) {
+ 441                 // disable stoker clipping
+ 442                 rdrCtx.stroker.disableClipping();
+ 443             }
+ 444 
+
+</pre><hr></hr><pre>
+ 814      * @since 1.7
+ 815      */
+ 816     @Override
+ 817     public AATileGenerator getAATileGenerator(Shape s,
+ 818                                               AffineTransform at,
+ 819                                               Region clip,
+ 820                                               BasicStroke bs,
+ 821                                               boolean thin,
+ 822                                               boolean normalize,
+ 823                                               int[] bbox)
+ 824     {
+ 825         MarlinTileGenerator ptg = null;
+ 826         Renderer r = null;
+ 827 
+ 828         final RendererContext rdrCtx = getRendererContext();
+ 829         try {
+ 830             if (DO_CLIP || (DO_CLIP_RUNTIME_ENABLE &amp;&amp; MarlinProperties.isDoClipAtRuntime())) {
+ 831                 // Define the initial clip bounds:
+ 832                 final float[] clipRect = rdrCtx.clipRect;
+ 833 
+<span class="changed"> 834                 clipRect[0] = clip.getLoY();</span>
+<span class="changed"> 835                 clipRect[1] = clip.getLoY() + clip.getHeight();</span>
+<span class="changed"> 836                 clipRect[2] = clip.getLoX();</span>
+<span class="changed"> 837                 clipRect[3] = clip.getLoX() + clip.getWidth();</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 838 
+ 839                 // Enable clipping:
+ 840                 rdrCtx.doClip = true;
+ 841             }
+ 842 
+ 843             // Test if at is identity:
+ 844             final AffineTransform _at = (at != null &amp;&amp; !at.isIdentity()) ? at
+ 845                                         : null;
+ 846 
+ 847             final NormMode norm = (normalize) ? NormMode.ON_WITH_AA : NormMode.OFF;
+ 848 
+ 849             if (bs == null) {
+ 850                 // fill shape:
+ 851                 final PathIterator pi = norm.getNormalizingPathIterator(rdrCtx,
+ 852                                                  s.getPathIterator(_at));
+ 853 
+ 854                 // note: Winding rule may be EvenOdd ONLY for fill operations !
+ 855                 r = rdrCtx.renderer.init(clip.getLoX(), clip.getLoY(),
+ 856                                          clip.getWidth(), clip.getHeight(),
+ 857                                          pi.getWindingRule());
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.BasicStroke;
+  29 import java.awt.Shape;
+  30 import java.awt.geom.AffineTransform;
+  31 import java.awt.geom.Path2D;
+  32 import java.awt.geom.PathIterator;
+  33 import java.security.AccessController;
+<span class="new">  34 import java.util.Arrays;</span>
+  35 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  36 import sun.awt.geom.PathConsumer2D;
+  37 import sun.java2d.ReentrantContextProvider;
+  38 import sun.java2d.ReentrantContextProviderCLQ;
+  39 import sun.java2d.ReentrantContextProviderTL;
+  40 import sun.java2d.pipe.AATileGenerator;
+  41 import sun.java2d.pipe.Region;
+  42 import sun.java2d.pipe.RenderingEngine;
+  43 import sun.security.action.GetPropertyAction;
+  44 
+  45 /**
+  46  * Marlin RendererEngine implementation (derived from Pisces)
+  47  */
+  48 public final class MarlinRenderingEngine extends RenderingEngine
+  49                                          implements MarlinConst
+  50 {
+  51     // slightly slower ~2% if enabled stroker clipping (lines) but skipping cap / join handling is few percents faster in specific cases
+  52     static final boolean DISABLE_2ND_STROKER_CLIPPING = true;
+  53 
+  54     static final boolean DO_TRACE_PATH = false;
+
+</pre><hr></hr><pre>
+ 317                   float dashphase,
+ 318                   PathConsumer2D pc2d)
+ 319     {
+ 320         // We use strokerat so that in Stroker and Dasher we can work only
+ 321         // with the pre-transformation coordinates. This will repeat a lot of
+ 322         // computations done in the path iterator, but the alternative is to
+ 323         // work with transformed paths and compute untransformed coordinates
+ 324         // as needed. This would be faster but I do not think the complexity
+ 325         // of working with both untransformed and transformed coordinates in
+ 326         // the same code is worth it.
+ 327         // However, if a path's width is constant after a transformation,
+ 328         // we can skip all this untransforming.
+ 329 
+ 330         // As pathTo() will check transformed coordinates for invalid values
+ 331         // (NaN / Infinity) to ignore such points, it is necessary to apply the
+ 332         // transformation before the path processing.
+ 333         AffineTransform strokerat = null;
+ 334 
+ 335         int dashLen = -1;
+ 336         boolean recycleDashes = false;
+
+ 337 
+ 338         if (at != null &amp;&amp; !at.isIdentity()) {
+ 339             final double a = at.getScaleX();
+ 340             final double b = at.getShearX();
+ 341             final double c = at.getShearY();
+ 342             final double d = at.getScaleY();
+ 343             final double det = a * d - c * b;
+ 344 
+ 345             if (Math.abs(det) &lt;= (2.0f * Float.MIN_VALUE)) {
+ 346                 // this rendering engine takes one dimensional curves and turns
+ 347                 // them into 2D shapes by giving them width.
+ 348                 // However, if everything is to be passed through a singular
+ 349                 // transformation, these 2D shapes will be squashed down to 1D
+ 350                 // again so, nothing can be drawn.
+ 351 
+ 352                 // Every path needs an initial moveTo and a pathDone. If these
+ 353                 // are not there this causes a SIGSEGV in libawt.so (at the time
+ 354                 // of writing of this comment (September 16, 2010)). Actually,
+ 355                 // I am not sure if the moveTo is necessary to avoid the SIGSEGV
+ 356                 // but the pathDone is definitely needed.
+ 357                 pc2d.moveTo(0.0f, 0.0f);
+ 358                 pc2d.pathDone();
+ 359                 return;
+ 360             }
+ 361 
+ 362             // If the transform is a constant multiple of an orthogonal transformation
+ 363             // then every length is just multiplied by a constant, so we just
+ 364             // need to transform input paths to stroker and tell stroker
+ 365             // the scaled width. This condition is satisfied if
+ 366             // a*b == -c*d &amp;&amp; a*a+c*c == b*b+d*d. In the actual check below, we
+ 367             // leave a bit of room for error.
+ 368             if (nearZero(a*b + c*d) &amp;&amp; nearZero(a*a + c*c - (b*b + d*d))) {
+<span class="changed"> 369                 final float scale = (float) Math.sqrt(a*a + c*c);</span>
+ 370 
+ 371                 if (dashes != null) {
+ 372                     recycleDashes = true;
+ 373                     dashLen = dashes.length;
+ 374                     dashes = rdrCtx.dasher.copyDashArray(dashes);
+ 375                     for (int i = 0; i &lt; dashLen; i++) {
+ 376                         dashes[i] *= scale;
+ 377                     }
+ 378                     dashphase *= scale;
+ 379                 }
+ 380                 width *= scale;
+ 381 
+ 382                 // by now strokerat == null. Input paths to
+ 383                 // stroker (and maybe dasher) will have the full transform at
+ 384                 // applied to them and nothing will happen to the output paths.
+ 385             } else {
+ 386                 strokerat = at;
+ 387 
+ 388                 // by now strokerat == at. Input paths to
+ 389                 // stroker (and maybe dasher) will have the full transform at
+
+</pre><hr></hr><pre>
+ 404             at = null;
+ 405         }
+ 406 
+ 407         final TransformingPathConsumer2D transformerPC2D = rdrCtx.transformerPC2D;
+ 408 
+ 409         if (DO_TRACE_PATH) {
+ 410             // trace Stroker:
+ 411             pc2d = transformerPC2D.traceStroker(pc2d);
+ 412         }
+ 413 
+ 414         if (USE_SIMPLIFIER) {
+ 415             // Use simplifier after stroker before Renderer
+ 416             // to remove collinear segments (notably due to cap square)
+ 417             pc2d = rdrCtx.simplifier.init(pc2d);
+ 418         }
+ 419 
+ 420         // deltaTransformConsumer may adjust the clip rectangle:
+ 421         pc2d = transformerPC2D.deltaTransformConsumer(pc2d, strokerat);
+ 422 
+ 423         // stroker will adjust the clip rectangle (width / miter limit):
+<span class="changed"> 424         pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit,</span>
+ 425                 (dashes == null));
+ 426 
+ 427         // Curve Monotizer:
+ 428         rdrCtx.monotonizer.init(width);
+ 429 
+ 430         if (dashes != null) {
+ 431             if (!recycleDashes) {
+ 432                 dashLen = dashes.length;
+ 433             }
+ 434             if (DO_TRACE_PATH) {
+ 435                 pc2d = transformerPC2D.traceDasher(pc2d);
+ 436             }
+ 437             pc2d = rdrCtx.dasher.init(pc2d, dashes, dashLen, dashphase,
+ 438                                       recycleDashes);
+ 439 
+ 440             if (DISABLE_2ND_STROKER_CLIPPING) {
+ 441                 // disable stoker clipping
+ 442                 rdrCtx.stroker.disableClipping();
+ 443             }
+ 444 
+
+</pre><hr></hr><pre>
+ 814      * @since 1.7
+ 815      */
+ 816     @Override
+ 817     public AATileGenerator getAATileGenerator(Shape s,
+ 818                                               AffineTransform at,
+ 819                                               Region clip,
+ 820                                               BasicStroke bs,
+ 821                                               boolean thin,
+ 822                                               boolean normalize,
+ 823                                               int[] bbox)
+ 824     {
+ 825         MarlinTileGenerator ptg = null;
+ 826         Renderer r = null;
+ 827 
+ 828         final RendererContext rdrCtx = getRendererContext();
+ 829         try {
+ 830             if (DO_CLIP || (DO_CLIP_RUNTIME_ENABLE &amp;&amp; MarlinProperties.isDoClipAtRuntime())) {
+ 831                 // Define the initial clip bounds:
+ 832                 final float[] clipRect = rdrCtx.clipRect;
+ 833 
+<span class="changed"> 834                 // Adjust the clipping rectangle with the renderer offsets</span>
+<span class="changed"> 835                 final float rdrOffX = Renderer.RDR_OFFSET_X;</span>
+<span class="changed"> 836                 final float rdrOffY = Renderer.RDR_OFFSET_Y;</span>
+<span class="changed"> 837 </span>
+<span class="changed"> 838                 // add a small rounding error:</span>
+<span class="changed"> 839                 final float margin = 1e-3f;</span>
+<span class="changed"> 840 </span>
+<span class="changed"> 841                 clipRect[0] = clip.getLoY()</span>
+<span class="changed"> 842                                 - margin + rdrOffY;</span>
+<span class="changed"> 843                 clipRect[1] = clip.getLoY() + clip.getHeight()</span>
+<span class="changed"> 844                                 + margin + rdrOffY;</span>
+<span class="changed"> 845                 clipRect[2] = clip.getLoX()</span>
+<span class="changed"> 846                                 - margin + rdrOffX;</span>
+<span class="changed"> 847                 clipRect[3] = clip.getLoX() + clip.getWidth()</span>
+<span class="changed"> 848                                 + margin + rdrOffX;</span>
+<span class="changed"> 849 </span>
+<span class="changed"> 850                 if (MarlinConst.DO_LOG_CLIP) {</span>
+<span class="changed"> 851                     MarlinUtils.logInfo("clipRect (clip): "</span>
+<span class="changed"> 852                                         + Arrays.toString(rdrCtx.clipRect));</span>
+<span class="changed"> 853                 }</span>
+ 854 
+ 855                 // Enable clipping:
+ 856                 rdrCtx.doClip = true;
+ 857             }
+ 858 
+ 859             // Test if at is identity:
+ 860             final AffineTransform _at = (at != null &amp;&amp; !at.isIdentity()) ? at
+ 861                                         : null;
+ 862 
+ 863             final NormMode norm = (normalize) ? NormMode.ON_WITH_AA : NormMode.OFF;
+ 864 
+ 865             if (bs == null) {
+ 866                 // fill shape:
+ 867                 final PathIterator pi = norm.getNormalizingPathIterator(rdrCtx,
+ 868                                                  s.getPathIterator(_at));
+ 869 
+ 870                 // note: Winding rule may be EvenOdd ONLY for fill operations !
+ 871                 r = rdrCtx.renderer.init(clip.getLoX(), clip.getLoY(),
+ 872                                          clip.getWidth(), clip.getHeight(),
+ 873                                          pi.getWindingRule());
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinConst.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

@@ -1,0 +1,1547 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DDasher.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/DHelpers.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+<span class="removed">  28 import static java.lang.Math.PI;</span>
+  29 import java.util.Arrays;
+  30 import sun.java2d.marlin.stats.Histogram;
+  31 import sun.java2d.marlin.stats.StatLong;
+  32 
+  33 final class DHelpers implements MarlinConst {
+  34 
+  35     private DHelpers() {
+  36         throw new Error("This is a non instantiable class");
+  37     }
+  38 
+  39     static boolean within(final double x, final double y, final double err) {
+  40         final double d = y - x;
+  41         return (d &lt;= err &amp;&amp; d &gt;= -err);
+  42     }
+  43 
+<span class="changed">  44     static int quadraticRoots(final double a, final double b,</span>
+<span class="changed">  45                               final double c, double[] zeroes, final int off)</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+  46     {
+  47         int ret = off;
+<span class="removed">  48         double t;</span>
+  49         if (a != 0.0d) {
+<span class="changed">  50             final double dis = b*b - 4*a*c;</span>
+  51             if (dis &gt; 0.0d) {
+  52                 final double sqrtDis = Math.sqrt(dis);
+  53                 // depending on the sign of b we use a slightly different
+  54                 // algorithm than the traditional one to find one of the roots
+  55                 // so we can avoid adding numbers of different signs (which
+  56                 // might result in loss of precision).
+  57                 if (b &gt;= 0.0d) {
+  58                     zeroes[ret++] = (2.0d * c) / (-b - sqrtDis);
+  59                     zeroes[ret++] = (-b - sqrtDis) / (2.0d * a);
+  60                 } else {
+  61                     zeroes[ret++] = (-b + sqrtDis) / (2.0d * a);
+  62                     zeroes[ret++] = (2.0d * c) / (-b + sqrtDis);
+  63                 }
+  64             } else if (dis == 0.0d) {
+<span class="changed">  65                 t = (-b) / (2.0d * a);</span>
+<span class="changed">  66                 zeroes[ret++] = t;</span>
+<span class="changed">  67             }</span>
+<span class="changed">  68         } else {</span>
+<span class="changed">  69             if (b != 0.0d) {</span>
+<span class="changed">  70                 t = (-c) / b;</span>
+<span class="changed">  71                 zeroes[ret++] = t;</span>
+  72             }
+
+
+  73         }
+  74         return ret - off;
+  75     }
+  76 
+  77     // find the roots of g(t) = d*t^3 + a*t^2 + b*t + c in [A,B)
+<span class="changed">  78     static int cubicRootsInAB(double d, double a, double b, double c,</span>
+<span class="changed">  79                               double[] pts, final int off,</span>
+  80                               final double A, final double B)
+  81     {
+  82         if (d == 0.0d) {
+<span class="changed">  83             int num = quadraticRoots(a, b, c, pts, off);</span>
+  84             return filterOutNotInAB(pts, off, num, A, B) - off;
+  85         }
+  86         // From Graphics Gems:
+<span class="changed">  87         // http://tog.acm.org/resources/GraphicsGems/gems/Roots3And4.c</span>
+  88         // (also from awt.geom.CubicCurve2D. But here we don't need as
+  89         // much accuracy and we don't want to create arrays so we use
+  90         // our own customized version).
+  91 
+  92         // normal form: x^3 + ax^2 + bx + c = 0
+
+
+
+
+  93         a /= d;
+  94         b /= d;
+  95         c /= d;
+  96 
+  97         //  substitute x = y - A/3 to eliminate quadratic term:
+  98         //     x^3 +Px + Q = 0
+  99         //
+ 100         // Since we actually need P/3 and Q/2 for all of the
+ 101         // calculations that follow, we will calculate
+ 102         // p = P/3
+ 103         // q = Q/2
+ 104         // instead and use those values for simplicity of the code.
+<span class="changed"> 105         double sq_A = a * a;</span>
+<span class="changed"> 106         double p = (1.0d/3.0d) * ((-1.0d/3.0d) * sq_A + b);</span>
+<span class="changed"> 107         double q = (1.0d/2.0d) * ((2.0d/27.0d) * a * sq_A - (1.0d/3.0d) * a * b + c);</span>
+
+ 108 
+ 109         // use Cardano's formula
+ 110 
+<span class="changed"> 111         double cb_p = p * p * p;</span>
+<span class="changed"> 112         double D = q * q + cb_p;</span>
+ 113 
+ 114         int num;
+ 115         if (D &lt; 0.0d) {
+ 116             // see: http://en.wikipedia.org/wiki/Cubic_function#Trigonometric_.28and_hyperbolic.29_method
+<span class="changed"> 117             final double phi = (1.0d/3.0d) * Math.acos(-q / Math.sqrt(-cb_p));</span>
+ 118             final double t = 2.0d * Math.sqrt(-p);
+ 119 
+<span class="changed"> 120             pts[ off+0 ] = ( t * Math.cos(phi));</span>
+<span class="changed"> 121             pts[ off+1 ] = (-t * Math.cos(phi + (PI / 3.0d)));</span>
+<span class="changed"> 122             pts[ off+2 ] = (-t * Math.cos(phi - (PI / 3.0d)));</span>
+ 123             num = 3;
+ 124         } else {
+ 125             final double sqrt_D = Math.sqrt(D);
+ 126             final double u =   Math.cbrt(sqrt_D - q);
+ 127             final double v = - Math.cbrt(sqrt_D + q);
+ 128 
+<span class="changed"> 129             pts[ off ] = (u + v);</span>
+ 130             num = 1;
+ 131 
+ 132             if (within(D, 0.0d, 1e-8d)) {
+<span class="changed"> 133                 pts[off+1] = -(pts[off] / 2.0d);</span>
+ 134                 num = 2;
+ 135             }
+ 136         }
+ 137 
+<span class="removed"> 138         final double sub = (1.0d/3.0d) * a;</span>
+<span class="removed"> 139 </span>
+<span class="removed"> 140         for (int i = 0; i &lt; num; ++i) {</span>
+<span class="removed"> 141             pts[ off+i ] -= sub;</span>
+<span class="removed"> 142         }</span>
+<span class="removed"> 143 </span>
+ 144         return filterOutNotInAB(pts, off, num, A, B) - off;
+ 145     }
+ 146 
+<span class="removed"> 147     static double evalCubic(final double a, final double b,</span>
+<span class="removed"> 148                            final double c, final double d,</span>
+<span class="removed"> 149                            final double t)</span>
+<span class="removed"> 150     {</span>
+<span class="removed"> 151         return t * (t * (t * a + b) + c) + d;</span>
+<span class="removed"> 152     }</span>
+<span class="removed"> 153 </span>
+<span class="removed"> 154     static double evalQuad(final double a, final double b,</span>
+<span class="removed"> 155                           final double c, final double t)</span>
+<span class="removed"> 156     {</span>
+<span class="removed"> 157         return t * (t * a + b) + c;</span>
+<span class="removed"> 158     }</span>
+<span class="removed"> 159 </span>
+ 160     // returns the index 1 past the last valid element remaining after filtering
+<span class="changed"> 161     static int filterOutNotInAB(double[] nums, final int off, final int len,</span>
+ 162                                 final double a, final double b)
+ 163     {
+ 164         int ret = off;
+ 165         for (int i = off, end = off + len; i &lt; end; i++) {
+ 166             if (nums[i] &gt;= a &amp;&amp; nums[i] &lt; b) {
+ 167                 nums[ret++] = nums[i];
+ 168             }
+ 169         }
+ 170         return ret;
+ 171     }
+ 172 
+<span class="changed"> 173     static double linelen(double x1, double y1, double x2, double y2) {</span>
+<span class="changed"> 174         final double dx = x2 - x1;</span>
+<span class="changed"> 175         final double dy = y2 - y1;</span>
+<span class="changed"> 176         return Math.sqrt(dx*dx + dy*dy);</span>
+
+
+
+
+ 177     }
+ 178 
+<span class="changed"> 179     static void subdivide(double[] src, int srcoff, double[] left, int leftoff,</span>
+<span class="changed"> 180                           double[] right, int rightoff, int type)</span>
+<span class="changed"> 181     {</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 182         switch(type) {
+
+
+
+
+
+ 183         case 6:
+<span class="changed"> 184             DHelpers.subdivideQuad(src, srcoff, left, leftoff, right, rightoff);</span>
+<span class="changed"> 185             return;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 186         case 8:
+<span class="changed"> 187             DHelpers.subdivideCubic(src, srcoff, left, leftoff, right, rightoff);</span>
+
+
+
+ 188             return;
+ 189         default:
+ 190             throw new InternalError("Unsupported curve type");
+ 191         }
+ 192     }
+ 193 
+<span class="changed"> 194     static void isort(double[] a, int off, int len) {</span>
+<span class="changed"> 195         for (int i = off + 1, end = off + len; i &lt; end; i++) {</span>
+<span class="changed"> 196             double ai = a[i];</span>
+<span class="changed"> 197             int j = i - 1;</span>
+<span class="changed"> 198             for (; j &gt;= off &amp;&amp; a[j] &gt; ai; j--) {</span>
+<span class="changed"> 199                 a[j+1] = a[j];</span>
+ 200             }
+<span class="changed"> 201             a[j+1] = ai;</span>
+ 202         }
+ 203     }
+ 204 
+ 205     // Most of these are copied from classes in java.awt.geom because we need
+ 206     // both single and double precision variants of these functions, and Line2D,
+ 207     // CubicCurve2D, QuadCurve2D don't provide them.
+ 208     /**
+ 209      * Subdivides the cubic curve specified by the coordinates
+ 210      * stored in the &lt;code&gt;src&lt;/code&gt; array at indices &lt;code&gt;srcoff&lt;/code&gt;
+ 211      * through (&lt;code&gt;srcoff&lt;/code&gt;&amp;nbsp;+&amp;nbsp;7) and stores the
+ 212      * resulting two subdivided curves into the two result arrays at the
+ 213      * corresponding indices.
+ 214      * Either or both of the &lt;code&gt;left&lt;/code&gt; and &lt;code&gt;right&lt;/code&gt;
+ 215      * arrays may be &lt;code&gt;null&lt;/code&gt; or a reference to the same array
+ 216      * as the &lt;code&gt;src&lt;/code&gt; array.
+ 217      * Note that the last point in the first subdivided curve is the
+ 218      * same as the first point in the second subdivided curve. Thus,
+ 219      * it is possible to pass the same array for &lt;code&gt;left&lt;/code&gt;
+ 220      * and &lt;code&gt;right&lt;/code&gt; and to use offsets, such as &lt;code&gt;rightoff&lt;/code&gt;
+ 221      * equals (&lt;code&gt;leftoff&lt;/code&gt; + 6), in order
+ 222      * to avoid allocating extra storage for this common point.
+ 223      * @param src the array holding the coordinates for the source curve
+<span class="removed"> 224      * @param srcoff the offset into the array of the beginning of the</span>
+<span class="removed"> 225      * the 6 source coordinates</span>
+ 226      * @param left the array for storing the coordinates for the first
+ 227      * half of the subdivided curve
+<span class="removed"> 228      * @param leftoff the offset into the array of the beginning of the</span>
+<span class="removed"> 229      * the 6 left coordinates</span>
+ 230      * @param right the array for storing the coordinates for the second
+ 231      * half of the subdivided curve
+<span class="removed"> 232      * @param rightoff the offset into the array of the beginning of the</span>
+<span class="removed"> 233      * the 6 right coordinates</span>
+ 234      * @since 1.7
+ 235      */
+<span class="changed"> 236     static void subdivideCubic(double[] src, int srcoff,</span>
+<span class="changed"> 237                                double[] left, int leftoff,</span>
+<span class="changed"> 238                                double[] right, int rightoff)</span>
+<span class="changed"> 239     {</span>
+<span class="changed"> 240         double x1 = src[srcoff + 0];</span>
+<span class="changed"> 241         double y1 = src[srcoff + 1];</span>
+<span class="changed"> 242         double ctrlx1 = src[srcoff + 2];</span>
+<span class="changed"> 243         double ctrly1 = src[srcoff + 3];</span>
+<span class="changed"> 244         double ctrlx2 = src[srcoff + 4];</span>
+<span class="changed"> 245         double ctrly2 = src[srcoff + 5];</span>
+<span class="changed"> 246         double x2 = src[srcoff + 6];</span>
+<span class="changed"> 247         double y2 = src[srcoff + 7];</span>
+<span class="changed"> 248         if (left != null) {</span>
+<span class="changed"> 249             left[leftoff + 0] = x1;</span>
+<span class="changed"> 250             left[leftoff + 1] = y1;</span>
+<span class="changed"> 251         }</span>
+<span class="changed"> 252         if (right != null) {</span>
+<span class="changed"> 253             right[rightoff + 6] = x2;</span>
+<span class="changed"> 254             right[rightoff + 7] = y2;</span>
+<span class="changed"> 255         }</span>
+<span class="changed"> 256         x1 = (x1 + ctrlx1) / 2.0d;</span>
+<span class="changed"> 257         y1 = (y1 + ctrly1) / 2.0d;</span>
+<span class="changed"> 258         x2 = (x2 + ctrlx2) / 2.0d;</span>
+<span class="changed"> 259         y2 = (y2 + ctrly2) / 2.0d;</span>
+<span class="changed"> 260         double centerx = (ctrlx1 + ctrlx2) / 2.0d;</span>
+<span class="changed"> 261         double centery = (ctrly1 + ctrly2) / 2.0d;</span>
+<span class="changed"> 262         ctrlx1 = (x1 + centerx) / 2.0d;</span>
+<span class="changed"> 263         ctrly1 = (y1 + centery) / 2.0d;</span>
+<span class="changed"> 264         ctrlx2 = (x2 + centerx) / 2.0d;</span>
+<span class="changed"> 265         ctrly2 = (y2 + centery) / 2.0d;</span>
+<span class="changed"> 266         centerx = (ctrlx1 + ctrlx2) / 2.0d;</span>
+<span class="changed"> 267         centery = (ctrly1 + ctrly2) / 2.0d;</span>
+<span class="changed"> 268         if (left != null) {</span>
+<span class="changed"> 269             left[leftoff + 2] = x1;</span>
+<span class="changed"> 270             left[leftoff + 3] = y1;</span>
+<span class="changed"> 271             left[leftoff + 4] = ctrlx1;</span>
+<span class="changed"> 272             left[leftoff + 5] = ctrly1;</span>
+<span class="changed"> 273             left[leftoff + 6] = centerx;</span>
+<span class="changed"> 274             left[leftoff + 7] = centery;</span>
+<span class="changed"> 275         }</span>
+<span class="changed"> 276         if (right != null) {</span>
+<span class="changed"> 277             right[rightoff + 0] = centerx;</span>
+<span class="changed"> 278             right[rightoff + 1] = centery;</span>
+<span class="changed"> 279             right[rightoff + 2] = ctrlx2;</span>
+<span class="changed"> 280             right[rightoff + 3] = ctrly2;</span>
+<span class="changed"> 281             right[rightoff + 4] = x2;</span>
+<span class="changed"> 282             right[rightoff + 5] = y2;</span>
+<span class="changed"> 283         }</span>
+<span class="changed"> 284     }</span>
+<span class="changed"> 285 </span>
+<span class="changed"> 286 </span>
+<span class="changed"> 287     static void subdivideCubicAt(double t, double[] src, int srcoff,</span>
+<span class="changed"> 288                                  double[] left, int leftoff,</span>
+<span class="changed"> 289                                  double[] right, int rightoff)</span>
+<span class="changed"> 290     {</span>
+<span class="changed"> 291         double x1 = src[srcoff + 0];</span>
+<span class="changed"> 292         double y1 = src[srcoff + 1];</span>
+<span class="changed"> 293         double ctrlx1 = src[srcoff + 2];</span>
+<span class="changed"> 294         double ctrly1 = src[srcoff + 3];</span>
+<span class="changed"> 295         double ctrlx2 = src[srcoff + 4];</span>
+<span class="changed"> 296         double ctrly2 = src[srcoff + 5];</span>
+<span class="changed"> 297         double x2 = src[srcoff + 6];</span>
+<span class="changed"> 298         double y2 = src[srcoff + 7];</span>
+<span class="changed"> 299         if (left != null) {</span>
+<span class="changed"> 300             left[leftoff + 0] = x1;</span>
+<span class="changed"> 301             left[leftoff + 1] = y1;</span>
+<span class="changed"> 302         }</span>
+<span class="changed"> 303         if (right != null) {</span>
+<span class="changed"> 304             right[rightoff + 6] = x2;</span>
+<span class="changed"> 305             right[rightoff + 7] = y2;</span>
+<span class="changed"> 306         }</span>
+<span class="changed"> 307         x1 = x1 + t * (ctrlx1 - x1);</span>
+<span class="changed"> 308         y1 = y1 + t * (ctrly1 - y1);</span>
+<span class="changed"> 309         x2 = ctrlx2 + t * (x2 - ctrlx2);</span>
+<span class="changed"> 310         y2 = ctrly2 + t * (y2 - ctrly2);</span>
+<span class="changed"> 311         double centerx = ctrlx1 + t * (ctrlx2 - ctrlx1);</span>
+<span class="changed"> 312         double centery = ctrly1 + t * (ctrly2 - ctrly1);</span>
+<span class="changed"> 313         ctrlx1 = x1 + t * (centerx - x1);</span>
+<span class="changed"> 314         ctrly1 = y1 + t * (centery - y1);</span>
+<span class="changed"> 315         ctrlx2 = centerx + t * (x2 - centerx);</span>
+<span class="changed"> 316         ctrly2 = centery + t * (y2 - centery);</span>
+<span class="changed"> 317         centerx = ctrlx1 + t * (ctrlx2 - ctrlx1);</span>
+<span class="changed"> 318         centery = ctrly1 + t * (ctrly2 - ctrly1);</span>
+<span class="changed"> 319         if (left != null) {</span>
+<span class="changed"> 320             left[leftoff + 2] = x1;</span>
+<span class="changed"> 321             left[leftoff + 3] = y1;</span>
+<span class="changed"> 322             left[leftoff + 4] = ctrlx1;</span>
+<span class="changed"> 323             left[leftoff + 5] = ctrly1;</span>
+<span class="changed"> 324             left[leftoff + 6] = centerx;</span>
+<span class="changed"> 325             left[leftoff + 7] = centery;</span>
+<span class="changed"> 326         }</span>
+<span class="changed"> 327         if (right != null) {</span>
+<span class="changed"> 328             right[rightoff + 0] = centerx;</span>
+<span class="changed"> 329             right[rightoff + 1] = centery;</span>
+<span class="changed"> 330             right[rightoff + 2] = ctrlx2;</span>
+<span class="changed"> 331             right[rightoff + 3] = ctrly2;</span>
+<span class="changed"> 332             right[rightoff + 4] = x2;</span>
+<span class="changed"> 333             right[rightoff + 5] = y2;</span>
+<span class="changed"> 334         }</span>
+<span class="changed"> 335     }</span>
+<span class="changed"> 336 </span>
+<span class="changed"> 337     static void subdivideQuad(double[] src, int srcoff,</span>
+<span class="changed"> 338                               double[] left, int leftoff,</span>
+<span class="changed"> 339                               double[] right, int rightoff)</span>
+<span class="changed"> 340     {</span>
+<span class="changed"> 341         double x1 = src[srcoff + 0];</span>
+<span class="changed"> 342         double y1 = src[srcoff + 1];</span>
+<span class="changed"> 343         double ctrlx = src[srcoff + 2];</span>
+<span class="changed"> 344         double ctrly = src[srcoff + 3];</span>
+<span class="changed"> 345         double x2 = src[srcoff + 4];</span>
+<span class="changed"> 346         double y2 = src[srcoff + 5];</span>
+<span class="changed"> 347         if (left != null) {</span>
+<span class="changed"> 348             left[leftoff + 0] = x1;</span>
+<span class="changed"> 349             left[leftoff + 1] = y1;</span>
+<span class="changed"> 350         }</span>
+<span class="changed"> 351         if (right != null) {</span>
+<span class="changed"> 352             right[rightoff + 4] = x2;</span>
+<span class="changed"> 353             right[rightoff + 5] = y2;</span>
+<span class="changed"> 354         }</span>
+<span class="changed"> 355         x1 = (x1 + ctrlx) / 2.0d;</span>
+<span class="changed"> 356         y1 = (y1 + ctrly) / 2.0d;</span>
+<span class="changed"> 357         x2 = (x2 + ctrlx) / 2.0d;</span>
+<span class="changed"> 358         y2 = (y2 + ctrly) / 2.0d;</span>
+<span class="changed"> 359         ctrlx = (x1 + x2) / 2.0d;</span>
+<span class="changed"> 360         ctrly = (y1 + y2) / 2.0d;</span>
+<span class="changed"> 361         if (left != null) {</span>
+<span class="changed"> 362             left[leftoff + 2] = x1;</span>
+<span class="changed"> 363             left[leftoff + 3] = y1;</span>
+<span class="changed"> 364             left[leftoff + 4] = ctrlx;</span>
+<span class="changed"> 365             left[leftoff + 5] = ctrly;</span>
+<span class="changed"> 366         }</span>
+<span class="changed"> 367         if (right != null) {</span>
+<span class="changed"> 368             right[rightoff + 0] = ctrlx;</span>
+<span class="changed"> 369             right[rightoff + 1] = ctrly;</span>
+<span class="changed"> 370             right[rightoff + 2] = x2;</span>
+<span class="changed"> 371             right[rightoff + 3] = y2;</span>
+<span class="changed"> 372         }</span>
+<span class="changed"> 373     }</span>
+<span class="changed"> 374 </span>
+<span class="changed"> 375     static void subdivideQuadAt(double t, double[] src, int srcoff,</span>
+<span class="changed"> 376                                 double[] left, int leftoff,</span>
+<span class="changed"> 377                                 double[] right, int rightoff)</span>
+<span class="changed"> 378     {</span>
+<span class="changed"> 379         double x1 = src[srcoff + 0];</span>
+<span class="changed"> 380         double y1 = src[srcoff + 1];</span>
+<span class="changed"> 381         double ctrlx = src[srcoff + 2];</span>
+<span class="changed"> 382         double ctrly = src[srcoff + 3];</span>
+<span class="changed"> 383         double x2 = src[srcoff + 4];</span>
+<span class="changed"> 384         double y2 = src[srcoff + 5];</span>
+<span class="changed"> 385         if (left != null) {</span>
+<span class="changed"> 386             left[leftoff + 0] = x1;</span>
+<span class="changed"> 387             left[leftoff + 1] = y1;</span>
+<span class="changed"> 388         }</span>
+<span class="changed"> 389         if (right != null) {</span>
+<span class="changed"> 390             right[rightoff + 4] = x2;</span>
+<span class="changed"> 391             right[rightoff + 5] = y2;</span>
+<span class="changed"> 392         }</span>
+<span class="changed"> 393         x1 = x1 + t * (ctrlx - x1);</span>
+<span class="changed"> 394         y1 = y1 + t * (ctrly - y1);</span>
+<span class="changed"> 395         x2 = ctrlx + t * (x2 - ctrlx);</span>
+<span class="changed"> 396         y2 = ctrly + t * (y2 - ctrly);</span>
+<span class="changed"> 397         ctrlx = x1 + t * (x2 - x1);</span>
+<span class="changed"> 398         ctrly = y1 + t * (y2 - y1);</span>
+<span class="changed"> 399         if (left != null) {</span>
+<span class="changed"> 400             left[leftoff + 2] = x1;</span>
+<span class="changed"> 401             left[leftoff + 3] = y1;</span>
+<span class="changed"> 402             left[leftoff + 4] = ctrlx;</span>
+<span class="changed"> 403             left[leftoff + 5] = ctrly;</span>
+<span class="changed"> 404         }</span>
+<span class="changed"> 405         if (right != null) {</span>
+<span class="changed"> 406             right[rightoff + 0] = ctrlx;</span>
+<span class="changed"> 407             right[rightoff + 1] = ctrly;</span>
+<span class="changed"> 408             right[rightoff + 2] = x2;</span>
+<span class="changed"> 409             right[rightoff + 3] = y2;</span>
+<span class="changed"> 410         }</span>
+<span class="changed"> 411     }</span>
+<span class="changed"> 412 </span>
+<span class="changed"> 413     static void subdivideAt(double t, double[] src, int srcoff,</span>
+<span class="changed"> 414                             double[] left, int leftoff,</span>
+<span class="changed"> 415                             double[] right, int rightoff, int size)</span>
+<span class="changed"> 416     {</span>
+<span class="changed"> 417         switch(size) {</span>
+<span class="changed"> 418         case 8:</span>
+<span class="changed"> 419             subdivideCubicAt(t, src, srcoff, left, leftoff, right, rightoff);</span>
+<span class="changed"> 420             return;</span>
+<span class="changed"> 421         case 6:</span>
+<span class="changed"> 422             subdivideQuadAt(t, src, srcoff, left, leftoff, right, rightoff);</span>
+<span class="changed"> 423             return;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 424         }
+ 425     }
+ 426 
+ 427     // From sun.java2d.loops.GeneralRenderer:
+ 428 
+ 429     static int outcode(final double x, final double y,
+ 430                        final double[] clipRect)
+ 431     {
+ 432         int code;
+ 433         if (y &lt; clipRect[0]) {
+ 434             code = OUTCODE_TOP;
+ 435         } else if (y &gt;= clipRect[1]) {
+ 436             code = OUTCODE_BOTTOM;
+ 437         } else {
+ 438             code = 0;
+ 439         }
+ 440         if (x &lt; clipRect[2]) {
+ 441             code |= OUTCODE_LEFT;
+ 442         } else if (x &gt;= clipRect[3]) {
+ 443             code |= OUTCODE_RIGHT;
+
+</pre><hr></hr><pre>
+ 591             if (DO_STATS) {
+ 592                 // update used marks:
+ 593                 if (numCurves &gt; curveTypesUseMark) {
+ 594                     curveTypesUseMark = numCurves;
+ 595                 }
+ 596                 if (end &gt; curvesUseMark) {
+ 597                     curvesUseMark = end;
+ 598                 }
+ 599             }
+ 600             final byte[]  _curveTypes = curveTypes;
+ 601             final double[] _curves = curves;
+ 602             int e = 0;
+ 603 
+ 604             for (int i = 0; i &lt; nc; i++) {
+ 605                 switch(_curveTypes[i]) {
+ 606                 case TYPE_LINETO:
+ 607                     io.lineTo(_curves[e], _curves[e+1]);
+ 608                     e += 2;
+ 609                     continue;
+ 610                 case TYPE_QUADTO:
+<span class="changed"> 611                     io.quadTo(_curves[e+0], _curves[e+1],</span>
+ 612                               _curves[e+2], _curves[e+3]);
+ 613                     e += 4;
+ 614                     continue;
+ 615                 case TYPE_CUBICTO:
+<span class="changed"> 616                     io.curveTo(_curves[e+0], _curves[e+1],</span>
+ 617                                _curves[e+2], _curves[e+3],
+ 618                                _curves[e+4], _curves[e+5]);
+ 619                     e += 6;
+ 620                     continue;
+ 621                 default:
+ 622                 }
+ 623             }
+ 624             numCurves = 0;
+ 625             end = 0;
+ 626         }
+ 627 
+ 628         void popAll(final DPathConsumer2D io) {
+ 629             int nc = numCurves;
+ 630             if (nc == 0) {
+ 631                 return;
+ 632             }
+ 633             if (DO_STATS) {
+ 634                 // update used marks:
+ 635                 if (numCurves &gt; curveTypesUseMark) {
+ 636                     curveTypesUseMark = numCurves;
+ 637                 }
+ 638                 if (end &gt; curvesUseMark) {
+ 639                     curvesUseMark = end;
+ 640                 }
+ 641             }
+ 642             final byte[]  _curveTypes = curveTypes;
+ 643             final double[] _curves = curves;
+ 644             int e  = end;
+ 645 
+ 646             while (nc != 0) {
+ 647                 switch(_curveTypes[--nc]) {
+ 648                 case TYPE_LINETO:
+ 649                     e -= 2;
+ 650                     io.lineTo(_curves[e], _curves[e+1]);
+ 651                     continue;
+ 652                 case TYPE_QUADTO:
+ 653                     e -= 4;
+<span class="changed"> 654                     io.quadTo(_curves[e+0], _curves[e+1],</span>
+ 655                               _curves[e+2], _curves[e+3]);
+ 656                     continue;
+ 657                 case TYPE_CUBICTO:
+ 658                     e -= 6;
+<span class="changed"> 659                     io.curveTo(_curves[e+0], _curves[e+1],</span>
+ 660                                _curves[e+2], _curves[e+3],
+ 661                                _curves[e+4], _curves[e+5]);
+ 662                     continue;
+ 663                 default:
+ 664                 }
+ 665             }
+ 666             numCurves = 0;
+ 667             end = 0;
+ 668         }
+ 669 
+ 670         @Override
+ 671         public String toString() {
+ 672             String ret = "";
+ 673             int nc = numCurves;
+ 674             int last = end;
+ 675             int len;
+ 676             while (nc != 0) {
+ 677                 switch(curveTypes[--nc]) {
+ 678                 case TYPE_LINETO:
+ 679                     len = 2;
+
+</pre><hr></hr>
+</pre></td><td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2018, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+
+  28 import java.util.Arrays;
+  29 import sun.java2d.marlin.stats.Histogram;
+  30 import sun.java2d.marlin.stats.StatLong;
+  31 
+  32 final class DHelpers implements MarlinConst {
+  33 
+  34     private DHelpers() {
+  35         throw new Error("This is a non instantiable class");
+  36     }
+  37 
+  38     static boolean within(final double x, final double y, final double err) {
+  39         final double d = y - x;
+  40         return (d &lt;= err &amp;&amp; d &gt;= -err);
+  41     }
+  42 
+<span class="changed">  43     static double evalCubic(final double a, final double b,</span>
+<span class="changed">  44                             final double c, final double d,</span>
+<span class="changed">  45                             final double t)</span>
+<span class="changed">  46     {</span>
+<span class="changed">  47         return t * (t * (t * a + b) + c) + d;</span>
+<span class="changed">  48     }</span>
+<span class="changed">  49 </span>
+<span class="changed">  50     static double evalQuad(final double a, final double b,</span>
+<span class="changed">  51                            final double c, final double t)</span>
+<span class="changed">  52     {</span>
+<span class="changed">  53         return t * (t * a + b) + c;</span>
+<span class="changed">  54     }</span>
+<span class="changed">  55 </span>
+<span class="changed">  56     static int quadraticRoots(final double a, final double b, final double c,</span>
+<span class="changed">  57                               final double[] zeroes, final int off)</span>
+  58     {
+  59         int ret = off;
+
+  60         if (a != 0.0d) {
+<span class="changed">  61             final double dis = b*b - 4.0d * a * c;</span>
+  62             if (dis &gt; 0.0d) {
+  63                 final double sqrtDis = Math.sqrt(dis);
+  64                 // depending on the sign of b we use a slightly different
+  65                 // algorithm than the traditional one to find one of the roots
+  66                 // so we can avoid adding numbers of different signs (which
+  67                 // might result in loss of precision).
+  68                 if (b &gt;= 0.0d) {
+  69                     zeroes[ret++] = (2.0d * c) / (-b - sqrtDis);
+  70                     zeroes[ret++] = (-b - sqrtDis) / (2.0d * a);
+  71                 } else {
+  72                     zeroes[ret++] = (-b + sqrtDis) / (2.0d * a);
+  73                     zeroes[ret++] = (2.0d * c) / (-b + sqrtDis);
+  74                 }
+  75             } else if (dis == 0.0d) {
+<span class="changed">  76                 zeroes[ret++] = -b / (2.0d * a);</span>
+
+
+
+
+
+
+  77             }
+<span class="new">  78         } else if (b != 0.0d) {</span>
+<span class="new">  79             zeroes[ret++] = -c / b;</span>
+  80         }
+  81         return ret - off;
+  82     }
+  83 
+  84     // find the roots of g(t) = d*t^3 + a*t^2 + b*t + c in [A,B)
+<span class="changed">  85     static int cubicRootsInAB(final double d, double a, double b, double c,</span>
+<span class="changed">  86                               final double[] pts, final int off,</span>
+  87                               final double A, final double B)
+  88     {
+  89         if (d == 0.0d) {
+<span class="changed">  90             final int num = quadraticRoots(a, b, c, pts, off);</span>
+  91             return filterOutNotInAB(pts, off, num, A, B) - off;
+  92         }
+  93         // From Graphics Gems:
+<span class="changed">  94         // https://github.com/erich666/GraphicsGems/blob/master/gems/Roots3And4.c</span>
+  95         // (also from awt.geom.CubicCurve2D. But here we don't need as
+  96         // much accuracy and we don't want to create arrays so we use
+  97         // our own customized version).
+  98 
+  99         // normal form: x^3 + ax^2 + bx + c = 0
+<span class="new"> 100 </span>
+<span class="new"> 101         /*</span>
+<span class="new"> 102          * TODO: cleanup all that code after reading Roots3And4.c</span>
+<span class="new"> 103          */</span>
+ 104         a /= d;
+ 105         b /= d;
+ 106         c /= d;
+ 107 
+ 108         //  substitute x = y - A/3 to eliminate quadratic term:
+ 109         //     x^3 +Px + Q = 0
+ 110         //
+ 111         // Since we actually need P/3 and Q/2 for all of the
+ 112         // calculations that follow, we will calculate
+ 113         // p = P/3
+ 114         // q = Q/2
+ 115         // instead and use those values for simplicity of the code.
+<span class="changed"> 116         final double sub = (1.0d / 3.0d) * a;</span>
+<span class="changed"> 117         final double sq_A = a * a;</span>
+<span class="changed"> 118         final double p = (1.0d / 3.0d) * ((-1.0d / 3.0d) * sq_A + b);</span>
+<span class="changed"> 119         final double q = (1.0d / 2.0d) * ((2.0d / 27.0d) * a * sq_A - sub * b + c);</span>
+ 120 
+ 121         // use Cardano's formula
+ 122 
+<span class="changed"> 123         final double cb_p = p * p * p;</span>
+<span class="changed"> 124         final double D = q * q + cb_p;</span>
+ 125 
+ 126         int num;
+ 127         if (D &lt; 0.0d) {
+ 128             // see: http://en.wikipedia.org/wiki/Cubic_function#Trigonometric_.28and_hyperbolic.29_method
+<span class="changed"> 129             final double phi = (1.0d / 3.0d) * Math.acos(-q / Math.sqrt(-cb_p));</span>
+ 130             final double t = 2.0d * Math.sqrt(-p);
+ 131 
+<span class="changed"> 132             pts[off    ] = ( t * Math.cos(phi) - sub);</span>
+<span class="changed"> 133             pts[off + 1] = (-t * Math.cos(phi + (Math.PI / 3.0d)) - sub);</span>
+<span class="changed"> 134             pts[off + 2] = (-t * Math.cos(phi - (Math.PI / 3.0d)) - sub);</span>
+ 135             num = 3;
+ 136         } else {
+ 137             final double sqrt_D = Math.sqrt(D);
+ 138             final double u =   Math.cbrt(sqrt_D - q);
+ 139             final double v = - Math.cbrt(sqrt_D + q);
+ 140 
+<span class="changed"> 141             pts[off    ] = (u + v - sub);</span>
+ 142             num = 1;
+ 143 
+ 144             if (within(D, 0.0d, 1e-8d)) {
+<span class="changed"> 145                 pts[off + 1] = ((-1.0d / 2.0d) * (u + v) - sub);</span>
+ 146                 num = 2;
+ 147             }
+ 148         }
+ 149 
+
+
+
+
+
+
+ 150         return filterOutNotInAB(pts, off, num, A, B) - off;
+ 151     }
+ 152 
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 153     // returns the index 1 past the last valid element remaining after filtering
+<span class="changed"> 154     static int filterOutNotInAB(final double[] nums, final int off, final int len,</span>
+ 155                                 final double a, final double b)
+ 156     {
+ 157         int ret = off;
+ 158         for (int i = off, end = off + len; i &lt; end; i++) {
+ 159             if (nums[i] &gt;= a &amp;&amp; nums[i] &lt; b) {
+ 160                 nums[ret++] = nums[i];
+ 161             }
+ 162         }
+ 163         return ret;
+ 164     }
+ 165 
+<span class="changed"> 166     static double fastLineLen(final double x0, final double y0,</span>
+<span class="changed"> 167                               final double x1, final double y1)</span>
+<span class="changed"> 168     {</span>
+<span class="changed"> 169         final double dx = x1 - x0;</span>
+<span class="changed"> 170         final double dy = y1 - y0;</span>
+<span class="changed"> 171 </span>
+<span class="changed"> 172         // use manhattan norm:</span>
+<span class="changed"> 173         return Math.abs(dx) + Math.abs(dy);</span>
+ 174     }
+ 175 
+<span class="changed"> 176     static double linelen(final double x0, final double y0,</span>
+<span class="changed"> 177                           final double x1, final double y1)</span>
+<span class="changed"> 178     {</span>
+<span class="changed"> 179         final double dx = x1 - x0;</span>
+<span class="changed"> 180         final double dy = y1 - y0;</span>
+<span class="changed"> 181         return Math.sqrt(dx * dx + dy * dy);</span>
+<span class="changed"> 182     }</span>
+<span class="changed"> 183 </span>
+<span class="changed"> 184     static double fastQuadLen(final double x0, final double y0,</span>
+<span class="changed"> 185                               final double x1, final double y1,</span>
+<span class="changed"> 186                               final double x2, final double y2)</span>
+<span class="changed"> 187     {</span>
+<span class="changed"> 188         final double dx1 = x1 - x0;</span>
+<span class="changed"> 189         final double dx2 = x2 - x1;</span>
+<span class="changed"> 190         final double dy1 = y1 - y0;</span>
+<span class="changed"> 191         final double dy2 = y2 - y1;</span>
+<span class="changed"> 192 </span>
+<span class="changed"> 193         // use manhattan norm:</span>
+<span class="changed"> 194         return Math.abs(dx1) + Math.abs(dx2)</span>
+<span class="changed"> 195              + Math.abs(dy1) + Math.abs(dy2);</span>
+<span class="changed"> 196     }</span>
+<span class="changed"> 197 </span>
+<span class="changed"> 198     static double quadlen(final double x0, final double y0,</span>
+<span class="changed"> 199                           final double x1, final double y1,</span>
+<span class="changed"> 200                           final double x2, final double y2)</span>
+<span class="changed"> 201     {</span>
+<span class="changed"> 202         return (linelen(x0, y0, x1, y1)</span>
+<span class="changed"> 203                 + linelen(x1, y1, x2, y2)</span>
+<span class="changed"> 204                 + linelen(x0, y0, x2, y2)) / 2.0d;</span>
+<span class="changed"> 205     }</span>
+<span class="changed"> 206 </span>
+<span class="changed"> 207     static double fastCurvelen(final double x0, final double y0,</span>
+<span class="changed"> 208                                final double x1, final double y1,</span>
+<span class="changed"> 209                                final double x2, final double y2,</span>
+<span class="changed"> 210                                final double x3, final double y3)</span>
+<span class="changed"> 211     {</span>
+<span class="changed"> 212         final double dx1 = x1 - x0;</span>
+<span class="changed"> 213         final double dx2 = x2 - x1;</span>
+<span class="changed"> 214         final double dx3 = x3 - x2;</span>
+<span class="changed"> 215         final double dy1 = y1 - y0;</span>
+<span class="changed"> 216         final double dy2 = y2 - y1;</span>
+<span class="changed"> 217         final double dy3 = y3 - y2;</span>
+<span class="changed"> 218 </span>
+<span class="changed"> 219         // use manhattan norm:</span>
+<span class="changed"> 220         return Math.abs(dx1) + Math.abs(dx2) + Math.abs(dx3)</span>
+<span class="changed"> 221              + Math.abs(dy1) + Math.abs(dy2) + Math.abs(dy3);</span>
+<span class="changed"> 222     }</span>
+<span class="changed"> 223 </span>
+<span class="changed"> 224     static double curvelen(final double x0, final double y0,</span>
+<span class="changed"> 225                            final double x1, final double y1,</span>
+<span class="changed"> 226                            final double x2, final double y2,</span>
+<span class="changed"> 227                            final double x3, final double y3)</span>
+<span class="changed"> 228     {</span>
+<span class="changed"> 229         return (linelen(x0, y0, x1, y1)</span>
+<span class="changed"> 230               + linelen(x1, y1, x2, y2)</span>
+<span class="changed"> 231               + linelen(x2, y2, x3, y3)</span>
+<span class="changed"> 232               + linelen(x0, y0, x3, y3)) / 2.0d;</span>
+<span class="changed"> 233     }</span>
+<span class="changed"> 234 </span>
+<span class="changed"> 235     // finds values of t where the curve in pts should be subdivided in order</span>
+<span class="changed"> 236     // to get good offset curves a distance of w away from the middle curve.</span>
+<span class="changed"> 237     // Stores the points in ts, and returns how many of them there were.</span>
+<span class="changed"> 238     static int findSubdivPoints(final DCurve c, final double[] pts,</span>
+<span class="changed"> 239                                 final double[] ts, final int type,</span>
+<span class="changed"> 240                                 final double w2)</span>
+<span class="changed"> 241     {</span>
+<span class="changed"> 242         final double x12 = pts[2] - pts[0];</span>
+<span class="changed"> 243         final double y12 = pts[3] - pts[1];</span>
+<span class="changed"> 244         // if the curve is already parallel to either axis we gain nothing</span>
+<span class="changed"> 245         // from rotating it.</span>
+<span class="changed"> 246         if ((y12 != 0.0d &amp;&amp; x12 != 0.0d)) {</span>
+<span class="changed"> 247             // we rotate it so that the first vector in the control polygon is</span>
+<span class="changed"> 248             // parallel to the x-axis. This will ensure that rotated quarter</span>
+<span class="changed"> 249             // circles won't be subdivided.</span>
+<span class="changed"> 250             final double hypot = Math.sqrt(x12 * x12 + y12 * y12);</span>
+<span class="changed"> 251             final double cos = x12 / hypot;</span>
+<span class="changed"> 252             final double sin = y12 / hypot;</span>
+<span class="changed"> 253             final double x1 = cos * pts[0] + sin * pts[1];</span>
+<span class="changed"> 254             final double y1 = cos * pts[1] - sin * pts[0];</span>
+<span class="changed"> 255             final double x2 = cos * pts[2] + sin * pts[3];</span>
+<span class="changed"> 256             final double y2 = cos * pts[3] - sin * pts[2];</span>
+<span class="changed"> 257             final double x3 = cos * pts[4] + sin * pts[5];</span>
+<span class="changed"> 258             final double y3 = cos * pts[5] - sin * pts[4];</span>
+<span class="changed"> 259 </span>
+ 260             switch(type) {
+<span class="new"> 261             case 8:</span>
+<span class="new"> 262                 final double x4 = cos * pts[6] + sin * pts[7];</span>
+<span class="new"> 263                 final double y4 = cos * pts[7] - sin * pts[6];</span>
+<span class="new"> 264                 c.set(x1, y1, x2, y2, x3, y3, x4, y4);</span>
+<span class="new"> 265                 break;</span>
+ 266             case 6:
+<span class="changed"> 267                 c.set(x1, y1, x2, y2, x3, y3);</span>
+<span class="changed"> 268                 break;</span>
+<span class="changed"> 269             default:</span>
+<span class="changed"> 270             }</span>
+<span class="changed"> 271         } else {</span>
+<span class="changed"> 272             c.set(pts, type);</span>
+<span class="changed"> 273         }</span>
+<span class="changed"> 274 </span>
+<span class="changed"> 275         int ret = 0;</span>
+<span class="changed"> 276         // we subdivide at values of t such that the remaining rotated</span>
+<span class="changed"> 277         // curves are monotonic in x and y.</span>
+<span class="changed"> 278         ret += c.dxRoots(ts, ret);</span>
+<span class="changed"> 279         ret += c.dyRoots(ts, ret);</span>
+<span class="changed"> 280 </span>
+<span class="changed"> 281         // subdivide at inflection points.</span>
+<span class="changed"> 282         if (type == 8) {</span>
+<span class="changed"> 283             // quadratic curves can't have inflection points</span>
+<span class="changed"> 284             ret += c.infPoints(ts, ret);</span>
+<span class="changed"> 285         }</span>
+<span class="changed"> 286 </span>
+<span class="changed"> 287         // now we must subdivide at points where one of the offset curves will have</span>
+<span class="changed"> 288         // a cusp. This happens at ts where the radius of curvature is equal to w.</span>
+<span class="changed"> 289         ret += c.rootsOfROCMinusW(ts, ret, w2, 0.0001d);</span>
+<span class="changed"> 290 </span>
+<span class="changed"> 291         ret = filterOutNotInAB(ts, 0, ret, 0.0001d, 0.9999d);</span>
+<span class="changed"> 292         isort(ts, ret);</span>
+<span class="changed"> 293         return ret;</span>
+<span class="changed"> 294     }</span>
+<span class="changed"> 295 </span>
+<span class="changed"> 296     // finds values of t where the curve in pts should be subdivided in order</span>
+<span class="changed"> 297     // to get intersections with the given clip rectangle.</span>
+<span class="changed"> 298     // Stores the points in ts, and returns how many of them there were.</span>
+<span class="changed"> 299     static int findClipPoints(final DCurve curve, final double[] pts,</span>
+<span class="changed"> 300                               final double[] ts, final int type,</span>
+<span class="changed"> 301                               final int outCodeOR,</span>
+<span class="changed"> 302                               final double[] clipRect)</span>
+<span class="changed"> 303     {</span>
+<span class="changed"> 304         curve.set(pts, type);</span>
+<span class="changed"> 305 </span>
+<span class="changed"> 306         // clip rectangle (ymin, ymax, xmin, xmax)</span>
+<span class="changed"> 307         int ret = 0;</span>
+<span class="changed"> 308 </span>
+<span class="changed"> 309         if ((outCodeOR &amp; OUTCODE_LEFT) != 0) {</span>
+<span class="changed"> 310             ret += curve.xPoints(ts, ret, clipRect[2]);</span>
+<span class="changed"> 311         }</span>
+<span class="changed"> 312         if ((outCodeOR &amp; OUTCODE_RIGHT) != 0) {</span>
+<span class="changed"> 313             ret += curve.xPoints(ts, ret, clipRect[3]);</span>
+<span class="changed"> 314         }</span>
+<span class="changed"> 315         if ((outCodeOR &amp; OUTCODE_TOP) != 0) {</span>
+<span class="changed"> 316             ret += curve.yPoints(ts, ret, clipRect[0]);</span>
+<span class="changed"> 317         }</span>
+<span class="changed"> 318         if ((outCodeOR &amp; OUTCODE_BOTTOM) != 0) {</span>
+<span class="changed"> 319             ret += curve.yPoints(ts, ret, clipRect[1]);</span>
+<span class="changed"> 320         }</span>
+<span class="changed"> 321         isort(ts, ret);</span>
+<span class="changed"> 322         return ret;</span>
+<span class="changed"> 323     }</span>
+<span class="changed"> 324 </span>
+<span class="changed"> 325     static void subdivide(final double[] src,</span>
+<span class="changed"> 326                           final double[] left, final double[] right,</span>
+<span class="changed"> 327                           final int type)</span>
+<span class="changed"> 328     {</span>
+<span class="changed"> 329         switch(type) {</span>
+ 330         case 8:
+<span class="changed"> 331             subdivideCubic(src, left, right);</span>
+<span class="changed"> 332             return;</span>
+<span class="changed"> 333         case 6:</span>
+<span class="changed"> 334             subdivideQuad(src, left, right);</span>
+ 335             return;
+ 336         default:
+ 337             throw new InternalError("Unsupported curve type");
+ 338         }
+ 339     }
+ 340 
+<span class="changed"> 341     static void isort(final double[] a, final int len) {</span>
+<span class="changed"> 342         for (int i = 1, j; i &lt; len; i++) {</span>
+<span class="changed"> 343             final double ai = a[i];</span>
+<span class="changed"> 344             j = i - 1;</span>
+<span class="changed"> 345             for (; j &gt;= 0 &amp;&amp; a[j] &gt; ai; j--) {</span>
+<span class="changed"> 346                 a[j + 1] = a[j];</span>
+ 347             }
+<span class="changed"> 348             a[j + 1] = ai;</span>
+ 349         }
+ 350     }
+ 351 
+ 352     // Most of these are copied from classes in java.awt.geom because we need
+ 353     // both single and double precision variants of these functions, and Line2D,
+ 354     // CubicCurve2D, QuadCurve2D don't provide them.
+ 355     /**
+ 356      * Subdivides the cubic curve specified by the coordinates
+ 357      * stored in the &lt;code&gt;src&lt;/code&gt; array at indices &lt;code&gt;srcoff&lt;/code&gt;
+ 358      * through (&lt;code&gt;srcoff&lt;/code&gt;&amp;nbsp;+&amp;nbsp;7) and stores the
+ 359      * resulting two subdivided curves into the two result arrays at the
+ 360      * corresponding indices.
+ 361      * Either or both of the &lt;code&gt;left&lt;/code&gt; and &lt;code&gt;right&lt;/code&gt;
+ 362      * arrays may be &lt;code&gt;null&lt;/code&gt; or a reference to the same array
+ 363      * as the &lt;code&gt;src&lt;/code&gt; array.
+ 364      * Note that the last point in the first subdivided curve is the
+ 365      * same as the first point in the second subdivided curve. Thus,
+ 366      * it is possible to pass the same array for &lt;code&gt;left&lt;/code&gt;
+ 367      * and &lt;code&gt;right&lt;/code&gt; and to use offsets, such as &lt;code&gt;rightoff&lt;/code&gt;
+ 368      * equals (&lt;code&gt;leftoff&lt;/code&gt; + 6), in order
+ 369      * to avoid allocating extra storage for this common point.
+ 370      * @param src the array holding the coordinates for the source curve
+
+
+ 371      * @param left the array for storing the coordinates for the first
+ 372      * half of the subdivided curve
+
+
+ 373      * @param right the array for storing the coordinates for the second
+ 374      * half of the subdivided curve
+
+
+ 375      * @since 1.7
+ 376      */
+<span class="changed"> 377     static void subdivideCubic(final double[] src,</span>
+<span class="changed"> 378                                final double[] left,</span>
+<span class="changed"> 379                                final double[] right)</span>
+<span class="changed"> 380     {</span>
+<span class="changed"> 381         double  x1 = src[0];</span>
+<span class="changed"> 382         double  y1 = src[1];</span>
+<span class="changed"> 383         double cx1 = src[2];</span>
+<span class="changed"> 384         double cy1 = src[3];</span>
+<span class="changed"> 385         double cx2 = src[4];</span>
+<span class="changed"> 386         double cy2 = src[5];</span>
+<span class="changed"> 387         double  x2 = src[6];</span>
+<span class="changed"> 388         double  y2 = src[7];</span>
+<span class="changed"> 389 </span>
+<span class="changed"> 390         left[0]  = x1;</span>
+<span class="changed"> 391         left[1]  = y1;</span>
+<span class="changed"> 392 </span>
+<span class="changed"> 393         right[6] = x2;</span>
+<span class="changed"> 394         right[7] = y2;</span>
+<span class="changed"> 395 </span>
+<span class="changed"> 396         x1 = (x1 + cx1) / 2.0d;</span>
+<span class="changed"> 397         y1 = (y1 + cy1) / 2.0d;</span>
+<span class="changed"> 398         x2 = (x2 + cx2) / 2.0d;</span>
+<span class="changed"> 399         y2 = (y2 + cy2) / 2.0d;</span>
+<span class="changed"> 400 </span>
+<span class="changed"> 401         double cx = (cx1 + cx2) / 2.0d;</span>
+<span class="changed"> 402         double cy = (cy1 + cy2) / 2.0d;</span>
+<span class="changed"> 403 </span>
+<span class="changed"> 404         cx1 = (x1 + cx) / 2.0d;</span>
+<span class="changed"> 405         cy1 = (y1 + cy) / 2.0d;</span>
+<span class="changed"> 406         cx2 = (x2 + cx) / 2.0d;</span>
+<span class="changed"> 407         cy2 = (y2 + cy) / 2.0d;</span>
+<span class="changed"> 408         cx  = (cx1 + cx2) / 2.0d;</span>
+<span class="changed"> 409         cy  = (cy1 + cy2) / 2.0d;</span>
+<span class="changed"> 410 </span>
+<span class="changed"> 411         left[2] = x1;</span>
+<span class="changed"> 412         left[3] = y1;</span>
+<span class="changed"> 413         left[4] = cx1;</span>
+<span class="changed"> 414         left[5] = cy1;</span>
+<span class="changed"> 415         left[6] = cx;</span>
+<span class="changed"> 416         left[7] = cy;</span>
+<span class="changed"> 417 </span>
+<span class="changed"> 418         right[0] = cx;</span>
+<span class="changed"> 419         right[1] = cy;</span>
+<span class="changed"> 420         right[2] = cx2;</span>
+<span class="changed"> 421         right[3] = cy2;</span>
+<span class="changed"> 422         right[4] = x2;</span>
+<span class="changed"> 423         right[5] = y2;</span>
+<span class="changed"> 424     }</span>
+<span class="changed"> 425 </span>
+<span class="changed"> 426     static void subdivideCubicAt(final double t,</span>
+<span class="changed"> 427                                  final double[] src, final int offS,</span>
+<span class="changed"> 428                                  final double[] pts, final int offL, final int offR)</span>
+<span class="changed"> 429     {</span>
+<span class="changed"> 430         double  x1 = src[offS    ];</span>
+<span class="changed"> 431         double  y1 = src[offS + 1];</span>
+<span class="changed"> 432         double cx1 = src[offS + 2];</span>
+<span class="changed"> 433         double cy1 = src[offS + 3];</span>
+<span class="changed"> 434         double cx2 = src[offS + 4];</span>
+<span class="changed"> 435         double cy2 = src[offS + 5];</span>
+<span class="changed"> 436         double  x2 = src[offS + 6];</span>
+<span class="changed"> 437         double  y2 = src[offS + 7];</span>
+<span class="changed"> 438 </span>
+<span class="changed"> 439         pts[offL    ] = x1;</span>
+<span class="changed"> 440         pts[offL + 1] = y1;</span>
+<span class="changed"> 441 </span>
+<span class="changed"> 442         pts[offR + 6] = x2;</span>
+<span class="changed"> 443         pts[offR + 7] = y2;</span>
+<span class="changed"> 444 </span>
+<span class="changed"> 445         x1 =  x1 + t * (cx1 - x1);</span>
+<span class="changed"> 446         y1 =  y1 + t * (cy1 - y1);</span>
+<span class="changed"> 447         x2 = cx2 + t * (x2 - cx2);</span>
+<span class="changed"> 448         y2 = cy2 + t * (y2 - cy2);</span>
+<span class="changed"> 449 </span>
+<span class="changed"> 450         double cx = cx1 + t * (cx2 - cx1);</span>
+<span class="changed"> 451         double cy = cy1 + t * (cy2 - cy1);</span>
+<span class="changed"> 452 </span>
+<span class="changed"> 453         cx1 =  x1 + t * (cx - x1);</span>
+<span class="changed"> 454         cy1 =  y1 + t * (cy - y1);</span>
+<span class="changed"> 455         cx2 =  cx + t * (x2 - cx);</span>
+<span class="changed"> 456         cy2 =  cy + t * (y2 - cy);</span>
+<span class="changed"> 457         cx  = cx1 + t * (cx2 - cx1);</span>
+<span class="changed"> 458         cy  = cy1 + t * (cy2 - cy1);</span>
+<span class="changed"> 459 </span>
+<span class="changed"> 460         pts[offL + 2] = x1;</span>
+<span class="changed"> 461         pts[offL + 3] = y1;</span>
+<span class="changed"> 462         pts[offL + 4] = cx1;</span>
+<span class="changed"> 463         pts[offL + 5] = cy1;</span>
+<span class="changed"> 464         pts[offL + 6] = cx;</span>
+<span class="changed"> 465         pts[offL + 7] = cy;</span>
+<span class="changed"> 466 </span>
+<span class="changed"> 467         pts[offR    ] = cx;</span>
+<span class="changed"> 468         pts[offR + 1] = cy;</span>
+<span class="changed"> 469         pts[offR + 2] = cx2;</span>
+<span class="changed"> 470         pts[offR + 3] = cy2;</span>
+<span class="changed"> 471         pts[offR + 4] = x2;</span>
+<span class="changed"> 472         pts[offR + 5] = y2;</span>
+<span class="changed"> 473     }</span>
+<span class="changed"> 474 </span>
+<span class="changed"> 475     static void subdivideQuad(final double[] src,</span>
+<span class="changed"> 476                               final double[] left,</span>
+<span class="changed"> 477                               final double[] right)</span>
+<span class="changed"> 478     {</span>
+<span class="changed"> 479         double x1 = src[0];</span>
+<span class="changed"> 480         double y1 = src[1];</span>
+<span class="changed"> 481         double cx = src[2];</span>
+<span class="changed"> 482         double cy = src[3];</span>
+<span class="changed"> 483         double x2 = src[4];</span>
+<span class="changed"> 484         double y2 = src[5];</span>
+<span class="changed"> 485 </span>
+<span class="changed"> 486         left[0]  = x1;</span>
+<span class="changed"> 487         left[1]  = y1;</span>
+<span class="changed"> 488 </span>
+<span class="changed"> 489         right[4] = x2;</span>
+<span class="changed"> 490         right[5] = y2;</span>
+<span class="changed"> 491 </span>
+<span class="changed"> 492         x1 = (x1 + cx) / 2.0d;</span>
+<span class="changed"> 493         y1 = (y1 + cy) / 2.0d;</span>
+<span class="changed"> 494         x2 = (x2 + cx) / 2.0d;</span>
+<span class="changed"> 495         y2 = (y2 + cy) / 2.0d;</span>
+<span class="changed"> 496         cx = (x1 + x2) / 2.0d;</span>
+<span class="changed"> 497         cy = (y1 + y2) / 2.0d;</span>
+<span class="changed"> 498 </span>
+<span class="changed"> 499         left[2] = x1;</span>
+<span class="changed"> 500         left[3] = y1;</span>
+<span class="changed"> 501         left[4] = cx;</span>
+<span class="changed"> 502         left[5] = cy;</span>
+<span class="changed"> 503 </span>
+<span class="changed"> 504         right[0] = cx;</span>
+<span class="changed"> 505         right[1] = cy;</span>
+<span class="changed"> 506         right[2] = x2;</span>
+<span class="changed"> 507         right[3] = y2;</span>
+<span class="changed"> 508     }</span>
+<span class="changed"> 509 </span>
+<span class="changed"> 510     static void subdivideQuadAt(final double t,</span>
+<span class="changed"> 511                                 final double[] src, final int offS,</span>
+<span class="changed"> 512                                 final double[] pts, final int offL, final int offR)</span>
+<span class="changed"> 513     {</span>
+<span class="changed"> 514         double x1 = src[offS    ];</span>
+<span class="changed"> 515         double y1 = src[offS + 1];</span>
+<span class="changed"> 516         double cx = src[offS + 2];</span>
+<span class="changed"> 517         double cy = src[offS + 3];</span>
+<span class="changed"> 518         double x2 = src[offS + 4];</span>
+<span class="changed"> 519         double y2 = src[offS + 5];</span>
+<span class="changed"> 520 </span>
+<span class="changed"> 521         pts[offL    ] = x1;</span>
+<span class="changed"> 522         pts[offL + 1] = y1;</span>
+<span class="changed"> 523 </span>
+<span class="changed"> 524         pts[offR + 4] = x2;</span>
+<span class="changed"> 525         pts[offR + 5] = y2;</span>
+<span class="changed"> 526 </span>
+<span class="changed"> 527         x1 = x1 + t * (cx - x1);</span>
+<span class="changed"> 528         y1 = y1 + t * (cy - y1);</span>
+<span class="changed"> 529         x2 = cx + t * (x2 - cx);</span>
+<span class="changed"> 530         y2 = cy + t * (y2 - cy);</span>
+<span class="changed"> 531         cx = x1 + t * (x2 - x1);</span>
+<span class="changed"> 532         cy = y1 + t * (y2 - y1);</span>
+<span class="changed"> 533 </span>
+<span class="changed"> 534         pts[offL + 2] = x1;</span>
+<span class="changed"> 535         pts[offL + 3] = y1;</span>
+<span class="changed"> 536         pts[offL + 4] = cx;</span>
+<span class="changed"> 537         pts[offL + 5] = cy;</span>
+<span class="changed"> 538 </span>
+<span class="changed"> 539         pts[offR    ] = cx;</span>
+<span class="changed"> 540         pts[offR + 1] = cy;</span>
+<span class="changed"> 541         pts[offR + 2] = x2;</span>
+<span class="changed"> 542         pts[offR + 3] = y2;</span>
+<span class="changed"> 543     }</span>
+<span class="changed"> 544 </span>
+<span class="changed"> 545     static void subdivideLineAt(final double t,</span>
+<span class="changed"> 546                                 final double[] src, final int offS,</span>
+<span class="changed"> 547                                 final double[] pts, final int offL, final int offR)</span>
+<span class="changed"> 548     {</span>
+<span class="changed"> 549         double x1 = src[offS    ];</span>
+<span class="changed"> 550         double y1 = src[offS + 1];</span>
+<span class="changed"> 551         double x2 = src[offS + 2];</span>
+<span class="changed"> 552         double y2 = src[offS + 3];</span>
+<span class="changed"> 553 </span>
+<span class="changed"> 554         pts[offL    ] = x1;</span>
+<span class="changed"> 555         pts[offL + 1] = y1;</span>
+<span class="changed"> 556 </span>
+<span class="changed"> 557         pts[offR + 2] = x2;</span>
+<span class="changed"> 558         pts[offR + 3] = y2;</span>
+<span class="changed"> 559 </span>
+<span class="changed"> 560         x1 = x1 + t * (x2 - x1);</span>
+<span class="changed"> 561         y1 = y1 + t * (y2 - y1);</span>
+<span class="changed"> 562 </span>
+<span class="changed"> 563         pts[offL + 2] = x1;</span>
+<span class="changed"> 564         pts[offL + 3] = y1;</span>
+<span class="changed"> 565 </span>
+<span class="changed"> 566         pts[offR    ] = x1;</span>
+<span class="changed"> 567         pts[offR + 1] = y1;</span>
+<span class="changed"> 568     }</span>
+<span class="changed"> 569 </span>
+<span class="changed"> 570     static void subdivideAt(final double t,</span>
+<span class="changed"> 571                             final double[] src, final int offS,</span>
+<span class="changed"> 572                             final double[] pts, final int offL, final int type)</span>
+<span class="changed"> 573     {</span>
+<span class="changed"> 574         // if instead of switch (perf + most probable cases first)</span>
+<span class="changed"> 575         if (type == 8) {</span>
+<span class="changed"> 576             subdivideCubicAt(t, src, offS, pts, offL, offL + type);</span>
+<span class="changed"> 577         } else if (type == 4) {</span>
+<span class="changed"> 578             subdivideLineAt(t, src, offS, pts, offL, offL + type);</span>
+<span class="changed"> 579         } else {</span>
+<span class="changed"> 580             subdivideQuadAt(t, src, offS, pts, offL, offL + type);</span>
+ 581         }
+ 582     }
+ 583 
+ 584     // From sun.java2d.loops.GeneralRenderer:
+ 585 
+ 586     static int outcode(final double x, final double y,
+ 587                        final double[] clipRect)
+ 588     {
+ 589         int code;
+ 590         if (y &lt; clipRect[0]) {
+ 591             code = OUTCODE_TOP;
+ 592         } else if (y &gt;= clipRect[1]) {
+ 593             code = OUTCODE_BOTTOM;
+ 594         } else {
+ 595             code = 0;
+ 596         }
+ 597         if (x &lt; clipRect[2]) {
+ 598             code |= OUTCODE_LEFT;
+ 599         } else if (x &gt;= clipRect[3]) {
+ 600             code |= OUTCODE_RIGHT;
+
+</pre><hr></hr><pre>
+ 748             if (DO_STATS) {
+ 749                 // update used marks:
+ 750                 if (numCurves &gt; curveTypesUseMark) {
+ 751                     curveTypesUseMark = numCurves;
+ 752                 }
+ 753                 if (end &gt; curvesUseMark) {
+ 754                     curvesUseMark = end;
+ 755                 }
+ 756             }
+ 757             final byte[]  _curveTypes = curveTypes;
+ 758             final double[] _curves = curves;
+ 759             int e = 0;
+ 760 
+ 761             for (int i = 0; i &lt; nc; i++) {
+ 762                 switch(_curveTypes[i]) {
+ 763                 case TYPE_LINETO:
+ 764                     io.lineTo(_curves[e], _curves[e+1]);
+ 765                     e += 2;
+ 766                     continue;
+ 767                 case TYPE_QUADTO:
+<span class="changed"> 768                     io.quadTo(_curves[e],   _curves[e+1],</span>
+ 769                               _curves[e+2], _curves[e+3]);
+ 770                     e += 4;
+ 771                     continue;
+ 772                 case TYPE_CUBICTO:
+<span class="changed"> 773                     io.curveTo(_curves[e],   _curves[e+1],</span>
+ 774                                _curves[e+2], _curves[e+3],
+ 775                                _curves[e+4], _curves[e+5]);
+ 776                     e += 6;
+ 777                     continue;
+ 778                 default:
+ 779                 }
+ 780             }
+ 781             numCurves = 0;
+ 782             end = 0;
+ 783         }
+ 784 
+ 785         void popAll(final DPathConsumer2D io) {
+ 786             int nc = numCurves;
+ 787             if (nc == 0) {
+ 788                 return;
+ 789             }
+ 790             if (DO_STATS) {
+ 791                 // update used marks:
+ 792                 if (numCurves &gt; curveTypesUseMark) {
+ 793                     curveTypesUseMark = numCurves;
+ 794                 }
+ 795                 if (end &gt; curvesUseMark) {
+ 796                     curvesUseMark = end;
+ 797                 }
+ 798             }
+ 799             final byte[]  _curveTypes = curveTypes;
+ 800             final double[] _curves = curves;
+ 801             int e  = end;
+ 802 
+ 803             while (nc != 0) {
+ 804                 switch(_curveTypes[--nc]) {
+ 805                 case TYPE_LINETO:
+ 806                     e -= 2;
+ 807                     io.lineTo(_curves[e], _curves[e+1]);
+ 808                     continue;
+ 809                 case TYPE_QUADTO:
+ 810                     e -= 4;
+<span class="changed"> 811                     io.quadTo(_curves[e],   _curves[e+1],</span>
+ 812                               _curves[e+2], _curves[e+3]);
+ 813                     continue;
+ 814                 case TYPE_CUBICTO:
+ 815                     e -= 6;
+<span class="changed"> 816                     io.curveTo(_curves[e],   _curves[e+1],</span>
+ 817                                _curves[e+2], _curves[e+3],
+ 818                                _curves[e+4], _curves[e+5]);
+ 819                     continue;
+ 820                 default:
+ 821                 }
+ 822             }
+ 823             numCurves = 0;
+ 824             end = 0;
+ 825         }
+ 826 
+ 827         @Override
+ 828         public String toString() {
+ 829             String ret = "";
+ 830             int nc = numCurves;
+ 831             int last = end;
+ 832             int len;
+ 833             while (nc != 0) {
+ 834                 switch(curveTypes[--nc]) {
+ 835                 case TYPE_LINETO:
+ 836                     len = 2;
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DDasher.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

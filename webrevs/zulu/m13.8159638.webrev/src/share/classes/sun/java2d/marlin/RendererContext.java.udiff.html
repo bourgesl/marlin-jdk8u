@@ -1,0 +1,566 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/RendererContext.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Renderer.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererStats.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/RendererContext.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -27,85 +27,91 @@</span>
+ 
+ import java.awt.geom.Path2D;
+ import java.lang.ref.WeakReference;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import sun.java2d.ReentrantContext;
+<span class="removed">-import sun.java2d.ReentrantContextProvider;</span>
+<span class="removed">-import static sun.java2d.marlin.ArrayCache.*;</span>
+<span class="new">+import sun.java2d.marlin.ArrayCacheConst.CacheStats;</span>
+ import sun.java2d.marlin.MarlinRenderingEngine.NormalizingPathIterator;
+<span class="removed">-import static sun.java2d.marlin.MarlinUtils.logInfo;</span>
+ 
+ /**
+  * This class is a renderer context dedicated to a single thread
+  */
+ final class RendererContext extends ReentrantContext implements MarlinConst {
+ 
+     // RendererContext creation counter
+     private static final AtomicInteger CTX_COUNT = new AtomicInteger(1);
+<span class="removed">-    // RendererContext statistics</span>
+<span class="removed">-    final RendererStats stats = (DO_STATS || DO_MONITORS)</span>
+<span class="removed">-                                       ? RendererStats.getInstance(): null;</span>
+<span class="removed">-</span>
+<span class="removed">-    private static final boolean USE_CACHE_HARD_REF = DO_STATS</span>
+<span class="removed">-        || (MarlinRenderingEngine.REF_TYPE == ReentrantContextProvider.REF_WEAK);</span>
+ 
+     /**
+      * Create a new renderer context
+      *
+      * @return new RendererContext instance
+      */
+     static RendererContext createContext() {
+<span class="removed">-        final RendererContext newCtx = new RendererContext("ctx"</span>
+<span class="new">+        return new RendererContext("ctx"</span>
+                     + Integer.toString(CTX_COUNT.getAndIncrement()));
+<span class="removed">-</span>
+<span class="removed">-        if (DO_STATS || DO_MONITORS) {</span>
+<span class="removed">-            RendererStats.ALL_CONTEXTS.add(newCtx);</span>
+<span class="removed">-        }</span>
+<span class="removed">-        return newCtx;</span>
+     }
+ 
+<span class="removed">-    // context name (debugging purposes)</span>
+<span class="removed">-    final String name;</span>
+<span class="new">+    // Smallest object used as Cleaner's parent reference</span>
+<span class="new">+    private final Object cleanerObj;</span>
+     // dirty flag indicating an exception occured during pipeline in pathTo()
+     boolean dirty = false;
+<span class="removed">-    // dynamic array caches kept using weak reference (low memory footprint)</span>
+<span class="removed">-    WeakReference&lt;ArrayCachesHolder&gt; refArrayCaches = null;</span>
+<span class="removed">-    // hard reference to array caches (for statistics)</span>
+<span class="removed">-    ArrayCachesHolder hardRefArrayCaches = null;</span>
+     // shared data
+     final float[] float6 = new float[6];
+     // shared curve (dirty) (Renderer / Stroker)
+     final Curve curve = new Curve();
+     // MarlinRenderingEngine NormalizingPathIterator NearestPixelCenter:
+     final NormalizingPathIterator nPCPathIterator;
+     // MarlinRenderingEngine NearestPixelQuarter NormalizingPathIterator:
+     final NormalizingPathIterator nPQPathIterator;
+     // MarlinRenderingEngine.TransformingPathConsumer2D
+     final TransformingPathConsumer2D transformerPC2D;
+<span class="removed">-    // recycled Path2D instance</span>
+<span class="removed">-    Path2D.Float p2d = null;</span>
+<span class="new">+    // recycled Path2D instance (weak)</span>
+<span class="new">+    private WeakReference&lt;Path2D.Float&gt; refPath2D = null;</span>
+     final Renderer renderer;
+     final Stroker stroker;
+     // Simplifies out collinear lines
+     final CollinearSimplifier simplifier = new CollinearSimplifier();
+     final Dasher dasher;
+     final MarlinTileGenerator ptg;
+     final MarlinCache cache;
+     // flag indicating the shape is stroked (1) or filled (0)
+     int stroking = 0;
+ 
+<span class="new">+    // Array caches:</span>
+<span class="new">+    /* clean int[] cache (zero-filled) = 5 refs */</span>
+<span class="new">+    private final IntArrayCache cleanIntCache = new IntArrayCache(true, 5);</span>
+<span class="new">+    /* dirty int[] cache = 4 refs */</span>
+<span class="new">+    private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 4);</span>
+<span class="new">+    /* dirty float[] cache = 3 refs */</span>
+<span class="new">+    private final FloatArrayCache dirtyFloatCache = new FloatArrayCache(false, 3);</span>
+<span class="new">+    /* dirty byte[] cache = 1 ref */</span>
+<span class="new">+    private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 1);</span>
+<span class="new">+</span>
+<span class="new">+    // RendererContext statistics</span>
+<span class="new">+    final RendererStats stats;</span>
+<span class="new">+</span>
+     /**
+      * Constructor
+      *
+      * @param name context name (debugging)
+      */
+     RendererContext(final String name) {
+         if (LOG_CREATE_CONTEXT) {
+             MarlinUtils.logInfo("new RendererContext = " + name);
+         }
+<span class="new">+        this.cleanerObj = new Object();</span>
+ 
+<span class="removed">-        this.name = name;</span>
+<span class="new">+        // create first stats (needed by newOffHeapArray):</span>
+<span class="new">+        if (DO_STATS || DO_MONITORS) {</span>
+<span class="new">+            stats = RendererStats.createInstance(cleanerObj, name);</span>
+<span class="new">+            // push cache stats:</span>
+<span class="new">+            stats.cacheStats = new CacheStats[] { cleanIntCache.stats,</span>
+<span class="new">+                dirtyIntCache.stats, dirtyFloatCache.stats, dirtyByteCache.stats</span>
+<span class="new">+            };</span>
+<span class="new">+        } else {</span>
+<span class="new">+            stats = null;</span>
+<span class="new">+        }</span>
+ 
+         // NormalizingPathIterator instances:
+         nPCPathIterator = new NormalizingPathIterator.NearestPixelCenter(float6);
+         nPQPathIterator  = new NormalizingPathIterator.NearestPixelQuarter(float6);
+ 
+</pre><hr /><pre>
+<span class="newmarker">@@ -124,15 +130,17 @@</span>
+     /**
+      * Disposes this renderer context:
+      * clean up before reusing this context
+      */
+     void dispose() {
+<span class="removed">-        stroking = 0;</span>
+<span class="removed">-        // reset hard reference to array caches if needed:</span>
+<span class="removed">-        if (!USE_CACHE_HARD_REF) {</span>
+<span class="removed">-            hardRefArrayCaches = null;</span>
+<span class="new">+        if (DO_STATS) {</span>
+<span class="new">+            if (stats.totalOffHeap &gt; stats.totalOffHeapMax) {</span>
+<span class="new">+                stats.totalOffHeapMax = stats.totalOffHeap;</span>
+<span class="new">+            }</span>
+<span class="new">+            stats.totalOffHeap = 0L;</span>
+         }
+<span class="new">+        stroking = 0;</span>
+         // if context is maked as DIRTY:
+         if (dirty) {
+             // may happen if an exception if thrown in the pipeline processing:
+             // force cleanup of all possible pipelined blocks (except Renderer):
+ 
+</pre><hr /><pre>
+<span class="newmarker">@@ -147,302 +155,46 @@</span>
+             // mark context as CLEAN:
+             dirty = false;
+         }
+     }
+ 
+<span class="removed">-    // Array caches</span>
+<span class="removed">-    ArrayCachesHolder getArrayCachesHolder() {</span>
+<span class="removed">-        // Use hard reference first (cached resolved weak reference):</span>
+<span class="removed">-        ArrayCachesHolder holder = hardRefArrayCaches;</span>
+<span class="removed">-        if (holder == null) {</span>
+<span class="new">+    Path2D.Float getPath2D() {</span>
+             // resolve reference:
+<span class="removed">-            holder = (refArrayCaches != null)</span>
+<span class="removed">-                     ? refArrayCaches.get()</span>
+<span class="removed">-                     : null;</span>
+<span class="removed">-            // create a new ArrayCachesHolder if none is available</span>
+<span class="removed">-            if (holder == null) {</span>
+<span class="removed">-                if (LOG_CREATE_CONTEXT) {</span>
+<span class="removed">-                    MarlinUtils.logInfo("new ArrayCachesHolder for "</span>
+<span class="removed">-                                        + "RendererContext = " + name);</span>
+<span class="removed">-                }</span>
+<span class="new">+        Path2D.Float p2d</span>
+<span class="new">+            = (refPath2D != null) ? refPath2D.get() : null;</span>
+ 
+<span class="removed">-                holder = new ArrayCachesHolder();</span>
+<span class="removed">-</span>
+<span class="removed">-                if (USE_CACHE_HARD_REF) {</span>
+<span class="removed">-                    // update hard reference:</span>
+<span class="removed">-                    hardRefArrayCaches = holder;</span>
+<span class="removed">-                }</span>
+<span class="new">+        // create a new Path2D ?</span>
+<span class="new">+        if (p2d == null) {</span>
+<span class="new">+            p2d = new Path2D.Float(Path2D.WIND_NON_ZERO, INITIAL_EDGES_COUNT); // 32K</span>
+ 
+                 // update weak reference:
+<span class="removed">-                refArrayCaches = new WeakReference&lt;ArrayCachesHolder&gt;(holder);</span>
+<span class="removed">-            }</span>
+<span class="removed">-        }</span>
+<span class="removed">-        return holder;</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    // dirty byte array cache</span>
+<span class="removed">-    ByteArrayCache getDirtyByteArrayCache(final int length) {</span>
+<span class="removed">-        final int bucket = ArrayCache.getBucketDirtyBytes(length);</span>
+<span class="removed">-        return getArrayCachesHolder().dirtyByteArrayCaches[bucket];</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    byte[] getDirtyByteArray(final int length) {</span>
+<span class="removed">-        if (length &lt;= MAX_DIRTY_BYTE_ARRAY_SIZE) {</span>
+<span class="removed">-            return getDirtyByteArrayCache(length).getArray();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_STATS) {</span>
+<span class="removed">-            incOversize();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_LOG_OVERSIZE) {</span>
+<span class="removed">-            logInfo("getDirtyByteArray[oversize]: length=\t" + length);</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        return new byte[length];</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    void putDirtyByteArray(final byte[] array) {</span>
+<span class="removed">-        final int length = array.length;</span>
+<span class="removed">-        // odd sized array are non-cached arrays (initial arrays)</span>
+<span class="removed">-        // ensure to never store initial arrays in cache:</span>
+<span class="removed">-        if (((length &amp; 0x1) == 0) &amp;&amp; (length &lt;= MAX_DIRTY_BYTE_ARRAY_SIZE)) {</span>
+<span class="removed">-            getDirtyByteArrayCache(length).putDirtyArray(array, length);</span>
+<span class="removed">-        }</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    byte[] widenDirtyByteArray(final byte[] in,</span>
+<span class="removed">-                               final int usedSize, final int needSize)</span>
+<span class="removed">-    {</span>
+<span class="removed">-        final int length = in.length;</span>
+<span class="removed">-        if (DO_CHECKS &amp;&amp; length &gt;= needSize) {</span>
+<span class="removed">-            return in;</span>
+<span class="removed">-        }</span>
+<span class="removed">-        if (DO_STATS) {</span>
+<span class="removed">-            incResizeDirtyByte();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        // maybe change bucket:</span>
+<span class="removed">-        // ensure getNewSize() &gt; newSize:</span>
+<span class="removed">-        final byte[] res = getDirtyByteArray(getNewSize(usedSize, needSize));</span>
+<span class="removed">-</span>
+<span class="removed">-        System.arraycopy(in, 0, res, 0, usedSize); // copy only used elements</span>
+<span class="removed">-</span>
+<span class="removed">-        // maybe return current array:</span>
+<span class="removed">-        // NO clean-up of array data = DIRTY ARRAY</span>
+<span class="removed">-        putDirtyByteArray(in);</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_LOG_WIDEN_ARRAY) {</span>
+<span class="removed">-            logInfo("widenDirtyByteArray[" + res.length + "]: usedSize=\t"</span>
+<span class="removed">-                    + usedSize + "\tlength=\t" + length + "\tneeded length=\t"</span>
+<span class="removed">-                    + needSize);</span>
+<span class="removed">-        }</span>
+<span class="removed">-        return res;</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    // int array cache</span>
+<span class="removed">-    IntArrayCache getIntArrayCache(final int length) {</span>
+<span class="removed">-        final int bucket = ArrayCache.getBucket(length);</span>
+<span class="removed">-        return getArrayCachesHolder().intArrayCaches[bucket];</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    int[] getIntArray(final int length) {</span>
+<span class="removed">-        if (length &lt;= MAX_ARRAY_SIZE) {</span>
+<span class="removed">-            return getIntArrayCache(length).getArray();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_STATS) {</span>
+<span class="removed">-            incOversize();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_LOG_OVERSIZE) {</span>
+<span class="removed">-            logInfo("getIntArray[oversize]: length=\t" + length);</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        return new int[length];</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    // unused</span>
+<span class="removed">-    int[] widenIntArray(final int[] in, final int usedSize,</span>
+<span class="removed">-                        final int needSize, final int clearTo)</span>
+<span class="removed">-    {</span>
+<span class="removed">-        final int length = in.length;</span>
+<span class="removed">-        if (DO_CHECKS &amp;&amp; length &gt;= needSize) {</span>
+<span class="removed">-            return in;</span>
+<span class="removed">-        }</span>
+<span class="removed">-        if (DO_STATS) {</span>
+<span class="removed">-            incResizeInt();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        // maybe change bucket:</span>
+<span class="removed">-        // ensure getNewSize() &gt; newSize:</span>
+<span class="removed">-        final int[] res = getIntArray(getNewSize(usedSize, needSize));</span>
+<span class="removed">-</span>
+<span class="removed">-        System.arraycopy(in, 0, res, 0, usedSize); // copy only used elements</span>
+<span class="removed">-</span>
+<span class="removed">-        // maybe return current array:</span>
+<span class="removed">-        putIntArray(in, 0, clearTo); // ensure all array is cleared (grow-reduce algo)</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_LOG_WIDEN_ARRAY) {</span>
+<span class="removed">-            logInfo("widenIntArray[" + res.length + "]: usedSize=\t"</span>
+<span class="removed">-                    + usedSize + "\tlength=\t" + length + "\tneeded length=\t"</span>
+<span class="removed">-                    + needSize);</span>
+<span class="removed">-        }</span>
+<span class="removed">-        return res;</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    void putIntArray(final int[] array, final int fromIndex,</span>
+<span class="removed">-                     final int toIndex)</span>
+<span class="removed">-    {</span>
+<span class="removed">-        final int length = array.length;</span>
+<span class="removed">-        // odd sized array are non-cached arrays (initial arrays)</span>
+<span class="removed">-        // ensure to never store initial arrays in cache:</span>
+<span class="removed">-        if (((length &amp; 0x1) == 0) &amp;&amp; (length &lt;= MAX_ARRAY_SIZE)) {</span>
+<span class="removed">-            getIntArrayCache(length).putArray(array, length, fromIndex, toIndex);</span>
+<span class="removed">-        }</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    // dirty int array cache</span>
+<span class="removed">-    IntArrayCache getDirtyIntArrayCache(final int length) {</span>
+<span class="removed">-        final int bucket = ArrayCache.getBucket(length);</span>
+<span class="removed">-        return getArrayCachesHolder().dirtyIntArrayCaches[bucket];</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    int[] getDirtyIntArray(final int length) {</span>
+<span class="removed">-        if (length &lt;= MAX_ARRAY_SIZE) {</span>
+<span class="removed">-            return getDirtyIntArrayCache(length).getArray();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_STATS) {</span>
+<span class="removed">-            incOversize();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_LOG_OVERSIZE) {</span>
+<span class="removed">-            logInfo("getDirtyIntArray[oversize]: length=\t" + length);</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        return new int[length];</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    int[] widenDirtyIntArray(final int[] in,</span>
+<span class="removed">-                             final int usedSize, final int needSize)</span>
+<span class="removed">-    {</span>
+<span class="removed">-        final int length = in.length;</span>
+<span class="removed">-        if (DO_CHECKS &amp;&amp; length &gt;= needSize) {</span>
+<span class="removed">-            return in;</span>
+<span class="new">+            refPath2D = new WeakReference&lt;Path2D.Float&gt;(p2d);</span>
+         }
+<span class="removed">-        if (DO_STATS) {</span>
+<span class="removed">-            incResizeDirtyInt();</span>
+<span class="removed">-        }</span>
+<span class="removed">-</span>
+<span class="removed">-        // maybe change bucket:</span>
+<span class="removed">-        // ensure getNewSize() &gt; newSize:</span>
+<span class="removed">-        final int[] res = getDirtyIntArray(getNewSize(usedSize, needSize));</span>
+<span class="removed">-</span>
+<span class="removed">-        System.arraycopy(in, 0, res, 0, usedSize); // copy only used elements</span>
+<span class="removed">-</span>
+<span class="removed">-        // maybe return current array:</span>
+<span class="removed">-        // NO clean-up of array data = DIRTY ARRAY</span>
+<span class="removed">-        putDirtyIntArray(in);</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_LOG_WIDEN_ARRAY) {</span>
+<span class="removed">-            logInfo("widenDirtyIntArray[" + res.length + "]: usedSize=\t"</span>
+<span class="removed">-                    + usedSize + "\tlength=\t" + length + "\tneeded length=\t"</span>
+<span class="removed">-                    + needSize);</span>
+<span class="removed">-        }</span>
+<span class="removed">-        return res;</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    void putDirtyIntArray(final int[] array) {</span>
+<span class="removed">-        final int length = array.length;</span>
+<span class="removed">-        // odd sized array are non-cached arrays (initial arrays)</span>
+<span class="removed">-        // ensure to never store initial arrays in cache:</span>
+<span class="removed">-        if (((length &amp; 0x1) == 0) &amp;&amp; (length &lt;= MAX_ARRAY_SIZE)) {</span>
+<span class="removed">-            getDirtyIntArrayCache(length).putDirtyArray(array, length);</span>
+<span class="removed">-        }</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    // dirty float array cache</span>
+<span class="removed">-    FloatArrayCache getDirtyFloatArrayCache(final int length) {</span>
+<span class="removed">-        final int bucket = ArrayCache.getBucket(length);</span>
+<span class="removed">-        return getArrayCachesHolder().dirtyFloatArrayCaches[bucket];</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    float[] getDirtyFloatArray(final int length) {</span>
+<span class="removed">-        if (length &lt;= MAX_ARRAY_SIZE) {</span>
+<span class="removed">-            return getDirtyFloatArrayCache(length).getArray();</span>
+<span class="new">+        // reset the path anyway:</span>
+<span class="new">+        p2d.reset();</span>
+<span class="new">+        return p2d;</span>
+         }
+ 
+<span class="new">+    OffHeapArray newOffHeapArray(final long initialSize) {</span>
+         if (DO_STATS) {
+<span class="removed">-            incOversize();</span>
+<span class="new">+            stats.totalOffHeapInitial += initialSize;</span>
+         }
+<span class="removed">-</span>
+<span class="removed">-        if (DO_LOG_OVERSIZE) {</span>
+<span class="removed">-            logInfo("getDirtyFloatArray[oversize]: length=\t" + length);</span>
+<span class="new">+        return new OffHeapArray(cleanerObj, initialSize);</span>
+         }
+ 
+<span class="removed">-        return new float[length];</span>
+<span class="new">+    IntArrayCache.Reference newCleanIntArrayRef(final int initialSize) {</span>
+<span class="new">+        return cleanIntCache.createRef(initialSize);</span>
+     }
+ 
+<span class="removed">-    float[] widenDirtyFloatArray(final float[] in,</span>
+<span class="removed">-                                 final int usedSize, final int needSize)</span>
+<span class="removed">-    {</span>
+<span class="removed">-        final int length = in.length;</span>
+<span class="removed">-        if (DO_CHECKS &amp;&amp; length &gt;= needSize) {</span>
+<span class="removed">-            return in;</span>
+<span class="removed">-        }</span>
+<span class="removed">-        if (DO_STATS) {</span>
+<span class="removed">-            incResizeDirtyFloat();</span>
+<span class="new">+    IntArrayCache.Reference newDirtyIntArrayRef(final int initialSize) {</span>
+<span class="new">+        return dirtyIntCache.createRef(initialSize);</span>
+         }
+ 
+<span class="removed">-        // maybe change bucket:</span>
+<span class="removed">-        // ensure getNewSize() &gt; newSize:</span>
+<span class="removed">-        final float[] res = getDirtyFloatArray(getNewSize(usedSize, needSize));</span>
+<span class="removed">-</span>
+<span class="removed">-        System.arraycopy(in, 0, res, 0, usedSize); // copy only used elements</span>
+<span class="removed">-</span>
+<span class="removed">-        // maybe return current array:</span>
+<span class="removed">-        // NO clean-up of array data = DIRTY ARRAY</span>
+<span class="removed">-        putDirtyFloatArray(in);</span>
+<span class="removed">-</span>
+<span class="removed">-        if (DO_LOG_WIDEN_ARRAY) {</span>
+<span class="removed">-            logInfo("widenDirtyFloatArray[" + res.length + "]: usedSize=\t"</span>
+<span class="removed">-                    + usedSize + "\tlength=\t" + length + "\tneeded length=\t"</span>
+<span class="removed">-                    + needSize);</span>
+<span class="removed">-        }</span>
+<span class="removed">-        return res;</span>
+<span class="new">+    FloatArrayCache.Reference newDirtyFloatArrayRef(final int initialSize) {</span>
+<span class="new">+        return dirtyFloatCache.createRef(initialSize);</span>
+     }
+ 
+<span class="removed">-    void putDirtyFloatArray(final float[] array) {</span>
+<span class="removed">-        final int length = array.length;</span>
+<span class="removed">-        // odd sized array are non-cached arrays (initial arrays)</span>
+<span class="removed">-        // ensure to never store initial arrays in cache:</span>
+<span class="removed">-        if (((length &amp; 0x1) == 0) &amp;&amp; (length &lt;= MAX_ARRAY_SIZE)) {</span>
+<span class="removed">-            getDirtyFloatArrayCache(length).putDirtyArray(array, length);</span>
+<span class="new">+    ByteArrayCache.Reference newDirtyByteArrayRef(final int initialSize) {</span>
+<span class="new">+        return dirtyByteCache.createRef(initialSize);</span>
+         }
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    /* class holding all array cache instances */</span>
+<span class="removed">-    static final class ArrayCachesHolder {</span>
+<span class="removed">-        // zero-filled int array cache:</span>
+<span class="removed">-        final IntArrayCache[] intArrayCaches;</span>
+<span class="removed">-        // dirty array caches:</span>
+<span class="removed">-        final IntArrayCache[] dirtyIntArrayCaches;</span>
+<span class="removed">-        final FloatArrayCache[] dirtyFloatArrayCaches;</span>
+<span class="removed">-        final ByteArrayCache[] dirtyByteArrayCaches;</span>
+<span class="removed">-</span>
+<span class="removed">-        ArrayCachesHolder() {</span>
+<span class="removed">-            intArrayCaches = new IntArrayCache[BUCKETS];</span>
+<span class="removed">-            dirtyIntArrayCaches = new IntArrayCache[BUCKETS];</span>
+<span class="removed">-            dirtyFloatArrayCaches = new FloatArrayCache[BUCKETS];</span>
+<span class="removed">-            dirtyByteArrayCaches = new ByteArrayCache[BUCKETS];</span>
+ 
+<span class="removed">-            for (int i = 0; i &lt; BUCKETS; i++) {</span>
+<span class="removed">-                intArrayCaches[i] = new IntArrayCache(ARRAY_SIZES[i]);</span>
+<span class="removed">-                // dirty array caches:</span>
+<span class="removed">-                dirtyIntArrayCaches[i] = new IntArrayCache(ARRAY_SIZES[i]);</span>
+<span class="removed">-                dirtyFloatArrayCaches[i] = new FloatArrayCache(ARRAY_SIZES[i]);</span>
+<span class="removed">-                dirtyByteArrayCaches[i] = new ByteArrayCache(DIRTY_BYTE_ARRAY_SIZES[i]);</span>
+<span class="removed">-            }</span>
+<span class="removed">-        }</span>
+<span class="removed">-    }</span>
+ }
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Renderer.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererStats.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

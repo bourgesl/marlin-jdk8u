@@ -1,0 +1,363 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>Old src/share/classes/sun/java2d/marlin/DRendererContext.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2015, 2018, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.geom.Path2D;
+  29 import java.lang.ref.WeakReference;
+  30 import java.util.concurrent.atomic.AtomicInteger;
+  31 import sun.java2d.ReentrantContext;
+  32 import sun.java2d.marlin.ArrayCacheConst.CacheStats;
+  33 import sun.java2d.marlin.DMarlinRenderingEngine.NormalizingPathIterator;
+  34 import sun.java2d.marlin.DTransformingPathConsumer2D.CurveBasicMonotonizer;
+  35 import sun.java2d.marlin.DTransformingPathConsumer2D.CurveClipSplitter;
+  36 
+  37 /**
+  38  * This class is a renderer context dedicated to a single thread
+  39  */
+  40 final class DRendererContext extends ReentrantContext implements IRendererContext {
+  41 
+  42     // RendererContext creation counter
+  43     private static final AtomicInteger CTX_COUNT = new AtomicInteger(1);
+  44 
+  45     /**
+  46      * Create a new renderer context
+  47      *
+  48      * @return new RendererContext instance
+  49      */
+  50     static DRendererContext createContext() {
+  51         return new DRendererContext("ctx"
+  52                        + Integer.toString(CTX_COUNT.getAndIncrement()));
+  53     }
+  54 
+  55     // Smallest object used as Cleaner's parent reference
+  56     private final Object cleanerObj;
+  57     // dirty flag indicating an exception occured during pipeline in pathTo()
+  58     boolean dirty = false;
+  59     // shared data
+  60     final double[] double6 = new double[6];
+  61     // shared curve (dirty) (Renderer / Stroker)
+  62     final DCurve curve = new DCurve();
+  63     // MarlinRenderingEngine NormalizingPathIterator NearestPixelCenter:
+  64     final NormalizingPathIterator nPCPathIterator;
+  65     // MarlinRenderingEngine NearestPixelQuarter NormalizingPathIterator:
+  66     final NormalizingPathIterator nPQPathIterator;
+  67     // MarlinRenderingEngine.TransformingPathConsumer2D
+  68     final DTransformingPathConsumer2D transformerPC2D;
+  69     // recycled Path2D instance (weak)
+  70     private WeakReference&lt;Path2D.Double&gt; refPath2D = null;
+  71     final DRenderer renderer;
+  72     final DStroker stroker;
+  73     // Simplifies out collinear lines
+  74     final DCollinearSimplifier simplifier = new DCollinearSimplifier();
+  75     // Simplifies path
+  76     final DPathSimplifier pathSimplifier = new DPathSimplifier();
+  77     final DDasher dasher;
+  78     final MarlinTileGenerator ptg;
+  79     final MarlinCache cache;
+  80     // flag indicating the shape is stroked (1) or filled (0)
+  81     int stroking = 0;
+  82     // flag indicating to clip the shape
+  83     boolean doClip = false;
+  84     // flag indicating if the path is closed or not (in advance) to handle properly caps
+  85     boolean closedPath = false;
+  86     // clip rectangle (ymin, ymax, xmin, xmax):
+  87     final double[] clipRect = new double[4];
+  88     // CurveBasicMonotonizer instance
+  89     final CurveBasicMonotonizer monotonizer;
+  90     // CurveClipSplitter instance
+  91     final CurveClipSplitter curveClipSplitter;
+  92 
+  93     // Array caches:
+  94     /* clean int[] cache (zero-filled) = 5 refs */
+  95     private final IntArrayCache cleanIntCache = new IntArrayCache(true, 5);
+  96     /* dirty int[] cache = 5 refs */
+  97     private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 5);
+  98     /* dirty double[] cache = 4 refs (2 polystack) */
+  99     private final DoubleArrayCache dirtyDoubleCache = new DoubleArrayCache(false, 4);
+ 100     /* dirty byte[] cache = 2 ref (2 polystack) */
+ 101     private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 2);
+ 102 
+ 103     // RendererContext statistics
+ 104     final RendererStats stats;
+ 105 
+ 106     final PathConsumer2DAdapter p2dAdapter = new PathConsumer2DAdapter();
+ 107 
+ 108 
+ 109     /**
+ 110      * Constructor
+ 111      *
+ 112      * @param name context name (debugging)
+ 113      */
+ 114     DRendererContext(final String name) {
+ 115         if (LOG_CREATE_CONTEXT) {
+ 116             MarlinUtils.logInfo("new RendererContext = " + name);
+ 117         }
+ 118         this.cleanerObj = new Object();
+ 119 
+ 120         // create first stats (needed by newOffHeapArray):
+ 121         if (DO_STATS || DO_MONITORS) {
+ 122             stats = RendererStats.createInstance(cleanerObj, name);
+ 123             // push cache stats:
+ 124             stats.cacheStats = new CacheStats[] { cleanIntCache.stats,
+ 125                 dirtyIntCache.stats, dirtyDoubleCache.stats, dirtyByteCache.stats
+ 126             };
+ 127         } else {
+ 128             stats = null;
+ 129         }
+ 130 
+ 131         // NormalizingPathIterator instances:
+ 132         nPCPathIterator = new NormalizingPathIterator.NearestPixelCenter(double6);
+ 133         nPQPathIterator  = new NormalizingPathIterator.NearestPixelQuarter(double6);
+ 134 
+ 135         // curve monotonizer &amp; clip subdivider (before transformerPC2D init)
+ 136         monotonizer = new CurveBasicMonotonizer(this);
+ 137         curveClipSplitter = new CurveClipSplitter(this);
+ 138 
+ 139         // MarlinRenderingEngine.TransformingPathConsumer2D
+ 140         transformerPC2D = new DTransformingPathConsumer2D(this);
+ 141 
+ 142         // Renderer:
+ 143         cache = new MarlinCache(this);
+ 144         renderer = new DRenderer(this); // needs MarlinCache from rdrCtx.cache
+ 145         ptg = new MarlinTileGenerator(stats, renderer, cache);
+ 146 
+ 147         stroker = new DStroker(this);
+ 148         dasher = new DDasher(this);
+ 149     }
+ 150 
+ 151     /**
+ 152      * Disposes this renderer context:
+ 153      * clean up before reusing this context
+ 154      */
+ 155     void dispose() {
+ 156         if (DO_STATS) {
+ 157             if (stats.totalOffHeap &gt; stats.totalOffHeapMax) {
+ 158                 stats.totalOffHeapMax = stats.totalOffHeap;
+ 159             }
+ 160             stats.totalOffHeap = 0L;
+ 161         }
+ 162         stroking   = 0;
+ 163         doClip     = false;
+ 164         closedPath = false;
+ 165 
+ 166         // if context is maked as DIRTY:
+ 167         if (dirty) {
+ 168             // may happen if an exception if thrown in the pipeline processing:
+ 169             // force cleanup of all possible pipelined blocks (except Renderer):
+ 170 
+ 171             // NormalizingPathIterator instances:
+ 172             this.nPCPathIterator.dispose();
+ 173             this.nPQPathIterator.dispose();
+ 174             // Dasher:
+ 175             this.dasher.dispose();
+ 176             // Stroker:
+ 177             this.stroker.dispose();
+ 178 
+ 179             // mark context as CLEAN:
+ 180             dirty = false;
+ 181         }
+ 182     }
+ 183 
+ 184     Path2D.Double getPath2D() {
+ 185         // resolve reference:
+ 186         Path2D.Double p2d = (refPath2D != null) ? refPath2D.get() : null;
+ 187 
+ 188         // create a new Path2D ?
+ 189         if (p2d == null) {
+ 190             p2d = new Path2D.Double(WIND_NON_ZERO, INITIAL_EDGES_COUNT); // 32K
+ 191 
+ 192             // update weak reference:
+ 193             refPath2D = new WeakReference&lt;Path2D.Double&gt;(p2d);
+ 194         }
+ 195         // reset the path anyway:
+ 196         p2d.reset();
+ 197         return p2d;
+ 198     }
+ 199 
+ 200     @Override
+ 201     public RendererStats stats() {
+ 202         return stats;
+ 203     }
+ 204 
+ 205     @Override
+ 206     public OffHeapArray newOffHeapArray(final long initialSize) {
+ 207         if (DO_STATS) {
+ 208             stats.totalOffHeapInitial += initialSize;
+ 209         }
+ 210         return new OffHeapArray(cleanerObj, initialSize);
+ 211     }
+ 212 
+ 213     @Override
+ 214     public IntArrayCache.Reference newCleanIntArrayRef(final int initialSize) {
+ 215         return cleanIntCache.createRef(initialSize);
+ 216     }
+ 217 
+ 218     IntArrayCache.Reference newDirtyIntArrayRef(final int initialSize) {
+ 219         return dirtyIntCache.createRef(initialSize);
+ 220     }
+ 221 
+ 222     DoubleArrayCache.Reference newDirtyDoubleArrayRef(final int initialSize) {
+ 223         return dirtyDoubleCache.createRef(initialSize);
+ 224     }
+ 225 
+ 226     ByteArrayCache.Reference newDirtyByteArrayRef(final int initialSize) {
+ 227         return dirtyByteCache.createRef(initialSize);
+ 228     }
+ 229 
+ 230     static final class PathConsumer2DAdapter implements DPathConsumer2D {
+ 231         private sun.awt.geom.PathConsumer2D out;
+ 232 
+ 233         PathConsumer2DAdapter() {}
+ 234 
+ 235         PathConsumer2DAdapter init(sun.awt.geom.PathConsumer2D out) {
+ 236             this.out = out;
+ 237             return this;
+ 238         }
+ 239 
+ 240         @Override
+ 241         public void moveTo(double x0, double y0) {
+ 242             out.moveTo((float)x0, (float)y0);
+ 243         }
+ 244 
+ 245         @Override
+ 246         public void lineTo(double x1, double y1) {
+ 247             out.lineTo((float)x1, (float)y1);
+ 248         }
+ 249 
+ 250         @Override
+ 251         public void closePath() {
+ 252             out.closePath();
+ 253         }
+ 254 
+ 255         @Override
+ 256         public void pathDone() {
+ 257             out.pathDone();
+ 258         }
+ 259 
+ 260         @Override
+ 261         public void curveTo(double x1, double y1,
+ 262                             double x2, double y2,
+ 263                             double x3, double y3)
+ 264         {
+ 265             out.curveTo((float)x1, (float)y1,
+ 266                     (float)x2, (float)y2,
+ 267                     (float)x3, (float)y3);
+ 268         }
+ 269 
+ 270         @Override
+ 271         public void quadTo(double x1, double y1, double x2, double y2) {
+ 272             out.quadTo((float)x1, (float)y1, (float)x2, (float)y2);
+ 273         }
+ 274 
+ 275         @Override
+ 276         public long getNativeConsumer() {
+ 277             throw new InternalError("Not using a native peer");
+ 278         }
+ 279     }
+ 280 }
+</pre></body></html>

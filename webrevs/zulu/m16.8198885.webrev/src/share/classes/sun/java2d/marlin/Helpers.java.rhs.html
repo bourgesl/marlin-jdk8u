@@ -1,0 +1,1176 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2007, 2018, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+<a name="2" id="anc2"></a>
+  28 import java.util.Arrays;
+  29 import sun.awt.geom.PathConsumer2D;
+  30 import sun.java2d.marlin.stats.Histogram;
+  31 import sun.java2d.marlin.stats.StatLong;
+  32 
+  33 final class Helpers implements MarlinConst {
+  34 
+  35     private Helpers() {
+  36         throw new Error("This is a non instantiable class");
+  37     }
+  38 
+  39     static boolean within(final float x, final float y, final float err) {
+  40         final float d = y - x;
+  41         return (d &lt;= err &amp;&amp; d &gt;= -err);
+  42     }
+  43 
+  44     static boolean within(final double x, final double y, final double err) {
+  45         final double d = y - x;
+  46         return (d &lt;= err &amp;&amp; d &gt;= -err);
+  47     }
+  48 
+<a name="3" id="anc3"></a><span class="changed">  49     static float evalCubic(final float a, final float b,</span>
+<span class="changed">  50                            final float c, final float d,</span>
+<span class="changed">  51                            final float t)</span>
+<span class="changed">  52     {</span>
+<span class="changed">  53         return t * (t * (t * a + b) + c) + d;</span>
+<span class="changed">  54     }</span>
+<span class="changed">  55 </span>
+<span class="changed">  56     static float evalQuad(final float a, final float b,</span>
+<span class="changed">  57                           final float c, final float t)</span>
+<span class="changed">  58     {</span>
+<span class="changed">  59         return t * (t * a + b) + c;</span>
+<span class="changed">  60     }</span>
+<span class="changed">  61 </span>
+<span class="changed">  62     static int quadraticRoots(final float a, final float b, final float c,</span>
+<span class="changed">  63                               final float[] zeroes, final int off)</span>
+  64     {
+  65         int ret = off;
+<a name="4" id="anc4"></a>
+  66         if (a != 0.0f) {
+<a name="5" id="anc5"></a><span class="changed">  67             final float dis = b*b - 4.0f * a * c;</span>
+  68             if (dis &gt; 0.0f) {
+  69                 final float sqrtDis = (float) Math.sqrt(dis);
+  70                 // depending on the sign of b we use a slightly different
+  71                 // algorithm than the traditional one to find one of the roots
+  72                 // so we can avoid adding numbers of different signs (which
+  73                 // might result in loss of precision).
+  74                 if (b &gt;= 0.0f) {
+  75                     zeroes[ret++] = (2.0f * c) / (-b - sqrtDis);
+  76                     zeroes[ret++] = (-b - sqrtDis) / (2.0f * a);
+  77                 } else {
+  78                     zeroes[ret++] = (-b + sqrtDis) / (2.0f * a);
+  79                     zeroes[ret++] = (2.0f * c) / (-b + sqrtDis);
+  80                 }
+  81             } else if (dis == 0.0f) {
+<a name="6" id="anc6"></a><span class="changed">  82                 zeroes[ret++] = -b / (2.0f * a);</span>
+
+
+
+
+
+
+  83             }
+<a name="7" id="anc7"></a><span class="new">  84         } else if (b != 0.0f) {</span>
+<span class="new">  85             zeroes[ret++] = -c / b;</span>
+  86         }
+  87         return ret - off;
+  88     }
+  89 
+  90     // find the roots of g(t) = d*t^3 + a*t^2 + b*t + c in [A,B)
+<a name="8" id="anc8"></a><span class="changed">  91     static int cubicRootsInAB(final float d0, float a0, float b0, float c0,</span>
+<span class="changed">  92                               final float[] pts, final int off,</span>
+  93                               final float A, final float B)
+  94     {
+<a name="9" id="anc9"></a><span class="changed">  95         if (d0 == 0.0f) {</span>
+<span class="changed">  96             final int num = quadraticRoots(a0, b0, c0, pts, off);</span>
+  97             return filterOutNotInAB(pts, off, num, A, B) - off;
+  98         }
+  99         // From Graphics Gems:
+<a name="10" id="anc10"></a><span class="changed"> 100         // https://github.com/erich666/GraphicsGems/blob/master/gems/Roots3And4.c</span>
+ 101         // (also from awt.geom.CubicCurve2D. But here we don't need as
+ 102         // much accuracy and we don't want to create arrays so we use
+ 103         // our own customized version).
+ 104 
+ 105         // normal form: x^3 + ax^2 + bx + c = 0
+<a name="11" id="anc11"></a><span class="changed"> 106 </span>
+<span class="changed"> 107         // 2018.1: Need double precision if d is very small (flat curve) !</span>
+<span class="changed"> 108         /*</span>
+<span class="changed"> 109          * TODO: cleanup all that code after reading Roots3And4.c</span>
+<span class="changed"> 110          */</span>
+<span class="changed"> 111         final double a = ((double)a0) / d0;</span>
+<span class="changed"> 112         final double b = ((double)b0) / d0;</span>
+<span class="changed"> 113         final double c = ((double)c0) / d0;</span>
+ 114 
+ 115         //  substitute x = y - A/3 to eliminate quadratic term:
+ 116         //     x^3 +Px + Q = 0
+ 117         //
+ 118         // Since we actually need P/3 and Q/2 for all of the
+ 119         // calculations that follow, we will calculate
+ 120         // p = P/3
+ 121         // q = Q/2
+ 122         // instead and use those values for simplicity of the code.
+<a name="12" id="anc12"></a><span class="changed"> 123         final double sub = (1.0d / 3.0d) * a;</span>
+<span class="changed"> 124         final double sq_A = a * a;</span>
+<span class="changed"> 125         final double p = (1.0d / 3.0d) * ((-1.0d / 3.0d) * sq_A + b);</span>
+<span class="changed"> 126         final double q = (1.0d / 2.0d) * ((2.0d / 27.0d) * a * sq_A - sub * b + c);</span>
+ 127 
+ 128         // use Cardano's formula
+ 129 
+<a name="13" id="anc13"></a><span class="changed"> 130         final double cb_p = p * p * p;</span>
+<span class="changed"> 131         final double D = q * q + cb_p;</span>
+ 132 
+ 133         int num;
+ 134         if (D &lt; 0.0d) {
+ 135             // see: http://en.wikipedia.org/wiki/Cubic_function#Trigonometric_.28and_hyperbolic.29_method
+<a name="14" id="anc14"></a><span class="changed"> 136             final double phi = (1.0d / 3.0d) * Math.acos(-q / Math.sqrt(-cb_p));</span>
+ 137             final double t = 2.0d * Math.sqrt(-p);
+ 138 
+<a name="15" id="anc15"></a><span class="changed"> 139             pts[off    ] = (float) ( t * Math.cos(phi) - sub);</span>
+<span class="changed"> 140             pts[off + 1] = (float) (-t * Math.cos(phi + (Math.PI / 3.0d)) - sub);</span>
+<span class="changed"> 141             pts[off + 2] = (float) (-t * Math.cos(phi - (Math.PI / 3.0d)) - sub);</span>
+ 142             num = 3;
+ 143         } else {
+ 144             final double sqrt_D = Math.sqrt(D);
+ 145             final double u =   Math.cbrt(sqrt_D - q);
+ 146             final double v = - Math.cbrt(sqrt_D + q);
+ 147 
+<a name="16" id="anc16"></a><span class="changed"> 148             pts[off    ] = (float) (u + v - sub);</span>
+ 149             num = 1;
+ 150 
+ 151             if (within(D, 0.0d, 1e-8d)) {
+<a name="17" id="anc17"></a><span class="changed"> 152                 pts[off + 1] = (float)((-1.0d / 2.0d) * (u + v) - sub);</span>
+ 153                 num = 2;
+ 154             }
+ 155         }
+ 156 
+<a name="18" id="anc18"></a>
+
+
+
+
+
+ 157         return filterOutNotInAB(pts, off, num, A, B) - off;
+ 158     }
+ 159 
+<a name="19" id="anc19"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+ 160     // returns the index 1 past the last valid element remaining after filtering
+<a name="20" id="anc20"></a><span class="changed"> 161     static int filterOutNotInAB(final float[] nums, final int off, final int len,</span>
+ 162                                 final float a, final float b)
+ 163     {
+ 164         int ret = off;
+ 165         for (int i = off, end = off + len; i &lt; end; i++) {
+ 166             if (nums[i] &gt;= a &amp;&amp; nums[i] &lt; b) {
+ 167                 nums[ret++] = nums[i];
+ 168             }
+ 169         }
+ 170         return ret;
+ 171     }
+ 172 
+<a name="21" id="anc21"></a><span class="changed"> 173     static float fastLineLen(final float x0, final float y0,</span>
+<span class="changed"> 174                              final float x1, final float y1)</span>
+<span class="changed"> 175     {</span>
+<span class="changed"> 176         final float dx = x1 - x0;</span>
+<span class="changed"> 177         final float dy = y1 - y0;</span>
+<span class="changed"> 178 </span>
+<span class="changed"> 179         // use manhattan norm:</span>
+<span class="changed"> 180         return Math.abs(dx) + Math.abs(dy);</span>
+ 181     }
+ 182 
+<a name="22" id="anc22"></a><span class="changed"> 183     static float linelen(final float x0, final float y0,</span>
+<span class="changed"> 184                          final float x1, final float y1)</span>
+<span class="changed"> 185     {</span>
+<span class="changed"> 186         final float dx = x1 - x0;</span>
+<span class="changed"> 187         final float dy = y1 - y0;</span>
+<span class="changed"> 188         return (float) Math.sqrt(dx * dx + dy * dy);</span>
+<span class="changed"> 189     }</span>
+<span class="changed"> 190 </span>
+<span class="changed"> 191     static float fastQuadLen(final float x0, final float y0,</span>
+<span class="changed"> 192                              final float x1, final float y1,</span>
+<span class="changed"> 193                              final float x2, final float y2)</span>
+<span class="changed"> 194     {</span>
+<span class="changed"> 195         final float dx1 = x1 - x0;</span>
+<span class="changed"> 196         final float dx2 = x2 - x1;</span>
+<span class="changed"> 197         final float dy1 = y1 - y0;</span>
+<span class="changed"> 198         final float dy2 = y2 - y1;</span>
+<span class="changed"> 199 </span>
+<span class="changed"> 200         // use manhattan norm:</span>
+<span class="changed"> 201         return Math.abs(dx1) + Math.abs(dx2)</span>
+<span class="changed"> 202              + Math.abs(dy1) + Math.abs(dy2);</span>
+<span class="changed"> 203     }</span>
+<span class="changed"> 204 </span>
+<span class="changed"> 205     static float quadlen(final float x0, final float y0,</span>
+<span class="changed"> 206                          final float x1, final float y1,</span>
+<span class="changed"> 207                          final float x2, final float y2)</span>
+<span class="changed"> 208     {</span>
+<span class="changed"> 209         return (linelen(x0, y0, x1, y1)</span>
+<span class="changed"> 210                 + linelen(x1, y1, x2, y2)</span>
+<span class="changed"> 211                 + linelen(x0, y0, x2, y2)) / 2.0f;</span>
+<span class="changed"> 212     }</span>
+<span class="changed"> 213 </span>
+<span class="changed"> 214 </span>
+<span class="changed"> 215     static float fastCurvelen(final float x0, final float y0,</span>
+<span class="changed"> 216                               final float x1, final float y1,</span>
+<span class="changed"> 217                               final float x2, final float y2,</span>
+<span class="changed"> 218                               final float x3, final float y3)</span>
+<span class="changed"> 219     {</span>
+<span class="changed"> 220         final float dx1 = x1 - x0;</span>
+<span class="changed"> 221         final float dx2 = x2 - x1;</span>
+<span class="changed"> 222         final float dx3 = x3 - x2;</span>
+<span class="changed"> 223         final float dy1 = y1 - y0;</span>
+<span class="changed"> 224         final float dy2 = y2 - y1;</span>
+<span class="changed"> 225         final float dy3 = y3 - y2;</span>
+<span class="changed"> 226 </span>
+<span class="changed"> 227         // use manhattan norm:</span>
+<span class="changed"> 228         return Math.abs(dx1) + Math.abs(dx2) + Math.abs(dx3)</span>
+<span class="changed"> 229              + Math.abs(dy1) + Math.abs(dy2) + Math.abs(dy3);</span>
+<span class="changed"> 230     }</span>
+<span class="changed"> 231 </span>
+<span class="changed"> 232     static float curvelen(final float x0, final float y0,</span>
+<span class="changed"> 233                           final float x1, final float y1,</span>
+<span class="changed"> 234                           final float x2, final float y2,</span>
+<span class="changed"> 235                           final float x3, final float y3)</span>
+<span class="changed"> 236     {</span>
+<span class="changed"> 237         return (linelen(x0, y0, x1, y1)</span>
+<span class="changed"> 238               + linelen(x1, y1, x2, y2)</span>
+<span class="changed"> 239               + linelen(x2, y2, x3, y3)</span>
+<span class="changed"> 240               + linelen(x0, y0, x3, y3)) / 2.0f;</span>
+<span class="changed"> 241     }</span>
+<span class="changed"> 242 </span>
+<span class="changed"> 243     // finds values of t where the curve in pts should be subdivided in order</span>
+<span class="changed"> 244     // to get good offset curves a distance of w away from the middle curve.</span>
+<span class="changed"> 245     // Stores the points in ts, and returns how many of them there were.</span>
+<span class="changed"> 246     static int findSubdivPoints(final Curve c, final float[] pts,</span>
+<span class="changed"> 247                                 final float[] ts, final int type,</span>
+<span class="changed"> 248                                 final float w2)</span>
+<span class="changed"> 249     {</span>
+<span class="changed"> 250         final float x12 = pts[2] - pts[0];</span>
+<span class="changed"> 251         final float y12 = pts[3] - pts[1];</span>
+<span class="changed"> 252         // if the curve is already parallel to either axis we gain nothing</span>
+<span class="changed"> 253         // from rotating it.</span>
+<span class="changed"> 254         if ((y12 != 0.0f &amp;&amp; x12 != 0.0f)) {</span>
+<span class="changed"> 255             // we rotate it so that the first vector in the control polygon is</span>
+<span class="changed"> 256             // parallel to the x-axis. This will ensure that rotated quarter</span>
+<span class="changed"> 257             // circles won't be subdivided.</span>
+<span class="changed"> 258             final float hypot = (float)Math.sqrt(x12 * x12 + y12 * y12);</span>
+<span class="changed"> 259             final float cos = x12 / hypot;</span>
+<span class="changed"> 260             final float sin = y12 / hypot;</span>
+<span class="changed"> 261             final float x1 = cos * pts[0] + sin * pts[1];</span>
+<span class="changed"> 262             final float y1 = cos * pts[1] - sin * pts[0];</span>
+<span class="changed"> 263             final float x2 = cos * pts[2] + sin * pts[3];</span>
+<span class="changed"> 264             final float y2 = cos * pts[3] - sin * pts[2];</span>
+<span class="changed"> 265             final float x3 = cos * pts[4] + sin * pts[5];</span>
+<span class="changed"> 266             final float y3 = cos * pts[5] - sin * pts[4];</span>
+<span class="changed"> 267 </span>
+ 268             switch(type) {
+<a name="23" id="anc23"></a><span class="new"> 269             case 8:</span>
+<span class="new"> 270                 final float x4 = cos * pts[6] + sin * pts[7];</span>
+<span class="new"> 271                 final float y4 = cos * pts[7] - sin * pts[6];</span>
+<span class="new"> 272                 c.set(x1, y1, x2, y2, x3, y3, x4, y4);</span>
+<span class="new"> 273                 break;</span>
+ 274             case 6:
+<a name="24" id="anc24"></a><span class="changed"> 275                 c.set(x1, y1, x2, y2, x3, y3);</span>
+<span class="changed"> 276                 break;</span>
+<span class="changed"> 277             default:</span>
+<span class="changed"> 278             }</span>
+<span class="changed"> 279         } else {</span>
+<span class="changed"> 280             c.set(pts, type);</span>
+<span class="changed"> 281         }</span>
+<span class="changed"> 282 </span>
+<span class="changed"> 283         int ret = 0;</span>
+<span class="changed"> 284         // we subdivide at values of t such that the remaining rotated</span>
+<span class="changed"> 285         // curves are monotonic in x and y.</span>
+<span class="changed"> 286         ret += c.dxRoots(ts, ret);</span>
+<span class="changed"> 287         ret += c.dyRoots(ts, ret);</span>
+<span class="changed"> 288 </span>
+<span class="changed"> 289         // subdivide at inflection points.</span>
+<span class="changed"> 290         if (type == 8) {</span>
+<span class="changed"> 291             // quadratic curves can't have inflection points</span>
+<span class="changed"> 292             ret += c.infPoints(ts, ret);</span>
+<span class="changed"> 293         }</span>
+<span class="changed"> 294 </span>
+<span class="changed"> 295         // now we must subdivide at points where one of the offset curves will have</span>
+<span class="changed"> 296         // a cusp. This happens at ts where the radius of curvature is equal to w.</span>
+<span class="changed"> 297         ret += c.rootsOfROCMinusW(ts, ret, w2, 0.0001f);</span>
+<span class="changed"> 298 </span>
+<span class="changed"> 299         ret = filterOutNotInAB(ts, 0, ret, 0.0001f, 0.9999f);</span>
+<span class="changed"> 300         isort(ts, ret);</span>
+<span class="changed"> 301         return ret;</span>
+<span class="changed"> 302     }</span>
+<span class="changed"> 303 </span>
+<span class="changed"> 304     // finds values of t where the curve in pts should be subdivided in order</span>
+<span class="changed"> 305     // to get intersections with the given clip rectangle.</span>
+<span class="changed"> 306     // Stores the points in ts, and returns how many of them there were.</span>
+<span class="changed"> 307     static int findClipPoints(final Curve curve, final float[] pts,</span>
+<span class="changed"> 308                               final float[] ts, final int type,</span>
+<span class="changed"> 309                               final int outCodeOR,</span>
+<span class="changed"> 310                               final float[] clipRect)</span>
+<span class="changed"> 311     {</span>
+<span class="changed"> 312         curve.set(pts, type);</span>
+<span class="changed"> 313 </span>
+<span class="changed"> 314         // clip rectangle (ymin, ymax, xmin, xmax)</span>
+<span class="changed"> 315         int ret = 0;</span>
+<span class="changed"> 316 </span>
+<span class="changed"> 317         if ((outCodeOR &amp; OUTCODE_LEFT) != 0) {</span>
+<span class="changed"> 318             ret += curve.xPoints(ts, ret, clipRect[2]);</span>
+<span class="changed"> 319         }</span>
+<span class="changed"> 320         if ((outCodeOR &amp; OUTCODE_RIGHT) != 0) {</span>
+<span class="changed"> 321             ret += curve.xPoints(ts, ret, clipRect[3]);</span>
+<span class="changed"> 322         }</span>
+<span class="changed"> 323         if ((outCodeOR &amp; OUTCODE_TOP) != 0) {</span>
+<span class="changed"> 324             ret += curve.yPoints(ts, ret, clipRect[0]);</span>
+<span class="changed"> 325         }</span>
+<span class="changed"> 326         if ((outCodeOR &amp; OUTCODE_BOTTOM) != 0) {</span>
+<span class="changed"> 327             ret += curve.yPoints(ts, ret, clipRect[1]);</span>
+<span class="changed"> 328         }</span>
+<span class="changed"> 329         isort(ts, ret);</span>
+<span class="changed"> 330         return ret;</span>
+<span class="changed"> 331     }</span>
+<span class="changed"> 332 </span>
+<span class="changed"> 333     static void subdivide(final float[] src,</span>
+<span class="changed"> 334                           final float[] left, final float[] right,</span>
+<span class="changed"> 335                           final int type)</span>
+<span class="changed"> 336     {</span>
+<span class="changed"> 337         switch(type) {</span>
+ 338         case 8:
+<a name="25" id="anc25"></a><span class="changed"> 339             subdivideCubic(src, left, right);</span>
+<span class="changed"> 340             return;</span>
+<span class="changed"> 341         case 6:</span>
+<span class="changed"> 342             subdivideQuad(src, left, right);</span>
+ 343             return;
+ 344         default:
+ 345             throw new InternalError("Unsupported curve type");
+ 346         }
+ 347     }
+ 348 
+<a name="26" id="anc26"></a><span class="changed"> 349     static void isort(final float[] a, final int len) {</span>
+<span class="changed"> 350         for (int i = 1, j; i &lt; len; i++) {</span>
+<span class="changed"> 351             final float ai = a[i];</span>
+<span class="changed"> 352             j = i - 1;</span>
+<span class="changed"> 353             for (; j &gt;= 0 &amp;&amp; a[j] &gt; ai; j--) {</span>
+<span class="changed"> 354                 a[j + 1] = a[j];</span>
+ 355             }
+<a name="27" id="anc27"></a><span class="changed"> 356             a[j + 1] = ai;</span>
+ 357         }
+ 358     }
+ 359 
+ 360     // Most of these are copied from classes in java.awt.geom because we need
+ 361     // both single and double precision variants of these functions, and Line2D,
+ 362     // CubicCurve2D, QuadCurve2D don't provide them.
+ 363     /**
+ 364      * Subdivides the cubic curve specified by the coordinates
+ 365      * stored in the &lt;code&gt;src&lt;/code&gt; array at indices &lt;code&gt;srcoff&lt;/code&gt;
+ 366      * through (&lt;code&gt;srcoff&lt;/code&gt;&amp;nbsp;+&amp;nbsp;7) and stores the
+ 367      * resulting two subdivided curves into the two result arrays at the
+ 368      * corresponding indices.
+ 369      * Either or both of the &lt;code&gt;left&lt;/code&gt; and &lt;code&gt;right&lt;/code&gt;
+ 370      * arrays may be &lt;code&gt;null&lt;/code&gt; or a reference to the same array
+ 371      * as the &lt;code&gt;src&lt;/code&gt; array.
+ 372      * Note that the last point in the first subdivided curve is the
+ 373      * same as the first point in the second subdivided curve. Thus,
+ 374      * it is possible to pass the same array for &lt;code&gt;left&lt;/code&gt;
+ 375      * and &lt;code&gt;right&lt;/code&gt; and to use offsets, such as &lt;code&gt;rightoff&lt;/code&gt;
+ 376      * equals (&lt;code&gt;leftoff&lt;/code&gt; + 6), in order
+ 377      * to avoid allocating extra storage for this common point.
+ 378      * @param src the array holding the coordinates for the source curve
+<a name="28" id="anc28"></a>
+
+ 379      * @param left the array for storing the coordinates for the first
+ 380      * half of the subdivided curve
+<a name="29" id="anc29"></a>
+
+ 381      * @param right the array for storing the coordinates for the second
+ 382      * half of the subdivided curve
+<a name="30" id="anc30"></a>
+
+ 383      * @since 1.7
+ 384      */
+<a name="31" id="anc31"></a><span class="changed"> 385     static void subdivideCubic(final float[] src,</span>
+<span class="changed"> 386                                final float[] left,</span>
+<span class="changed"> 387                                final float[] right)</span>
+<span class="changed"> 388     {</span>
+<span class="changed"> 389         float  x1 = src[0];</span>
+<span class="changed"> 390         float  y1 = src[1];</span>
+<span class="changed"> 391         float cx1 = src[2];</span>
+<span class="changed"> 392         float cy1 = src[3];</span>
+<span class="changed"> 393         float cx2 = src[4];</span>
+<span class="changed"> 394         float cy2 = src[5];</span>
+<span class="changed"> 395         float  x2 = src[6];</span>
+<span class="changed"> 396         float  y2 = src[7];</span>
+<span class="changed"> 397 </span>
+<span class="changed"> 398         left[0]  = x1;</span>
+<span class="changed"> 399         left[1]  = y1;</span>
+<span class="changed"> 400 </span>
+<span class="changed"> 401         right[6] = x2;</span>
+<span class="changed"> 402         right[7] = y2;</span>
+<span class="changed"> 403 </span>
+<span class="changed"> 404         x1 = (x1 + cx1) / 2.0f;</span>
+<span class="changed"> 405         y1 = (y1 + cy1) / 2.0f;</span>
+<span class="changed"> 406         x2 = (x2 + cx2) / 2.0f;</span>
+<span class="changed"> 407         y2 = (y2 + cy2) / 2.0f;</span>
+<span class="changed"> 408 </span>
+<span class="changed"> 409         float cx = (cx1 + cx2) / 2.0f;</span>
+<span class="changed"> 410         float cy = (cy1 + cy2) / 2.0f;</span>
+<span class="changed"> 411 </span>
+<span class="changed"> 412         cx1 = (x1 + cx) / 2.0f;</span>
+<span class="changed"> 413         cy1 = (y1 + cy) / 2.0f;</span>
+<span class="changed"> 414         cx2 = (x2 + cx) / 2.0f;</span>
+<span class="changed"> 415         cy2 = (y2 + cy) / 2.0f;</span>
+<span class="changed"> 416         cx  = (cx1 + cx2) / 2.0f;</span>
+<span class="changed"> 417         cy  = (cy1 + cy2) / 2.0f;</span>
+<span class="changed"> 418 </span>
+<span class="changed"> 419         left[2] = x1;</span>
+<span class="changed"> 420         left[3] = y1;</span>
+<span class="changed"> 421         left[4] = cx1;</span>
+<span class="changed"> 422         left[5] = cy1;</span>
+<span class="changed"> 423         left[6] = cx;</span>
+<span class="changed"> 424         left[7] = cy;</span>
+<span class="changed"> 425 </span>
+<span class="changed"> 426         right[0] = cx;</span>
+<span class="changed"> 427         right[1] = cy;</span>
+<span class="changed"> 428         right[2] = cx2;</span>
+<span class="changed"> 429         right[3] = cy2;</span>
+<span class="changed"> 430         right[4] = x2;</span>
+<span class="changed"> 431         right[5] = y2;</span>
+<span class="changed"> 432     }</span>
+<span class="changed"> 433 </span>
+<span class="changed"> 434     static void subdivideCubicAt(final float t,</span>
+<span class="changed"> 435                                  final float[] src, final int offS,</span>
+<span class="changed"> 436                                  final float[] pts, final int offL, final int offR)</span>
+<span class="changed"> 437     {</span>
+<span class="changed"> 438         float  x1 = src[offS    ];</span>
+<span class="changed"> 439         float  y1 = src[offS + 1];</span>
+<span class="changed"> 440         float cx1 = src[offS + 2];</span>
+<span class="changed"> 441         float cy1 = src[offS + 3];</span>
+<span class="changed"> 442         float cx2 = src[offS + 4];</span>
+<span class="changed"> 443         float cy2 = src[offS + 5];</span>
+<span class="changed"> 444         float  x2 = src[offS + 6];</span>
+<span class="changed"> 445         float  y2 = src[offS + 7];</span>
+<span class="changed"> 446 </span>
+<span class="changed"> 447         pts[offL    ] = x1;</span>
+<span class="changed"> 448         pts[offL + 1] = y1;</span>
+<span class="changed"> 449 </span>
+<span class="changed"> 450         pts[offR + 6] = x2;</span>
+<span class="changed"> 451         pts[offR + 7] = y2;</span>
+<span class="changed"> 452 </span>
+<span class="changed"> 453         x1 =  x1 + t * (cx1 - x1);</span>
+<span class="changed"> 454         y1 =  y1 + t * (cy1 - y1);</span>
+<span class="changed"> 455         x2 = cx2 + t * (x2 - cx2);</span>
+<span class="changed"> 456         y2 = cy2 + t * (y2 - cy2);</span>
+<span class="changed"> 457 </span>
+<span class="changed"> 458         float cx = cx1 + t * (cx2 - cx1);</span>
+<span class="changed"> 459         float cy = cy1 + t * (cy2 - cy1);</span>
+<span class="changed"> 460 </span>
+<span class="changed"> 461         cx1 =  x1 + t * (cx - x1);</span>
+<span class="changed"> 462         cy1 =  y1 + t * (cy - y1);</span>
+<span class="changed"> 463         cx2 =  cx + t * (x2 - cx);</span>
+<span class="changed"> 464         cy2 =  cy + t * (y2 - cy);</span>
+<span class="changed"> 465         cx  = cx1 + t * (cx2 - cx1);</span>
+<span class="changed"> 466         cy  = cy1 + t * (cy2 - cy1);</span>
+<span class="changed"> 467 </span>
+<span class="changed"> 468         pts[offL + 2] = x1;</span>
+<span class="changed"> 469         pts[offL + 3] = y1;</span>
+<span class="changed"> 470         pts[offL + 4] = cx1;</span>
+<span class="changed"> 471         pts[offL + 5] = cy1;</span>
+<span class="changed"> 472         pts[offL + 6] = cx;</span>
+<span class="changed"> 473         pts[offL + 7] = cy;</span>
+<span class="changed"> 474 </span>
+<span class="changed"> 475         pts[offR    ] = cx;</span>
+<span class="changed"> 476         pts[offR + 1] = cy;</span>
+<span class="changed"> 477         pts[offR + 2] = cx2;</span>
+<span class="changed"> 478         pts[offR + 3] = cy2;</span>
+<span class="changed"> 479         pts[offR + 4] = x2;</span>
+<span class="changed"> 480         pts[offR + 5] = y2;</span>
+<span class="changed"> 481     }</span>
+<span class="changed"> 482 </span>
+<span class="changed"> 483     static void subdivideQuad(final float[] src,</span>
+<span class="changed"> 484                               final float[] left,</span>
+<span class="changed"> 485                               final float[] right)</span>
+<span class="changed"> 486     {</span>
+<span class="changed"> 487         float x1 = src[0];</span>
+<span class="changed"> 488         float y1 = src[1];</span>
+<span class="changed"> 489         float cx = src[2];</span>
+<span class="changed"> 490         float cy = src[3];</span>
+<span class="changed"> 491         float x2 = src[4];</span>
+<span class="changed"> 492         float y2 = src[5];</span>
+<span class="changed"> 493 </span>
+<span class="changed"> 494         left[0]  = x1;</span>
+<span class="changed"> 495         left[1]  = y1;</span>
+<span class="changed"> 496 </span>
+<span class="changed"> 497         right[4] = x2;</span>
+<span class="changed"> 498         right[5] = y2;</span>
+<span class="changed"> 499 </span>
+<span class="changed"> 500         x1 = (x1 + cx) / 2.0f;</span>
+<span class="changed"> 501         y1 = (y1 + cy) / 2.0f;</span>
+<span class="changed"> 502         x2 = (x2 + cx) / 2.0f;</span>
+<span class="changed"> 503         y2 = (y2 + cy) / 2.0f;</span>
+<span class="changed"> 504         cx = (x1 + x2) / 2.0f;</span>
+<span class="changed"> 505         cy = (y1 + y2) / 2.0f;</span>
+<span class="changed"> 506 </span>
+<span class="changed"> 507         left[2] = x1;</span>
+<span class="changed"> 508         left[3] = y1;</span>
+<span class="changed"> 509         left[4] = cx;</span>
+<span class="changed"> 510         left[5] = cy;</span>
+<span class="changed"> 511 </span>
+<span class="changed"> 512         right[0] = cx;</span>
+<span class="changed"> 513         right[1] = cy;</span>
+<span class="changed"> 514         right[2] = x2;</span>
+<span class="changed"> 515         right[3] = y2;</span>
+<span class="changed"> 516     }</span>
+<span class="changed"> 517 </span>
+<span class="changed"> 518     static void subdivideQuadAt(final float t,</span>
+<span class="changed"> 519                                 final float[] src, final int offS,</span>
+<span class="changed"> 520                                 final float[] pts, final int offL, final int offR)</span>
+<span class="changed"> 521     {</span>
+<span class="changed"> 522         float x1 = src[offS    ];</span>
+<span class="changed"> 523         float y1 = src[offS + 1];</span>
+<span class="changed"> 524         float cx = src[offS + 2];</span>
+<span class="changed"> 525         float cy = src[offS + 3];</span>
+<span class="changed"> 526         float x2 = src[offS + 4];</span>
+<span class="changed"> 527         float y2 = src[offS + 5];</span>
+<span class="changed"> 528 </span>
+<span class="changed"> 529         pts[offL    ] = x1;</span>
+<span class="changed"> 530         pts[offL + 1] = y1;</span>
+<span class="changed"> 531 </span>
+<span class="changed"> 532         pts[offR + 4] = x2;</span>
+<span class="changed"> 533         pts[offR + 5] = y2;</span>
+<span class="changed"> 534 </span>
+<span class="changed"> 535         x1 = x1 + t * (cx - x1);</span>
+<span class="changed"> 536         y1 = y1 + t * (cy - y1);</span>
+<span class="changed"> 537         x2 = cx + t * (x2 - cx);</span>
+<span class="changed"> 538         y2 = cy + t * (y2 - cy);</span>
+<span class="changed"> 539         cx = x1 + t * (x2 - x1);</span>
+<span class="changed"> 540         cy = y1 + t * (y2 - y1);</span>
+<span class="changed"> 541 </span>
+<span class="changed"> 542         pts[offL + 2] = x1;</span>
+<span class="changed"> 543         pts[offL + 3] = y1;</span>
+<span class="changed"> 544         pts[offL + 4] = cx;</span>
+<span class="changed"> 545         pts[offL + 5] = cy;</span>
+<span class="changed"> 546 </span>
+<span class="changed"> 547         pts[offR    ] = cx;</span>
+<span class="changed"> 548         pts[offR + 1] = cy;</span>
+<span class="changed"> 549         pts[offR + 2] = x2;</span>
+<span class="changed"> 550         pts[offR + 3] = y2;</span>
+<span class="changed"> 551     }</span>
+<span class="changed"> 552 </span>
+<span class="changed"> 553     static void subdivideLineAt(final float t,</span>
+<span class="changed"> 554                                 final float[] src, final int offS,</span>
+<span class="changed"> 555                                 final float[] pts, final int offL, final int offR)</span>
+<span class="changed"> 556     {</span>
+<span class="changed"> 557         float x1 = src[offS    ];</span>
+<span class="changed"> 558         float y1 = src[offS + 1];</span>
+<span class="changed"> 559         float x2 = src[offS + 2];</span>
+<span class="changed"> 560         float y2 = src[offS + 3];</span>
+<span class="changed"> 561 </span>
+<span class="changed"> 562         pts[offL    ] = x1;</span>
+<span class="changed"> 563         pts[offL + 1] = y1;</span>
+<span class="changed"> 564 </span>
+<span class="changed"> 565         pts[offR + 2] = x2;</span>
+<span class="changed"> 566         pts[offR + 3] = y2;</span>
+<span class="changed"> 567 </span>
+<span class="changed"> 568         x1 = x1 + t * (x2 - x1);</span>
+<span class="changed"> 569         y1 = y1 + t * (y2 - y1);</span>
+<span class="changed"> 570 </span>
+<span class="changed"> 571         pts[offL + 2] = x1;</span>
+<span class="changed"> 572         pts[offL + 3] = y1;</span>
+<span class="changed"> 573 </span>
+<span class="changed"> 574         pts[offR    ] = x1;</span>
+<span class="changed"> 575         pts[offR + 1] = y1;</span>
+<span class="changed"> 576     }</span>
+<span class="changed"> 577 </span>
+<span class="changed"> 578     static void subdivideAt(final float t,</span>
+<span class="changed"> 579                             final float[] src, final int offS,</span>
+<span class="changed"> 580                             final float[] pts, final int offL, final int type)</span>
+<span class="changed"> 581     {</span>
+<span class="changed"> 582         // if instead of switch (perf + most probable cases first)</span>
+<span class="changed"> 583         if (type == 8) {</span>
+<span class="changed"> 584             subdivideCubicAt(t, src, offS, pts, offL, offL + type);</span>
+<span class="changed"> 585         } else if (type == 4) {</span>
+<span class="changed"> 586             subdivideLineAt(t, src, offS, pts, offL, offL + type);</span>
+<span class="changed"> 587         } else {</span>
+<span class="changed"> 588             subdivideQuadAt(t, src, offS, pts, offL, offL + type);</span>
+ 589         }
+ 590     }
+ 591 
+ 592     // From sun.java2d.loops.GeneralRenderer:
+ 593 
+ 594     static int outcode(final float x, final float y,
+ 595                        final float[] clipRect)
+ 596     {
+ 597         int code;
+ 598         if (y &lt; clipRect[0]) {
+ 599             code = OUTCODE_TOP;
+ 600         } else if (y &gt;= clipRect[1]) {
+ 601             code = OUTCODE_BOTTOM;
+ 602         } else {
+ 603             code = 0;
+ 604         }
+ 605         if (x &lt; clipRect[2]) {
+ 606             code |= OUTCODE_LEFT;
+ 607         } else if (x &gt;= clipRect[3]) {
+ 608             code |= OUTCODE_RIGHT;
+ 609         }
+ 610         return code;
+ 611     }
+ 612 
+ 613     // a stack of polynomial curves where each curve shares endpoints with
+ 614     // adjacent ones.
+ 615     static final class PolyStack {
+ 616         private static final byte TYPE_LINETO  = (byte) 0;
+ 617         private static final byte TYPE_QUADTO  = (byte) 1;
+ 618         private static final byte TYPE_CUBICTO = (byte) 2;
+ 619 
+ 620         // curves capacity = edges count (8192) = edges x 2 (coords)
+ 621         private static final int INITIAL_CURVES_COUNT = INITIAL_EDGES_COUNT &lt;&lt; 1;
+ 622 
+ 623         // types capacity = edges count (4096)
+ 624         private static final int INITIAL_TYPES_COUNT = INITIAL_EDGES_COUNT;
+ 625 
+ 626         float[] curves;
+ 627         int end;
+ 628         byte[] curveTypes;
+ 629         int numCurves;
+ 630 
+ 631         // curves ref (dirty)
+ 632         final FloatArrayCache.Reference curves_ref;
+ 633         // curveTypes ref (dirty)
+ 634         final ByteArrayCache.Reference curveTypes_ref;
+ 635 
+ 636         // used marks (stats only)
+ 637         int curveTypesUseMark;
+ 638         int curvesUseMark;
+ 639 
+ 640         private final StatLong stat_polystack_types;
+ 641         private final StatLong stat_polystack_curves;
+ 642         private final Histogram hist_polystack_curves;
+ 643         private final StatLong stat_array_polystack_curves;
+ 644         private final StatLong stat_array_polystack_curveTypes;
+ 645 
+ 646         PolyStack(final RendererContext rdrCtx) {
+ 647             this(rdrCtx, null, null, null, null, null);
+ 648         }
+ 649 
+ 650         PolyStack(final RendererContext rdrCtx,
+ 651                   final StatLong stat_polystack_types,
+ 652                   final StatLong stat_polystack_curves,
+ 653                   final Histogram hist_polystack_curves,
+ 654                   final StatLong stat_array_polystack_curves,
+ 655                   final StatLong stat_array_polystack_curveTypes)
+ 656         {
+ 657             curves_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_CURVES_COUNT); // 32K
+ 658             curves     = curves_ref.initial;
+ 659 
+ 660             curveTypes_ref = rdrCtx.newDirtyByteArrayRef(INITIAL_TYPES_COUNT); // 4K
+ 661             curveTypes     = curveTypes_ref.initial;
+ 662             numCurves = 0;
+ 663             end = 0;
+ 664 
+ 665             if (DO_STATS) {
+ 666                 curveTypesUseMark = 0;
+ 667                 curvesUseMark = 0;
+ 668             }
+ 669             this.stat_polystack_types = stat_polystack_types;
+ 670             this.stat_polystack_curves = stat_polystack_curves;
+ 671             this.hist_polystack_curves = hist_polystack_curves;
+ 672             this.stat_array_polystack_curves = stat_array_polystack_curves;
+ 673             this.stat_array_polystack_curveTypes = stat_array_polystack_curveTypes;
+ 674         }
+ 675 
+ 676         /**
+ 677          * Disposes this PolyStack:
+ 678          * clean up before reusing this instance
+ 679          */
+ 680         void dispose() {
+ 681             end = 0;
+ 682             numCurves = 0;
+ 683 
+ 684             if (DO_STATS) {
+ 685                 stat_polystack_types.add(curveTypesUseMark);
+ 686                 stat_polystack_curves.add(curvesUseMark);
+ 687                 hist_polystack_curves.add(curvesUseMark);
+ 688 
+ 689                 // reset marks
+ 690                 curveTypesUseMark = 0;
+ 691                 curvesUseMark = 0;
+ 692             }
+ 693 
+ 694             // Return arrays:
+ 695             // curves and curveTypes are kept dirty
+ 696             curves     = curves_ref.putArray(curves);
+ 697             curveTypes = curveTypes_ref.putArray(curveTypes);
+ 698         }
+ 699 
+ 700         private void ensureSpace(final int n) {
+ 701             // use substraction to avoid integer overflow:
+ 702             if (curves.length - end &lt; n) {
+ 703                 if (DO_STATS) {
+ 704                     stat_array_polystack_curves.add(end + n);
+ 705                 }
+ 706                 curves = curves_ref.widenArray(curves, end, end + n);
+ 707             }
+ 708             if (curveTypes.length &lt;= numCurves) {
+ 709                 if (DO_STATS) {
+ 710                     stat_array_polystack_curveTypes.add(numCurves + 1);
+ 711                 }
+ 712                 curveTypes = curveTypes_ref.widenArray(curveTypes,
+ 713                                                        numCurves,
+ 714                                                        numCurves + 1);
+ 715             }
+ 716         }
+ 717 
+ 718         void pushCubic(float x0, float y0,
+ 719                        float x1, float y1,
+ 720                        float x2, float y2)
+ 721         {
+ 722             ensureSpace(6);
+ 723             curveTypes[numCurves++] = TYPE_CUBICTO;
+ 724             // we reverse the coordinate order to make popping easier
+ 725             final float[] _curves = curves;
+ 726             int e = end;
+ 727             _curves[e++] = x2;    _curves[e++] = y2;
+ 728             _curves[e++] = x1;    _curves[e++] = y1;
+ 729             _curves[e++] = x0;    _curves[e++] = y0;
+ 730             end = e;
+ 731         }
+ 732 
+ 733         void pushQuad(float x0, float y0,
+ 734                       float x1, float y1)
+ 735         {
+ 736             ensureSpace(4);
+ 737             curveTypes[numCurves++] = TYPE_QUADTO;
+ 738             final float[] _curves = curves;
+ 739             int e = end;
+ 740             _curves[e++] = x1;    _curves[e++] = y1;
+ 741             _curves[e++] = x0;    _curves[e++] = y0;
+ 742             end = e;
+ 743         }
+ 744 
+ 745         void pushLine(float x, float y) {
+ 746             ensureSpace(2);
+ 747             curveTypes[numCurves++] = TYPE_LINETO;
+ 748             curves[end++] = x;    curves[end++] = y;
+ 749         }
+ 750 
+ 751         void pullAll(final PathConsumer2D io) {
+ 752             final int nc = numCurves;
+ 753             if (nc == 0) {
+ 754                 return;
+ 755             }
+ 756             if (DO_STATS) {
+ 757                 // update used marks:
+ 758                 if (numCurves &gt; curveTypesUseMark) {
+ 759                     curveTypesUseMark = numCurves;
+ 760                 }
+ 761                 if (end &gt; curvesUseMark) {
+ 762                     curvesUseMark = end;
+ 763                 }
+ 764             }
+ 765             final byte[]  _curveTypes = curveTypes;
+ 766             final float[] _curves = curves;
+ 767             int e = 0;
+ 768 
+ 769             for (int i = 0; i &lt; nc; i++) {
+ 770                 switch(_curveTypes[i]) {
+ 771                 case TYPE_LINETO:
+ 772                     io.lineTo(_curves[e], _curves[e+1]);
+ 773                     e += 2;
+ 774                     continue;
+ 775                 case TYPE_QUADTO:
+<a name="32" id="anc32"></a><span class="changed"> 776                     io.quadTo(_curves[e],   _curves[e+1],</span>
+ 777                               _curves[e+2], _curves[e+3]);
+ 778                     e += 4;
+ 779                     continue;
+ 780                 case TYPE_CUBICTO:
+<a name="33" id="anc33"></a><span class="changed"> 781                     io.curveTo(_curves[e],   _curves[e+1],</span>
+ 782                                _curves[e+2], _curves[e+3],
+ 783                                _curves[e+4], _curves[e+5]);
+ 784                     e += 6;
+ 785                     continue;
+ 786                 default:
+ 787                 }
+ 788             }
+ 789             numCurves = 0;
+ 790             end = 0;
+ 791         }
+ 792 
+ 793         void popAll(final PathConsumer2D io) {
+ 794             int nc = numCurves;
+ 795             if (nc == 0) {
+ 796                 return;
+ 797             }
+ 798             if (DO_STATS) {
+ 799                 // update used marks:
+ 800                 if (numCurves &gt; curveTypesUseMark) {
+ 801                     curveTypesUseMark = numCurves;
+ 802                 }
+ 803                 if (end &gt; curvesUseMark) {
+ 804                     curvesUseMark = end;
+ 805                 }
+ 806             }
+ 807             final byte[]  _curveTypes = curveTypes;
+ 808             final float[] _curves = curves;
+ 809             int e  = end;
+ 810 
+ 811             while (nc != 0) {
+ 812                 switch(_curveTypes[--nc]) {
+ 813                 case TYPE_LINETO:
+ 814                     e -= 2;
+ 815                     io.lineTo(_curves[e], _curves[e+1]);
+ 816                     continue;
+ 817                 case TYPE_QUADTO:
+ 818                     e -= 4;
+<a name="34" id="anc34"></a><span class="changed"> 819                     io.quadTo(_curves[e],   _curves[e+1],</span>
+ 820                               _curves[e+2], _curves[e+3]);
+ 821                     continue;
+ 822                 case TYPE_CUBICTO:
+ 823                     e -= 6;
+<a name="35" id="anc35"></a><span class="changed"> 824                     io.curveTo(_curves[e],   _curves[e+1],</span>
+ 825                                _curves[e+2], _curves[e+3],
+ 826                                _curves[e+4], _curves[e+5]);
+ 827                     continue;
+ 828                 default:
+ 829                 }
+ 830             }
+ 831             numCurves = 0;
+ 832             end = 0;
+ 833         }
+ 834 
+ 835         @Override
+ 836         public String toString() {
+ 837             String ret = "";
+ 838             int nc = numCurves;
+ 839             int last = end;
+ 840             int len;
+ 841             while (nc != 0) {
+ 842                 switch(curveTypes[--nc]) {
+ 843                 case TYPE_LINETO:
+ 844                     len = 2;
+ 845                     ret += "line: ";
+ 846                     break;
+ 847                 case TYPE_QUADTO:
+ 848                     len = 4;
+ 849                     ret += "quad: ";
+ 850                     break;
+ 851                 case TYPE_CUBICTO:
+ 852                     len = 6;
+ 853                     ret += "cubic: ";
+ 854                     break;
+ 855                 default:
+ 856                     len = 0;
+ 857                 }
+ 858                 last -= len;
+ 859                 ret += Arrays.toString(Arrays.copyOfRange(curves, last, last+len))
+ 860                                        + "\n";
+ 861             }
+ 862             return ret;
+ 863         }
+ 864     }
+ 865 
+ 866     // a stack of integer indices
+ 867     static final class IndexStack {
+ 868 
+ 869         // integer capacity = edges count / 4 ~ 1024
+ 870         private static final int INITIAL_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 2;
+ 871 
+ 872         private int end;
+ 873         private int[] indices;
+ 874 
+ 875         // indices ref (dirty)
+ 876         private final IntArrayCache.Reference indices_ref;
+ 877 
+ 878         // used marks (stats only)
+ 879         private int indicesUseMark;
+ 880 
+ 881         private final StatLong stat_idxstack_indices;
+ 882         private final Histogram hist_idxstack_indices;
+ 883         private final StatLong stat_array_idxstack_indices;
+ 884 
+ 885         IndexStack(final RendererContext rdrCtx) {
+ 886             this(rdrCtx, null, null, null);
+ 887         }
+ 888 
+ 889         IndexStack(final RendererContext rdrCtx,
+ 890                    final StatLong stat_idxstack_indices,
+ 891                    final Histogram hist_idxstack_indices,
+ 892                    final StatLong stat_array_idxstack_indices)
+ 893         {
+ 894             indices_ref = rdrCtx.newDirtyIntArrayRef(INITIAL_COUNT); // 4K
+ 895             indices     = indices_ref.initial;
+ 896             end = 0;
+ 897 
+ 898             if (DO_STATS) {
+ 899                 indicesUseMark = 0;
+ 900             }
+ 901             this.stat_idxstack_indices = stat_idxstack_indices;
+ 902             this.hist_idxstack_indices = hist_idxstack_indices;
+ 903             this.stat_array_idxstack_indices = stat_array_idxstack_indices;
+ 904         }
+ 905 
+ 906         /**
+ 907          * Disposes this PolyStack:
+ 908          * clean up before reusing this instance
+ 909          */
+ 910         void dispose() {
+ 911             end = 0;
+ 912 
+ 913             if (DO_STATS) {
+ 914                 stat_idxstack_indices.add(indicesUseMark);
+ 915                 hist_idxstack_indices.add(indicesUseMark);
+ 916 
+ 917                 // reset marks
+ 918                 indicesUseMark = 0;
+ 919             }
+ 920 
+ 921             // Return arrays:
+ 922             // values is kept dirty
+ 923             indices = indices_ref.putArray(indices);
+ 924         }
+ 925 
+ 926         boolean isEmpty() {
+ 927             return (end == 0);
+ 928         }
+ 929 
+ 930         void reset() {
+ 931             end = 0;
+ 932         }
+ 933 
+ 934         void push(final int v) {
+ 935             // remove redundant values (reverse order):
+ 936             int[] _values = indices;
+ 937             final int nc = end;
+ 938             if (nc != 0) {
+ 939                 if (_values[nc - 1] == v) {
+ 940                     // remove both duplicated values:
+ 941                     end--;
+ 942                     return;
+ 943                 }
+ 944             }
+ 945             if (_values.length &lt;= nc) {
+ 946                 if (DO_STATS) {
+ 947                     stat_array_idxstack_indices.add(nc + 1);
+ 948                 }
+ 949                 indices = _values = indices_ref.widenArray(_values, nc, nc + 1);
+ 950             }
+ 951             _values[end++] = v;
+ 952 
+ 953             if (DO_STATS) {
+ 954                 // update used marks:
+ 955                 if (end &gt; indicesUseMark) {
+ 956                     indicesUseMark = end;
+ 957                 }
+ 958             }
+ 959         }
+ 960 
+ 961         void pullAll(final float[] points, final PathConsumer2D io) {
+ 962             final int nc = end;
+ 963             if (nc == 0) {
+ 964                 return;
+ 965             }
+ 966             final int[] _values = indices;
+ 967 
+ 968             for (int i = 0, j; i &lt; nc; i++) {
+ 969                 j = _values[i] &lt;&lt; 1;
+ 970                 io.lineTo(points[j], points[j + 1]);
+ 971             }
+ 972             end = 0;
+ 973         }
+ 974     }
+ 975 }
+<a name="36" id="anc36"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="36" type="hidden" /></form></body></html>

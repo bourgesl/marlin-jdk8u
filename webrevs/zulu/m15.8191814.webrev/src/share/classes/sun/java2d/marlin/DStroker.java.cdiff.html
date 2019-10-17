@@ -1,0 +1,1210 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Cdiff src/share/classes/sun/java2d/marlin/DStroker.java</title>
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DRendererContext.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java.cdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/DStroker.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13694">13694</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8191814">8191814</a>: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
+Summary: upgrade to Marlin 0.8.2 providing efficient path clipping (Stroker and Filler)
+Reviewed-by: prr, serb</pre>
+        <pre>
+<hr /><span class="oldmarker">*** 24,79 ****</span>
+   */
+  
+  package sun.java2d.marlin;
+  
+  import java.util.Arrays;
+  
+  // TODO: some of the arithmetic here is too verbose and prone to hard to
+  // debug typos. We should consider making a small Point/Vector class that
+  // has methods like plus(Point), minus(Point), dot(Point), cross(Point)and such
+  final class DStroker implements DPathConsumer2D, MarlinConst {
+  
+      private static final int MOVE_TO = 0;
+      private static final int DRAWING_OP_TO = 1; // ie. curve, line, or quad
+      private static final int CLOSE = 2;
+  
+<span class="removed">-     /**</span>
+<span class="removed">-      * Constant value for join style.</span>
+<span class="removed">-      */</span>
+<span class="removed">-     public static final int JOIN_MITER = 0;</span>
+<span class="removed">- </span>
+<span class="removed">-     /**</span>
+<span class="removed">-      * Constant value for join style.</span>
+<span class="removed">-      */</span>
+<span class="removed">-     public static final int JOIN_ROUND = 1;</span>
+<span class="removed">- </span>
+<span class="removed">-     /**</span>
+<span class="removed">-      * Constant value for join style.</span>
+<span class="removed">-      */</span>
+<span class="removed">-     public static final int JOIN_BEVEL = 2;</span>
+<span class="removed">- </span>
+<span class="removed">-     /**</span>
+<span class="removed">-      * Constant value for end cap style.</span>
+<span class="removed">-      */</span>
+<span class="removed">-     public static final int CAP_BUTT = 0;</span>
+<span class="removed">- </span>
+<span class="removed">-     /**</span>
+<span class="removed">-      * Constant value for end cap style.</span>
+<span class="removed">-      */</span>
+<span class="removed">-     public static final int CAP_ROUND = 1;</span>
+<span class="removed">- </span>
+<span class="removed">-     /**</span>
+<span class="removed">-      * Constant value for end cap style.</span>
+<span class="removed">-      */</span>
+<span class="removed">-     public static final int CAP_SQUARE = 2;</span>
+<span class="removed">- </span>
+      // pisces used to use fixed point arithmetic with 16 decimal digits. I
+      // didn't want to change the values of the constant below when I converted
+      // it to floating point, so that's why the divisions by 2^16 are there.
+      private static final double ROUND_JOIN_THRESHOLD = 1000.0d/65536.0d;
+  
+<span class="changed">!     private static final double C = 0.5522847498307933d;</span>
+  
+      private static final int MAX_N_CURVES = 11;
+  
+      private DPathConsumer2D out;
+  
+<span class="newmarker">--- 24,54 ----</span>
+   */
+  
+  package sun.java2d.marlin;
+  
+  import java.util.Arrays;
+<span class="new">+ import sun.java2d.marlin.DHelpers.PolyStack;</span>
+  
+  // TODO: some of the arithmetic here is too verbose and prone to hard to
+  // debug typos. We should consider making a small Point/Vector class that
+  // has methods like plus(Point), minus(Point), dot(Point), cross(Point)and such
+  final class DStroker implements DPathConsumer2D, MarlinConst {
+  
+      private static final int MOVE_TO = 0;
+      private static final int DRAWING_OP_TO = 1; // ie. curve, line, or quad
+      private static final int CLOSE = 2;
+  
+      // pisces used to use fixed point arithmetic with 16 decimal digits. I
+      // didn't want to change the values of the constant below when I converted
+      // it to floating point, so that's why the divisions by 2^16 are there.
+      private static final double ROUND_JOIN_THRESHOLD = 1000.0d/65536.0d;
+  
+<span class="changed">!     // kappa = (4/3) * (SQRT(2) - 1)</span>
+<span class="changed">!     private static final double C = (4.0d * (Math.sqrt(2.0d) - 1.0d) / 3.0d);</span>
+<span class="changed">! </span>
+<span class="changed">!     // SQRT(2)</span>
+<span class="changed">!     private static final double SQRT_2 = Math.sqrt(2.0d);</span>
+  
+      private static final int MAX_N_CURVES = 11;
+  
+      private DPathConsumer2D out;
+  
+<hr /><span class="oldmarker">*** 116,133 ****</span>
+      final DRendererContext rdrCtx;
+  
+      // dirty curve
+      final DCurve curve;
+  
+      /**
+       * Constructs a &lt;code&gt;DStroker&lt;/code&gt;.
+       * @param rdrCtx per-thread renderer context
+       */
+      DStroker(final DRendererContext rdrCtx) {
+          this.rdrCtx = rdrCtx;
+  
+<span class="changed">!         this.reverse = new PolyStack(rdrCtx);</span>
+          this.curve = rdrCtx.curve;
+      }
+  
+      /**
+       * Inits the &lt;code&gt;DStroker&lt;/code&gt;.
+<span class="newmarker">--- 91,130 ----</span>
+      final DRendererContext rdrCtx;
+  
+      // dirty curve
+      final DCurve curve;
+  
+<span class="new">+     // Bounds of the drawing region, at pixel precision.</span>
+<span class="new">+     private double[] clipRect;</span>
+<span class="new">+ </span>
+<span class="new">+     // the outcode of the current point</span>
+<span class="new">+     private int cOutCode = 0;</span>
+<span class="new">+ </span>
+<span class="new">+     // the outcode of the starting point</span>
+<span class="new">+     private int sOutCode = 0;</span>
+<span class="new">+ </span>
+<span class="new">+     // flag indicating if the path is opened (clipped)</span>
+<span class="new">+     private boolean opened = false;</span>
+<span class="new">+     // flag indicating if the starting point's cap is done</span>
+<span class="new">+     private boolean capStart = false;</span>
+<span class="new">+ </span>
+      /**
+       * Constructs a &lt;code&gt;DStroker&lt;/code&gt;.
+       * @param rdrCtx per-thread renderer context
+       */
+      DStroker(final DRendererContext rdrCtx) {
+          this.rdrCtx = rdrCtx;
+  
+<span class="changed">!         this.reverse = (rdrCtx.stats != null) ?</span>
+<span class="changed">!             new PolyStack(rdrCtx,</span>
+<span class="changed">!                     rdrCtx.stats.stat_str_polystack_types,</span>
+<span class="changed">!                     rdrCtx.stats.stat_str_polystack_curves,</span>
+<span class="changed">!                     rdrCtx.stats.hist_str_polystack_curves,</span>
+<span class="changed">!                     rdrCtx.stats.stat_array_str_polystack_curves,</span>
+<span class="changed">!                     rdrCtx.stats.stat_array_str_polystack_types)</span>
+<span class="changed">!             : new PolyStack(rdrCtx);</span>
+<span class="changed">! </span>
+          this.curve = rdrCtx.curve;
+      }
+  
+      /**
+       * Inits the &lt;code&gt;DStroker&lt;/code&gt;.
+<hr /><span class="oldmarker">*** 139,180 ****</span>
+       * &lt;code&gt;CAP_SQUARE&lt;/code&gt;.
+       * @param joinStyle the desired line join style, one of
+       * &lt;code&gt;JOIN_MITER&lt;/code&gt;, &lt;code&gt;JOIN_ROUND&lt;/code&gt; or
+       * &lt;code&gt;JOIN_BEVEL&lt;/code&gt;.
+       * @param miterLimit the desired miter limit
+       * @return this instance
+       */
+<span class="changed">!     DStroker init(DPathConsumer2D pc2d,</span>
+<span class="changed">!               double lineWidth,</span>
+<span class="changed">!               int capStyle,</span>
+<span class="changed">!               int joinStyle,</span>
+<span class="changed">!               double miterLimit)</span>
+      {
+          this.out = pc2d;
+  
+          this.lineWidth2 = lineWidth / 2.0d;
+          this.invHalfLineWidth2Sq = 1.0d / (2.0d * lineWidth2 * lineWidth2);
+          this.capStyle = capStyle;
+          this.joinStyle = joinStyle;
+  
+<span class="changed">!         double limit = miterLimit * lineWidth2;</span>
+          this.miterLimitSq = limit * limit;
+  
+          this.prev = CLOSE;
+  
+          rdrCtx.stroking = 1;
+  
+          return this; // fluent API
+      }
+  
+      /**
+       * Disposes this stroker:
+       * clean up before reusing this instance
+       */
+      void dispose() {
+          reverse.dispose();
+  
+          if (DO_CLEAN_DIRTY) {
+              // Force zero-fill dirty arrays:
+              Arrays.fill(offset0, 0.0d);
+              Arrays.fill(offset1, 0.0d);
+              Arrays.fill(offset2, 0.0d);
+<span class="newmarker">--- 136,214 ----</span>
+       * &lt;code&gt;CAP_SQUARE&lt;/code&gt;.
+       * @param joinStyle the desired line join style, one of
+       * &lt;code&gt;JOIN_MITER&lt;/code&gt;, &lt;code&gt;JOIN_ROUND&lt;/code&gt; or
+       * &lt;code&gt;JOIN_BEVEL&lt;/code&gt;.
+       * @param miterLimit the desired miter limit
+<span class="new">+      * @param scale scaling factor applied to clip boundaries</span>
+       * @return this instance
+       */
+<span class="changed">!     DStroker init(final DPathConsumer2D pc2d,</span>
+<span class="changed">!                   final double lineWidth,</span>
+<span class="changed">!                   final int capStyle,</span>
+<span class="changed">!                   final int joinStyle,</span>
+<span class="changed">!                   final double miterLimit,</span>
+<span class="changed">!                   final double scale)</span>
+      {
+          this.out = pc2d;
+  
+          this.lineWidth2 = lineWidth / 2.0d;
+          this.invHalfLineWidth2Sq = 1.0d / (2.0d * lineWidth2 * lineWidth2);
+          this.capStyle = capStyle;
+          this.joinStyle = joinStyle;
+  
+<span class="changed">!         final double limit = miterLimit * lineWidth2;</span>
+          this.miterLimitSq = limit * limit;
+  
+          this.prev = CLOSE;
+  
+          rdrCtx.stroking = 1;
+  
+<span class="new">+         if (rdrCtx.doClip) {</span>
+<span class="new">+             // Adjust the clipping rectangle with the stroker margin (miter limit, width)</span>
+<span class="new">+             double rdrOffX = 0.0d, rdrOffY = 0.0d;</span>
+<span class="new">+             double margin = lineWidth2;</span>
+<span class="new">+ </span>
+<span class="new">+             if (capStyle == CAP_SQUARE) {</span>
+<span class="new">+                 margin *= SQRT_2;</span>
+<span class="new">+             }</span>
+<span class="new">+             if ((joinStyle == JOIN_MITER) &amp;&amp; (margin &lt; limit)) {</span>
+<span class="new">+                 margin = limit;</span>
+<span class="new">+             }</span>
+<span class="new">+             if (scale != 1.0d) {</span>
+<span class="new">+                 margin *= scale;</span>
+<span class="new">+                 rdrOffX = scale * DRenderer.RDR_OFFSET_X;</span>
+<span class="new">+                 rdrOffY = scale * DRenderer.RDR_OFFSET_Y;</span>
+<span class="new">+             }</span>
+<span class="new">+             // add a small rounding error:</span>
+<span class="new">+             margin += 1e-3d;</span>
+<span class="new">+ </span>
+<span class="new">+             // bounds as half-open intervals: minX &lt;= x &lt; maxX and minY &lt;= y &lt; maxY</span>
+<span class="new">+             // adjust clip rectangle (ymin, ymax, xmin, xmax):</span>
+<span class="new">+             final double[] _clipRect = rdrCtx.clipRect;</span>
+<span class="new">+             _clipRect[0] -= margin - rdrOffY;</span>
+<span class="new">+             _clipRect[1] += margin + rdrOffY;</span>
+<span class="new">+             _clipRect[2] -= margin - rdrOffX;</span>
+<span class="new">+             _clipRect[3] += margin + rdrOffX;</span>
+<span class="new">+             this.clipRect = _clipRect;</span>
+<span class="new">+         } else {</span>
+<span class="new">+             this.clipRect = null;</span>
+<span class="new">+             this.cOutCode = 0;</span>
+<span class="new">+             this.sOutCode = 0;</span>
+<span class="new">+         }</span>
+          return this; // fluent API
+      }
+  
+      /**
+       * Disposes this stroker:
+       * clean up before reusing this instance
+       */
+      void dispose() {
+          reverse.dispose();
+  
+<span class="new">+         opened   = false;</span>
+<span class="new">+         capStart = false;</span>
+<span class="new">+ </span>
+          if (DO_CLEAN_DIRTY) {
+              // Force zero-fill dirty arrays:
+              Arrays.fill(offset0, 0.0d);
+              Arrays.fill(offset1, 0.0d);
+              Arrays.fill(offset2, 0.0d);
+<hr /><span class="oldmarker">*** 441,527 ****</span>
+              emitLineTo(miterX, miterY, rev);
+          }
+      }
+  
+      @Override
+<span class="changed">!     public void moveTo(double x0, double y0) {</span>
+          if (prev == DRAWING_OP_TO) {
+<span class="changed">!             finish();</span>
+          }
+<span class="removed">-         this.sx0 = this.cx0 = x0;</span>
+<span class="removed">-         this.sy0 = this.cy0 = y0;</span>
+<span class="removed">-         this.cdx = this.sdx = 1.0d;</span>
+<span class="removed">-         this.cdy = this.sdy = 0.0d;</span>
+          this.prev = MOVE_TO;
+      }
+  
+      @Override
+<span class="changed">!     public void lineTo(double x1, double y1) {</span>
+          double dx = x1 - cx0;
+          double dy = y1 - cy0;
+          if (dx == 0.0d &amp;&amp; dy == 0.0d) {
+              dx = 1.0d;
+          }
+          computeOffset(dx, dy, lineWidth2, offset0);
+          final double mx = offset0[0];
+          final double my = offset0[1];
+  
+<span class="changed">!         drawJoin(cdx, cdy, cx0, cy0, dx, dy, cmx, cmy, mx, my);</span>
+  
+          emitLineTo(cx0 + mx, cy0 + my);
+          emitLineTo( x1 + mx,  y1 + my);
+  
+          emitLineToRev(cx0 - mx, cy0 - my);
+          emitLineToRev( x1 - mx,  y1 - my);
+  
+<span class="changed">!         this.cmx = mx;</span>
+<span class="changed">!         this.cmy = my;</span>
+<span class="changed">!         this.cdx = dx;</span>
+<span class="changed">!         this.cdy = dy;</span>
+          this.cx0 = x1;
+          this.cy0 = y1;
+<span class="changed">!         this.prev = DRAWING_OP_TO;</span>
+      }
+  
+      @Override
+      public void closePath() {
+<span class="changed">!         if (prev != DRAWING_OP_TO) {</span>
+              if (prev == CLOSE) {
+                  return;
+              }
+              emitMoveTo(cx0, cy0 - lineWidth2);
+<span class="changed">!             this.cmx = this.smx = 0.0d;</span>
+<span class="changed">!             this.cmy = this.smy = -lineWidth2;</span>
+<span class="changed">!             this.cdx = this.sdx = 1.0d;</span>
+<span class="changed">!             this.cdy = this.sdy = 0.0d;</span>
+<span class="changed">!             finish();</span>
+              return;
+          }
+  
+          if (cx0 != sx0 || cy0 != sy0) {
+<span class="changed">!             lineTo(sx0, sy0);</span>
+          }
+  
+<span class="changed">!         drawJoin(cdx, cdy, cx0, cy0, sdx, sdy, cmx, cmy, smx, smy);</span>
+  
+          emitLineTo(sx0 + smx, sy0 + smy);
+  
+          emitMoveTo(sx0 - smx, sy0 - smy);
+          emitReverse();
+  
+          this.prev = CLOSE;
+          emitClose();
+      }
+  
+      private void emitReverse() {
+          reverse.popAll(out);
+      }
+  
+      @Override
+      public void pathDone() {
+          if (prev == DRAWING_OP_TO) {
+<span class="changed">!             finish();</span>
+          }
+  
+          out.pathDone();
+  
+          // this shouldn't matter since this object won't be used
+<span class="newmarker">--- 475,626 ----</span>
+              emitLineTo(miterX, miterY, rev);
+          }
+      }
+  
+      @Override
+<span class="changed">!     public void moveTo(final double x0, final double y0) {</span>
+<span class="changed">!         moveTo(x0, y0, cOutCode);</span>
+<span class="changed">!         // update starting point:</span>
+<span class="changed">!         this.sx0 = x0;</span>
+<span class="changed">!         this.sy0 = y0;</span>
+<span class="changed">!         this.sdx = 1.0d;</span>
+<span class="changed">!         this.sdy = 0.0d;</span>
+<span class="changed">!         this.opened   = false;</span>
+<span class="changed">!         this.capStart = false;</span>
+<span class="changed">! </span>
+<span class="changed">!         if (clipRect != null) {</span>
+<span class="changed">!             final int outcode = DHelpers.outcode(x0, y0, clipRect);</span>
+<span class="changed">!             this.cOutCode = outcode;</span>
+<span class="changed">!             this.sOutCode = outcode;</span>
+<span class="changed">!         }</span>
+<span class="changed">!     }</span>
+<span class="changed">! </span>
+<span class="changed">!     private void moveTo(final double x0, final double y0,</span>
+<span class="changed">!                         final int outcode)</span>
+<span class="changed">!     {</span>
+<span class="changed">!         if (prev == MOVE_TO) {</span>
+<span class="changed">!             this.cx0 = x0;</span>
+<span class="changed">!             this.cy0 = y0;</span>
+<span class="changed">!         } else {</span>
+              if (prev == DRAWING_OP_TO) {
+<span class="changed">!                 finish(outcode);</span>
+              }
+              this.prev = MOVE_TO;
+<span class="new">+             this.cx0 = x0;</span>
+<span class="new">+             this.cy0 = y0;</span>
+<span class="new">+             this.cdx = 1.0d;</span>
+<span class="new">+             this.cdy = 0.0d;</span>
+<span class="new">+         }</span>
+      }
+  
+      @Override
+<span class="changed">!     public void lineTo(final double x1, final double y1) {</span>
+<span class="changed">!         lineTo(x1, y1, false);</span>
+<span class="changed">!     }</span>
+<span class="changed">! </span>
+<span class="changed">!     private void lineTo(final double x1, final double y1,</span>
+<span class="changed">!                         final boolean force)</span>
+<span class="changed">!     {</span>
+<span class="changed">!         final int outcode0 = this.cOutCode;</span>
+<span class="changed">!         if (!force &amp;&amp; clipRect != null) {</span>
+<span class="changed">!             final int outcode1 = DHelpers.outcode(x1, y1, clipRect);</span>
+<span class="changed">!             this.cOutCode = outcode1;</span>
+<span class="changed">! </span>
+<span class="changed">!             // basic rejection criteria</span>
+<span class="changed">!             if ((outcode0 &amp; outcode1) != 0) {</span>
+<span class="changed">!                 moveTo(x1, y1, outcode0);</span>
+<span class="changed">!                 opened = true;</span>
+<span class="changed">!                 return;</span>
+<span class="changed">!             }</span>
+<span class="changed">!         }</span>
+<span class="changed">! </span>
+          double dx = x1 - cx0;
+          double dy = y1 - cy0;
+          if (dx == 0.0d &amp;&amp; dy == 0.0d) {
+              dx = 1.0d;
+          }
+          computeOffset(dx, dy, lineWidth2, offset0);
+          final double mx = offset0[0];
+          final double my = offset0[1];
+  
+<span class="changed">!         drawJoin(cdx, cdy, cx0, cy0, dx, dy, cmx, cmy, mx, my, outcode0);</span>
+  
+          emitLineTo(cx0 + mx, cy0 + my);
+          emitLineTo( x1 + mx,  y1 + my);
+  
+          emitLineToRev(cx0 - mx, cy0 - my);
+          emitLineToRev( x1 - mx,  y1 - my);
+  
+<span class="changed">!         this.prev = DRAWING_OP_TO;</span>
+          this.cx0 = x1;
+          this.cy0 = y1;
+<span class="changed">!         this.cdx = dx;</span>
+<span class="changed">!         this.cdy = dy;</span>
+<span class="changed">!         this.cmx = mx;</span>
+<span class="changed">!         this.cmy = my;</span>
+      }
+  
+      @Override
+      public void closePath() {
+<span class="changed">!         // distinguish empty path at all vs opened path ?</span>
+<span class="changed">!         if (prev != DRAWING_OP_TO &amp;&amp; !opened) {</span>
+              if (prev == CLOSE) {
+                  return;
+              }
+              emitMoveTo(cx0, cy0 - lineWidth2);
+<span class="changed">! </span>
+<span class="changed">!             this.sdx = 1.0d;</span>
+<span class="changed">!             this.sdy = 0.0d;</span>
+<span class="changed">!             this.cdx = 1.0d;</span>
+<span class="changed">!             this.cdy = 0.0d;</span>
+<span class="changed">! </span>
+<span class="changed">!             this.smx = 0.0d;</span>
+<span class="changed">!             this.smy = -lineWidth2;</span>
+<span class="changed">!             this.cmx = 0.0d;</span>
+<span class="changed">!             this.cmy = -lineWidth2;</span>
+<span class="changed">! </span>
+<span class="changed">!             finish(cOutCode);</span>
+              return;
+          }
+  
+<span class="new">+         // basic acceptance criteria</span>
+<span class="new">+         if ((sOutCode &amp; cOutCode) == 0) {</span>
+              if (cx0 != sx0 || cy0 != sy0) {
+<span class="changed">!                 lineTo(sx0, sy0, true);</span>
+              }
+  
+<span class="changed">!             drawJoin(cdx, cdy, cx0, cy0, sdx, sdy, cmx, cmy, smx, smy, sOutCode);</span>
+  
+              emitLineTo(sx0 + smx, sy0 + smy);
+  
+<span class="new">+             if (opened) {</span>
+<span class="new">+                 emitLineTo(sx0 - smx, sy0 - smy);</span>
+<span class="new">+             } else {</span>
+                  emitMoveTo(sx0 - smx, sy0 - smy);
+<span class="new">+             }</span>
+<span class="new">+         }</span>
+<span class="new">+         // Ignore caps like finish(false)</span>
+          emitReverse();
+  
+          this.prev = CLOSE;
+<span class="new">+ </span>
+<span class="new">+         if (opened) {</span>
+<span class="new">+             // do not emit close</span>
+<span class="new">+             opened = false;</span>
+<span class="new">+         } else {</span>
+              emitClose();
+          }
+<span class="new">+     }</span>
+  
+      private void emitReverse() {
+          reverse.popAll(out);
+      }
+  
+      @Override
+      public void pathDone() {
+          if (prev == DRAWING_OP_TO) {
+<span class="changed">!             finish(cOutCode);</span>
+          }
+  
+          out.pathDone();
+  
+          // this shouldn't matter since this object won't be used
+<hr /><span class="oldmarker">*** 530,556 ****</span>
+  
+          // Dispose this instance:
+          dispose();
+      }
+  
+<span class="changed">!     private void finish() {</span>
+          if (capStyle == CAP_ROUND) {
+              drawRoundCap(cx0, cy0, cmx, cmy);
+          } else if (capStyle == CAP_SQUARE) {
+              emitLineTo(cx0 - cmy + cmx, cy0 + cmx + cmy);
+              emitLineTo(cx0 - cmy - cmx, cy0 + cmx - cmy);
+          }
+<span class="changed">! </span>
+          emitReverse();
+  
+          if (capStyle == CAP_ROUND) {
+              drawRoundCap(sx0, sy0, -smx, -smy);
+          } else if (capStyle == CAP_SQUARE) {
+              emitLineTo(sx0 + smy - smx, sy0 - smx - smy);
+              emitLineTo(sx0 + smy + smx, sy0 - smx + smy);
+          }
+<span class="changed">! </span>
+          emitClose();
+      }
+  
+      private void emitMoveTo(final double x0, final double y0) {
+          out.moveTo(x0, y0);
+<span class="newmarker">--- 629,671 ----</span>
+  
+          // Dispose this instance:
+          dispose();
+      }
+  
+<span class="changed">!     private void finish(final int outcode) {</span>
+<span class="changed">!         // Problem: impossible to guess if the path will be closed in advance</span>
+<span class="changed">!         //          i.e. if caps must be drawn or not ?</span>
+<span class="changed">!         // Solution: use the ClosedPathDetector before Stroker to determine</span>
+<span class="changed">!         // if the path is a closed path or not</span>
+<span class="changed">!         if (!rdrCtx.closedPath) {</span>
+<span class="changed">!             if (outcode == 0) {</span>
+<span class="changed">!                 // current point = end's cap:</span>
+                  if (capStyle == CAP_ROUND) {
+                      drawRoundCap(cx0, cy0, cmx, cmy);
+                  } else if (capStyle == CAP_SQUARE) {
+                      emitLineTo(cx0 - cmy + cmx, cy0 + cmx + cmy);
+                      emitLineTo(cx0 - cmy - cmx, cy0 + cmx - cmy);
+                  }
+<span class="changed">!             }</span>
+              emitReverse();
+  
+<span class="new">+             if (!capStart) {</span>
+<span class="new">+                 capStart = true;</span>
+<span class="new">+ </span>
+<span class="new">+                 if (sOutCode == 0) {</span>
+<span class="new">+                     // starting point = initial cap:</span>
+                      if (capStyle == CAP_ROUND) {
+                          drawRoundCap(sx0, sy0, -smx, -smy);
+                      } else if (capStyle == CAP_SQUARE) {
+                          emitLineTo(sx0 + smy - smx, sy0 - smx - smy);
+                          emitLineTo(sx0 + smy + smx, sy0 - smx + smy);
+                      }
+<span class="changed">!                 }</span>
+<span class="changed">!             }</span>
+<span class="changed">!         } else {</span>
+<span class="changed">!             emitReverse();</span>
+<span class="changed">!         }</span>
+          emitClose();
+      }
+  
+      private void emitMoveTo(final double x0, final double y0) {
+          out.moveTo(x0, y0);
+<hr /><span class="oldmarker">*** 618,645 ****</span>
+  
+      private void drawJoin(double pdx, double pdy,
+                            double x0, double y0,
+                            double dx, double dy,
+                            double omx, double omy,
+<span class="changed">!                           double mx, double my)</span>
+      {
+          if (prev != DRAWING_OP_TO) {
+              emitMoveTo(x0 + mx, y0 + my);
+              this.sdx = dx;
+              this.sdy = dy;
+              this.smx = mx;
+              this.smy = my;
+          } else {
+<span class="changed">!             boolean cw = isCW(pdx, pdy, dx, dy);</span>
+              if (joinStyle == JOIN_MITER) {
+                  drawMiter(pdx, pdy, x0, y0, dx, dy, omx, omy, mx, my, cw);
+              } else if (joinStyle == JOIN_ROUND) {
+                  drawRoundJoin(x0, y0,
+                                omx, omy,
+                                mx, my, cw,
+                                ROUND_JOIN_THRESHOLD);
+              }
+              emitLineTo(x0, y0, !cw);
+          }
+          prev = DRAWING_OP_TO;
+      }
+  
+<span class="newmarker">--- 733,765 ----</span>
+  
+      private void drawJoin(double pdx, double pdy,
+                            double x0, double y0,
+                            double dx, double dy,
+                            double omx, double omy,
+<span class="changed">!                           double mx, double my,</span>
+<span class="changed">!                           final int outcode)</span>
+      {
+          if (prev != DRAWING_OP_TO) {
+              emitMoveTo(x0 + mx, y0 + my);
+<span class="new">+             if (!opened) {</span>
+                  this.sdx = dx;
+                  this.sdy = dy;
+                  this.smx = mx;
+                  this.smy = my;
+<span class="new">+             }</span>
+          } else {
+<span class="changed">!             final boolean cw = isCW(pdx, pdy, dx, dy);</span>
+<span class="changed">!             if (outcode == 0) {</span>
+                  if (joinStyle == JOIN_MITER) {
+                      drawMiter(pdx, pdy, x0, y0, dx, dy, omx, omy, mx, my, cw);
+                  } else if (joinStyle == JOIN_ROUND) {
+                      drawRoundJoin(x0, y0,
+                                    omx, omy,
+                                    mx, my, cw,
+                                    ROUND_JOIN_THRESHOLD);
+                  }
+<span class="new">+             }</span>
+              emitLineTo(x0, y0, !cw);
+          }
+          prev = DRAWING_OP_TO;
+      }
+  
+<hr /><span class="oldmarker">*** 939,961 ****</span>
+          ret = DHelpers.filterOutNotInAB(ts, 0, ret, 0.0001d, 0.9999d);
+          DHelpers.isort(ts, 0, ret);
+          return ret;
+      }
+  
+<span class="changed">!     @Override public void curveTo(double x1, double y1,</span>
+<span class="changed">!                                   double x2, double y2,</span>
+<span class="changed">!                                   double x3, double y3)</span>
+      {
+          final double[] mid = middle;
+  
+          mid[0] = cx0; mid[1] = cy0;
+          mid[2] = x1;  mid[3] = y1;
+          mid[4] = x2;  mid[5] = y2;
+          mid[6] = x3;  mid[7] = y3;
+  
+          // need these so we can update the state at the end of this method
+<span class="changed">!         final double xf = mid[6], yf = mid[7];</span>
+          double dxs = mid[2] - mid[0];
+          double dys = mid[3] - mid[1];
+          double dxf = mid[6] - mid[4];
+          double dyf = mid[7] - mid[5];
+  
+<span class="newmarker">--- 1059,1100 ----</span>
+          ret = DHelpers.filterOutNotInAB(ts, 0, ret, 0.0001d, 0.9999d);
+          DHelpers.isort(ts, 0, ret);
+          return ret;
+      }
+  
+<span class="changed">!     @Override</span>
+<span class="changed">!     public void curveTo(final double x1, final double y1,</span>
+<span class="changed">!                         final double x2, final double y2,</span>
+<span class="changed">!                         final double x3, final double y3)</span>
+      {
+<span class="new">+         final int outcode0 = this.cOutCode;</span>
+<span class="new">+         if (clipRect != null) {</span>
+<span class="new">+             final int outcode3 = DHelpers.outcode(x3, y3, clipRect);</span>
+<span class="new">+             this.cOutCode = outcode3;</span>
+<span class="new">+ </span>
+<span class="new">+             if ((outcode0 &amp; outcode3) != 0) {</span>
+<span class="new">+                 final int outcode1 = DHelpers.outcode(x1, y1, clipRect);</span>
+<span class="new">+                 final int outcode2 = DHelpers.outcode(x2, y2, clipRect);</span>
+<span class="new">+ </span>
+<span class="new">+                 // basic rejection criteria</span>
+<span class="new">+                 if ((outcode0 &amp; outcode1 &amp; outcode2 &amp; outcode3) != 0) {</span>
+<span class="new">+                     moveTo(x3, y3, outcode0);</span>
+<span class="new">+                     opened = true;</span>
+<span class="new">+                     return;</span>
+<span class="new">+                 }</span>
+<span class="new">+             }</span>
+<span class="new">+         }</span>
+<span class="new">+ </span>
+          final double[] mid = middle;
+  
+          mid[0] = cx0; mid[1] = cy0;
+          mid[2] = x1;  mid[3] = y1;
+          mid[4] = x2;  mid[5] = y2;
+          mid[6] = x3;  mid[7] = y3;
+  
+          // need these so we can update the state at the end of this method
+<span class="changed">!         final double xf = x3, yf = y3;</span>
+          double dxs = mid[2] - mid[0];
+          double dys = mid[3] - mid[1];
+          double dxf = mid[6] - mid[4];
+          double dyf = mid[7] - mid[5];
+  
+<hr /><span class="oldmarker">*** 977,986 ****</span>
+<span class="newmarker">--- 1116,1129 ----</span>
+                  dyf = mid[7] - mid[1];
+              }
+          }
+          if (dxs == 0.0d &amp;&amp; dys == 0.0d) {
+              // this happens if the "curve" is just a point
+<span class="new">+             // fix outcode0 for lineTo() call:</span>
+<span class="new">+             if (clipRect != null) {</span>
+<span class="new">+                 this.cOutCode = outcode0;</span>
+<span class="new">+             }</span>
+              lineTo(mid[0], mid[1]);
+              return;
+          }
+  
+          // if these vectors are too small, normalize them, to avoid future
+<hr /><span class="oldmarker">*** 995,1005 ****</span>
+              dxf /= len;
+              dyf /= len;
+          }
+  
+          computeOffset(dxs, dys, lineWidth2, offset0);
+<span class="changed">!         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1]);</span>
+  
+          final int nSplits = findSubdivPoints(curve, mid, subdivTs, 8, lineWidth2);
+  
+          double prevT = 0.0d;
+          for (int i = 0, off = 0; i &lt; nSplits; i++, off += 6) {
+<span class="newmarker">--- 1138,1148 ----</span>
+              dxf /= len;
+              dyf /= len;
+          }
+  
+          computeOffset(dxs, dys, lineWidth2, offset0);
+<span class="changed">!         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1], outcode0);</span>
+  
+          final int nSplits = findSubdivPoints(curve, mid, subdivTs, 8, lineWidth2);
+  
+          double prevT = 0.0d;
+          for (int i = 0, off = 0; i &lt; nSplits; i++, off += 6) {
+<hr /><span class="oldmarker">*** 1030,1067 ****</span>
+              default:
+              }
+              emitLineToRev(r[kind - 2], r[kind - 1]);
+          }
+  
+<span class="changed">!         this.cmx = (l[kind - 2] - r[kind - 2]) / 2.0d;</span>
+<span class="changed">!         this.cmy = (l[kind - 1] - r[kind - 1]) / 2.0d;</span>
+<span class="changed">!         this.cdx = dxf;</span>
+<span class="changed">!         this.cdy = dyf;</span>
+          this.cx0 = xf;
+          this.cy0 = yf;
+<span class="changed">!         this.prev = DRAWING_OP_TO;</span>
+      }
+  
+<span class="removed">-     @Override public void quadTo(double x1, double y1, double x2, double y2) {</span>
+          final double[] mid = middle;
+  
+          mid[0] = cx0; mid[1] = cy0;
+          mid[2] = x1;  mid[3] = y1;
+          mid[4] = x2;  mid[5] = y2;
+  
+          // need these so we can update the state at the end of this method
+<span class="changed">!         final double xf = mid[4], yf = mid[5];</span>
+          double dxs = mid[2] - mid[0];
+          double dys = mid[3] - mid[1];
+          double dxf = mid[4] - mid[2];
+          double dyf = mid[5] - mid[3];
+          if ((dxs == 0.0d &amp;&amp; dys == 0.0d) || (dxf == 0.0d &amp;&amp; dyf == 0.0d)) {
+              dxs = dxf = mid[4] - mid[0];
+              dys = dyf = mid[5] - mid[1];
+          }
+          if (dxs == 0.0d &amp;&amp; dys == 0.0d) {
+              // this happens if the "curve" is just a point
+              lineTo(mid[0], mid[1]);
+              return;
+          }
+          // if these vectors are too small, normalize them, to avoid future
+          // precision problems.
+<span class="newmarker">--- 1173,1234 ----</span>
+              default:
+              }
+              emitLineToRev(r[kind - 2], r[kind - 1]);
+          }
+  
+<span class="changed">!         this.prev = DRAWING_OP_TO;</span>
+          this.cx0 = xf;
+          this.cy0 = yf;
+<span class="changed">!         this.cdx = dxf;</span>
+<span class="changed">!         this.cdy = dyf;</span>
+<span class="changed">!         this.cmx = (l[kind - 2] - r[kind - 2]) / 2.0d;</span>
+<span class="changed">!         this.cmy = (l[kind - 1] - r[kind - 1]) / 2.0d;</span>
+<span class="changed">!     }</span>
+<span class="changed">! </span>
+<span class="changed">!     @Override</span>
+<span class="changed">!     public void quadTo(final double x1, final double y1,</span>
+<span class="changed">!                        final double x2, final double y2)</span>
+<span class="changed">!     {</span>
+<span class="changed">!         final int outcode0 = this.cOutCode;</span>
+<span class="changed">!         if (clipRect != null) {</span>
+<span class="changed">!             final int outcode2 = DHelpers.outcode(x2, y2, clipRect);</span>
+<span class="changed">!             this.cOutCode = outcode2;</span>
+<span class="changed">! </span>
+<span class="changed">!             if ((outcode0 &amp; outcode2) != 0) {</span>
+<span class="changed">!                 final int outcode1 = DHelpers.outcode(x1, y1, clipRect);</span>
+<span class="changed">! </span>
+<span class="changed">!                 // basic rejection criteria</span>
+<span class="changed">!                 if ((outcode0 &amp; outcode1 &amp; outcode2) != 0) {</span>
+<span class="changed">!                     moveTo(x2, y2, outcode0);</span>
+<span class="changed">!                     opened = true;</span>
+<span class="changed">!                     return;</span>
+<span class="changed">!                 }</span>
+<span class="changed">!             }</span>
+          }
+  
+          final double[] mid = middle;
+  
+          mid[0] = cx0; mid[1] = cy0;
+          mid[2] = x1;  mid[3] = y1;
+          mid[4] = x2;  mid[5] = y2;
+  
+          // need these so we can update the state at the end of this method
+<span class="changed">!         final double xf = x2, yf = y2;</span>
+          double dxs = mid[2] - mid[0];
+          double dys = mid[3] - mid[1];
+          double dxf = mid[4] - mid[2];
+          double dyf = mid[5] - mid[3];
+          if ((dxs == 0.0d &amp;&amp; dys == 0.0d) || (dxf == 0.0d &amp;&amp; dyf == 0.0d)) {
+              dxs = dxf = mid[4] - mid[0];
+              dys = dyf = mid[5] - mid[1];
+          }
+          if (dxs == 0.0d &amp;&amp; dys == 0.0d) {
+              // this happens if the "curve" is just a point
+<span class="new">+             // fix outcode0 for lineTo() call:</span>
+<span class="new">+             if (clipRect != null) {</span>
+<span class="new">+                 this.cOutCode = outcode0;</span>
+<span class="new">+             }</span>
+              lineTo(mid[0], mid[1]);
+              return;
+          }
+          // if these vectors are too small, normalize them, to avoid future
+          // precision problems.
+<hr /><span class="oldmarker">*** 1075,1085 ****</span>
+              dxf /= len;
+              dyf /= len;
+          }
+  
+          computeOffset(dxs, dys, lineWidth2, offset0);
+<span class="changed">!         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1]);</span>
+  
+          int nSplits = findSubdivPoints(curve, mid, subdivTs, 6, lineWidth2);
+  
+          double prevt = 0.0d;
+          for (int i = 0, off = 0; i &lt; nSplits; i++, off += 4) {
+<span class="newmarker">--- 1242,1252 ----</span>
+              dxf /= len;
+              dyf /= len;
+          }
+  
+          computeOffset(dxs, dys, lineWidth2, offset0);
+<span class="changed">!         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1], outcode0);</span>
+  
+          int nSplits = findSubdivPoints(curve, mid, subdivTs, 6, lineWidth2);
+  
+          double prevt = 0.0d;
+          for (int i = 0, off = 0; i &lt; nSplits; i++, off += 4) {
+<hr /><span class="oldmarker">*** 1110,1325 ****</span>
+              default:
+              }
+              emitLineToRev(r[kind - 2], r[kind - 1]);
+          }
+  
+<span class="changed">!         this.cmx = (l[kind - 2] - r[kind - 2]) / 2.0d;</span>
+<span class="changed">!         this.cmy = (l[kind - 1] - r[kind - 1]) / 2.0d;</span>
+<span class="changed">!         this.cdx = dxf;</span>
+<span class="changed">!         this.cdy = dyf;</span>
+          this.cx0 = xf;
+          this.cy0 = yf;
+<span class="changed">!         this.prev = DRAWING_OP_TO;</span>
+      }
+  
+      @Override public long getNativeConsumer() {
+          throw new InternalError("Stroker doesn't use a native consumer");
+      }
+<span class="removed">- </span>
+<span class="removed">-     // a stack of polynomial curves where each curve shares endpoints with</span>
+<span class="removed">-     // adjacent ones.</span>
+<span class="removed">-     static final class PolyStack {</span>
+<span class="removed">-         private static final byte TYPE_LINETO  = (byte) 0;</span>
+<span class="removed">-         private static final byte TYPE_QUADTO  = (byte) 1;</span>
+<span class="removed">-         private static final byte TYPE_CUBICTO = (byte) 2;</span>
+<span class="removed">- </span>
+<span class="removed">-         // curves capacity = edges count (8192) = edges x 2 (coords)</span>
+<span class="removed">-         private static final int INITIAL_CURVES_COUNT = INITIAL_EDGES_COUNT &lt;&lt; 1;</span>
+<span class="removed">- </span>
+<span class="removed">-         // types capacity = edges count (4096)</span>
+<span class="removed">-         private static final int INITIAL_TYPES_COUNT = INITIAL_EDGES_COUNT;</span>
+<span class="removed">- </span>
+<span class="removed">-         double[] curves;</span>
+<span class="removed">-         int end;</span>
+<span class="removed">-         byte[] curveTypes;</span>
+<span class="removed">-         int numCurves;</span>
+<span class="removed">- </span>
+<span class="removed">-         // per-thread renderer context</span>
+<span class="removed">-         final DRendererContext rdrCtx;</span>
+<span class="removed">- </span>
+<span class="removed">-         // curves ref (dirty)</span>
+<span class="removed">-         final DoubleArrayCache.Reference curves_ref;</span>
+<span class="removed">-         // curveTypes ref (dirty)</span>
+<span class="removed">-         final ByteArrayCache.Reference curveTypes_ref;</span>
+<span class="removed">- </span>
+<span class="removed">-         // used marks (stats only)</span>
+<span class="removed">-         int curveTypesUseMark;</span>
+<span class="removed">-         int curvesUseMark;</span>
+<span class="removed">- </span>
+<span class="removed">-         /**</span>
+<span class="removed">-          * Constructor</span>
+<span class="removed">-          * @param rdrCtx per-thread renderer context</span>
+<span class="removed">-          */</span>
+<span class="removed">-         PolyStack(final DRendererContext rdrCtx) {</span>
+<span class="removed">-             this.rdrCtx = rdrCtx;</span>
+<span class="removed">- </span>
+<span class="removed">-             curves_ref = rdrCtx.newDirtyDoubleArrayRef(INITIAL_CURVES_COUNT); // 32K</span>
+<span class="removed">-             curves     = curves_ref.initial;</span>
+<span class="removed">- </span>
+<span class="removed">-             curveTypes_ref = rdrCtx.newDirtyByteArrayRef(INITIAL_TYPES_COUNT); // 4K</span>
+<span class="removed">-             curveTypes     = curveTypes_ref.initial;</span>
+<span class="removed">-             numCurves = 0;</span>
+<span class="removed">-             end = 0;</span>
+<span class="removed">- </span>
+<span class="removed">-             if (DO_STATS) {</span>
+<span class="removed">-                 curveTypesUseMark = 0;</span>
+<span class="removed">-                 curvesUseMark = 0;</span>
+<span class="removed">-             }</span>
+<span class="removed">-         }</span>
+<span class="removed">- </span>
+<span class="removed">-         /**</span>
+<span class="removed">-          * Disposes this PolyStack:</span>
+<span class="removed">-          * clean up before reusing this instance</span>
+<span class="removed">-          */</span>
+<span class="removed">-         void dispose() {</span>
+<span class="removed">-             end = 0;</span>
+<span class="removed">-             numCurves = 0;</span>
+<span class="removed">- </span>
+<span class="removed">-             if (DO_STATS) {</span>
+<span class="removed">-                 rdrCtx.stats.stat_rdr_poly_stack_types.add(curveTypesUseMark);</span>
+<span class="removed">-                 rdrCtx.stats.stat_rdr_poly_stack_curves.add(curvesUseMark);</span>
+<span class="removed">-                 rdrCtx.stats.hist_rdr_poly_stack_curves.add(curvesUseMark);</span>
+<span class="removed">- </span>
+<span class="removed">-                 // reset marks</span>
+<span class="removed">-                 curveTypesUseMark = 0;</span>
+<span class="removed">-                 curvesUseMark = 0;</span>
+<span class="removed">-             }</span>
+<span class="removed">- </span>
+<span class="removed">-             // Return arrays:</span>
+<span class="removed">-             // curves and curveTypes are kept dirty</span>
+<span class="removed">-             curves     = curves_ref.putArray(curves);</span>
+<span class="removed">-             curveTypes = curveTypes_ref.putArray(curveTypes);</span>
+<span class="removed">-         }</span>
+<span class="removed">- </span>
+<span class="removed">-         private void ensureSpace(final int n) {</span>
+<span class="removed">-             // use substraction to avoid integer overflow:</span>
+<span class="removed">-             if (curves.length - end &lt; n) {</span>
+<span class="removed">-                 if (DO_STATS) {</span>
+<span class="removed">-                     rdrCtx.stats.stat_array_stroker_polystack_curves</span>
+<span class="removed">-                         .add(end + n);</span>
+<span class="removed">-                 }</span>
+<span class="removed">-                 curves = curves_ref.widenArray(curves, end, end + n);</span>
+<span class="removed">-             }</span>
+<span class="removed">-             if (curveTypes.length &lt;= numCurves) {</span>
+<span class="removed">-                 if (DO_STATS) {</span>
+<span class="removed">-                     rdrCtx.stats.stat_array_stroker_polystack_curveTypes</span>
+<span class="removed">-                         .add(numCurves + 1);</span>
+<span class="removed">-                 }</span>
+<span class="removed">-                 curveTypes = curveTypes_ref.widenArray(curveTypes,</span>
+<span class="removed">-                                                        numCurves,</span>
+<span class="removed">-                                                        numCurves + 1);</span>
+<span class="removed">-             }</span>
+<span class="removed">-         }</span>
+<span class="removed">- </span>
+<span class="removed">-         void pushCubic(double x0, double y0,</span>
+<span class="removed">-                        double x1, double y1,</span>
+<span class="removed">-                        double x2, double y2)</span>
+<span class="removed">-         {</span>
+<span class="removed">-             ensureSpace(6);</span>
+<span class="removed">-             curveTypes[numCurves++] = TYPE_CUBICTO;</span>
+<span class="removed">-             // we reverse the coordinate order to make popping easier</span>
+<span class="removed">-             final double[] _curves = curves;</span>
+<span class="removed">-             int e = end;</span>
+<span class="removed">-             _curves[e++] = x2;    _curves[e++] = y2;</span>
+<span class="removed">-             _curves[e++] = x1;    _curves[e++] = y1;</span>
+<span class="removed">-             _curves[e++] = x0;    _curves[e++] = y0;</span>
+<span class="removed">-             end = e;</span>
+<span class="removed">-         }</span>
+<span class="removed">- </span>
+<span class="removed">-         void pushQuad(double x0, double y0,</span>
+<span class="removed">-                       double x1, double y1)</span>
+<span class="removed">-         {</span>
+<span class="removed">-             ensureSpace(4);</span>
+<span class="removed">-             curveTypes[numCurves++] = TYPE_QUADTO;</span>
+<span class="removed">-             final double[] _curves = curves;</span>
+<span class="removed">-             int e = end;</span>
+<span class="removed">-             _curves[e++] = x1;    _curves[e++] = y1;</span>
+<span class="removed">-             _curves[e++] = x0;    _curves[e++] = y0;</span>
+<span class="removed">-             end = e;</span>
+<span class="removed">-         }</span>
+<span class="removed">- </span>
+<span class="removed">-         void pushLine(double x, double y) {</span>
+<span class="removed">-             ensureSpace(2);</span>
+<span class="removed">-             curveTypes[numCurves++] = TYPE_LINETO;</span>
+<span class="removed">-             curves[end++] = x;    curves[end++] = y;</span>
+<span class="removed">-         }</span>
+<span class="removed">- </span>
+<span class="removed">-         void popAll(DPathConsumer2D io) {</span>
+<span class="removed">-             if (DO_STATS) {</span>
+<span class="removed">-                 // update used marks:</span>
+<span class="removed">-                 if (numCurves &gt; curveTypesUseMark) {</span>
+<span class="removed">-                     curveTypesUseMark = numCurves;</span>
+<span class="removed">-                 }</span>
+<span class="removed">-                 if (end &gt; curvesUseMark) {</span>
+<span class="removed">-                     curvesUseMark = end;</span>
+<span class="removed">-                 }</span>
+<span class="removed">-             }</span>
+<span class="removed">-             final byte[]  _curveTypes = curveTypes;</span>
+<span class="removed">-             final double[] _curves = curves;</span>
+<span class="removed">-             int nc = numCurves;</span>
+<span class="removed">-             int e  = end;</span>
+<span class="removed">- </span>
+<span class="removed">-             while (nc != 0) {</span>
+<span class="removed">-                 switch(_curveTypes[--nc]) {</span>
+<span class="removed">-                 case TYPE_LINETO:</span>
+<span class="removed">-                     e -= 2;</span>
+<span class="removed">-                     io.lineTo(_curves[e], _curves[e+1]);</span>
+<span class="removed">-                     continue;</span>
+<span class="removed">-                 case TYPE_QUADTO:</span>
+<span class="removed">-                     e -= 4;</span>
+<span class="removed">-                     io.quadTo(_curves[e+0], _curves[e+1],</span>
+<span class="removed">-                               _curves[e+2], _curves[e+3]);</span>
+<span class="removed">-                     continue;</span>
+<span class="removed">-                 case TYPE_CUBICTO:</span>
+<span class="removed">-                     e -= 6;</span>
+<span class="removed">-                     io.curveTo(_curves[e+0], _curves[e+1],</span>
+<span class="removed">-                                _curves[e+2], _curves[e+3],</span>
+<span class="removed">-                                _curves[e+4], _curves[e+5]);</span>
+<span class="removed">-                     continue;</span>
+<span class="removed">-                 default:</span>
+<span class="removed">-                 }</span>
+<span class="removed">-             }</span>
+<span class="removed">-             numCurves = 0;</span>
+<span class="removed">-             end = 0;</span>
+<span class="removed">-         }</span>
+<span class="removed">- </span>
+<span class="removed">-         @Override</span>
+<span class="removed">-         public String toString() {</span>
+<span class="removed">-             String ret = "";</span>
+<span class="removed">-             int nc = numCurves;</span>
+<span class="removed">-             int last = end;</span>
+<span class="removed">-             int len;</span>
+<span class="removed">-             while (nc != 0) {</span>
+<span class="removed">-                 switch(curveTypes[--nc]) {</span>
+<span class="removed">-                 case TYPE_LINETO:</span>
+<span class="removed">-                     len = 2;</span>
+<span class="removed">-                     ret += "line: ";</span>
+<span class="removed">-                     break;</span>
+<span class="removed">-                 case TYPE_QUADTO:</span>
+<span class="removed">-                     len = 4;</span>
+<span class="removed">-                     ret += "quad: ";</span>
+<span class="removed">-                     break;</span>
+<span class="removed">-                 case TYPE_CUBICTO:</span>
+<span class="removed">-                     len = 6;</span>
+<span class="removed">-                     ret += "cubic: ";</span>
+<span class="removed">-                     break;</span>
+<span class="removed">-                 default:</span>
+<span class="removed">-                     len = 0;</span>
+<span class="removed">-                 }</span>
+<span class="removed">-                 last -= len;</span>
+<span class="removed">-                 ret += Arrays.toString(Arrays.copyOfRange(curves, last, last+len))</span>
+<span class="removed">-                                        + "\n";</span>
+<span class="removed">-             }</span>
+<span class="removed">-             return ret;</span>
+<span class="removed">-         }</span>
+<span class="removed">-     }</span>
+  }
+<span class="newmarker">--- 1277,1294 ----</span>
+              default:
+              }
+              emitLineToRev(r[kind - 2], r[kind - 1]);
+          }
+  
+<span class="changed">!         this.prev = DRAWING_OP_TO;</span>
+          this.cx0 = xf;
+          this.cy0 = yf;
+<span class="changed">!         this.cdx = dxf;</span>
+<span class="changed">!         this.cdy = dyf;</span>
+<span class="changed">!         this.cmx = (l[kind - 2] - r[kind - 2]) / 2.0d;</span>
+<span class="changed">!         this.cmy = (l[kind - 1] - r[kind - 1]) / 2.0d;</span>
+      }
+  
+      @Override public long getNativeConsumer() {
+          throw new InternalError("Stroker doesn't use a native consumer");
+      }
+  }
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DRendererContext.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java.cdiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

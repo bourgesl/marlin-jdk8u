@@ -1,0 +1,609 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13693">13693</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8180055">8180055</a>: Upgrade the Marlin renderer in Java2D
+Summary: added the double-precision variant + MarlinFX backports + Improved MarlinTileGenerator + higher precision of the cubic / quadratic curve
+Reviewed-by: flar, pnarayanan</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import static java.lang.Math.PI;
+  29 import static java.lang.Math.cos;
+  30 import static java.lang.Math.sqrt;
+  31 import static java.lang.Math.cbrt;
+  32 import static java.lang.Math.acos;
+  33 
+  34 final class Helpers implements MarlinConst {
+  35 
+  36     private Helpers() {
+  37         throw new Error("This is a non instantiable class");
+  38     }
+  39 
+  40     static boolean within(final float x, final float y, final float err) {
+  41         final float d = y - x;
+  42         return (d &lt;= err &amp;&amp; d &gt;= -err);
+  43     }
+  44 
+  45     static boolean within(final double x, final double y, final double err) {
+  46         final double d = y - x;
+  47         return (d &lt;= err &amp;&amp; d &gt;= -err);
+  48     }
+  49 
+  50     static int quadraticRoots(final float a, final float b,
+  51                               final float c, float[] zeroes, final int off)
+  52     {
+  53         int ret = off;
+  54         float t;
+<a name="2" id="anc2"></a><span class="changed">  55         if (a != 0.0f) {</span>
+  56             final float dis = b*b - 4*a*c;
+<a name="3" id="anc3"></a><span class="changed">  57             if (dis &gt; 0.0f) {</span>
+<span class="changed">  58                 final float sqrtDis = (float) Math.sqrt(dis);</span>
+  59                 // depending on the sign of b we use a slightly different
+  60                 // algorithm than the traditional one to find one of the roots
+  61                 // so we can avoid adding numbers of different signs (which
+  62                 // might result in loss of precision).
+<a name="4" id="anc4"></a><span class="changed">  63                 if (b &gt;= 0.0f) {</span>
+<span class="changed">  64                     zeroes[ret++] = (2.0f * c) / (-b - sqrtDis);</span>
+<span class="changed">  65                     zeroes[ret++] = (-b - sqrtDis) / (2.0f * a);</span>
+  66                 } else {
+<a name="5" id="anc5"></a><span class="changed">  67                     zeroes[ret++] = (-b + sqrtDis) / (2.0f * a);</span>
+<span class="changed">  68                     zeroes[ret++] = (2.0f * c) / (-b + sqrtDis);</span>
+  69                 }
+<a name="6" id="anc6"></a><span class="changed">  70             } else if (dis == 0.0f) {</span>
+<span class="changed">  71                 t = (-b) / (2.0f * a);</span>
+  72                 zeroes[ret++] = t;
+  73             }
+  74         } else {
+<a name="7" id="anc7"></a><span class="changed">  75             if (b != 0.0f) {</span>
+  76                 t = (-c) / b;
+  77                 zeroes[ret++] = t;
+  78             }
+  79         }
+  80         return ret - off;
+  81     }
+  82 
+  83     // find the roots of g(t) = d*t^3 + a*t^2 + b*t + c in [A,B)
+  84     static int cubicRootsInAB(float d, float a, float b, float c,
+  85                               float[] pts, final int off,
+  86                               final float A, final float B)
+  87     {
+<a name="8" id="anc8"></a><span class="changed">  88         if (d == 0.0f) {</span>
+  89             int num = quadraticRoots(a, b, c, pts, off);
+  90             return filterOutNotInAB(pts, off, num, A, B) - off;
+  91         }
+  92         // From Graphics Gems:
+  93         // http://tog.acm.org/resources/GraphicsGems/gems/Roots3And4.c
+  94         // (also from awt.geom.CubicCurve2D. But here we don't need as
+  95         // much accuracy and we don't want to create arrays so we use
+  96         // our own customized version).
+  97 
+  98         // normal form: x^3 + ax^2 + bx + c = 0
+  99         a /= d;
+ 100         b /= d;
+ 101         c /= d;
+ 102 
+ 103         //  substitute x = y - A/3 to eliminate quadratic term:
+ 104         //     x^3 +Px + Q = 0
+ 105         //
+ 106         // Since we actually need P/3 and Q/2 for all of the
+ 107         // calculations that follow, we will calculate
+ 108         // p = P/3
+ 109         // q = Q/2
+ 110         // instead and use those values for simplicity of the code.
+ 111         double sq_A = a * a;
+<a name="9" id="anc9"></a><span class="changed"> 112         double p = (1.0d/3.0d) * ((-1.0d/3.0d) * sq_A + b);</span>
+<span class="changed"> 113         double q = (1.0d/2.0d) * ((2.0d/27.0d) * a * sq_A - (1.0d/3.0d) * a * b + c);</span>
+ 114 
+ 115         // use Cardano's formula
+ 116 
+ 117         double cb_p = p * p * p;
+ 118         double D = q * q + cb_p;
+ 119 
+ 120         int num;
+<a name="10" id="anc10"></a><span class="changed"> 121         if (D &lt; 0.0d) {</span>
+ 122             // see: http://en.wikipedia.org/wiki/Cubic_function#Trigonometric_.28and_hyperbolic.29_method
+<a name="11" id="anc11"></a><span class="changed"> 123             final double phi = (1.0d/3.0d) * acos(-q / sqrt(-cb_p));</span>
+<span class="changed"> 124             final double t = 2.0d * sqrt(-p);</span>
+ 125 
+<a name="12" id="anc12"></a><span class="changed"> 126             pts[ off+0 ] = (float) ( t * cos(phi));</span>
+<span class="changed"> 127             pts[ off+1 ] = (float) (-t * cos(phi + (PI / 3.0d)));</span>
+<span class="changed"> 128             pts[ off+2 ] = (float) (-t * cos(phi - (PI / 3.0d)));</span>
+ 129             num = 3;
+ 130         } else {
+ 131             final double sqrt_D = sqrt(D);
+ 132             final double u = cbrt(sqrt_D - q);
+ 133             final double v = - cbrt(sqrt_D + q);
+ 134 
+<a name="13" id="anc13"></a><span class="changed"> 135             pts[ off ] = (float) (u + v);</span>
+ 136             num = 1;
+ 137 
+<a name="14" id="anc14"></a><span class="changed"> 138             if (within(D, 0.0d, 1e-8d)) {</span>
+<span class="changed"> 139                 pts[off+1] = -(pts[off] / 2.0f);</span>
+ 140                 num = 2;
+ 141             }
+ 142         }
+ 143 
+<a name="15" id="anc15"></a><span class="changed"> 144         final float sub = (1.0f/3.0f) * a;</span>
+ 145 
+ 146         for (int i = 0; i &lt; num; ++i) {
+ 147             pts[ off+i ] -= sub;
+ 148         }
+ 149 
+ 150         return filterOutNotInAB(pts, off, num, A, B) - off;
+ 151     }
+ 152 
+ 153     static float evalCubic(final float a, final float b,
+ 154                            final float c, final float d,
+ 155                            final float t)
+ 156     {
+ 157         return t * (t * (t * a + b) + c) + d;
+ 158     }
+ 159 
+ 160     static float evalQuad(final float a, final float b,
+ 161                           final float c, final float t)
+ 162     {
+ 163         return t * (t * a + b) + c;
+ 164     }
+ 165 
+ 166     // returns the index 1 past the last valid element remaining after filtering
+ 167     static int filterOutNotInAB(float[] nums, final int off, final int len,
+ 168                                 final float a, final float b)
+ 169     {
+ 170         int ret = off;
+ 171         for (int i = off, end = off + len; i &lt; end; i++) {
+ 172             if (nums[i] &gt;= a &amp;&amp; nums[i] &lt; b) {
+ 173                 nums[ret++] = nums[i];
+ 174             }
+ 175         }
+ 176         return ret;
+ 177     }
+ 178 
+ 179     static float polyLineLength(float[] poly, final int off, final int nCoords) {
+ 180         assert nCoords % 2 == 0 &amp;&amp; poly.length &gt;= off + nCoords : "";
+<a name="16" id="anc16"></a><span class="changed"> 181         float acc = 0.0f;</span>
+ 182         for (int i = off + 2; i &lt; off + nCoords; i += 2) {
+ 183             acc += linelen(poly[i], poly[i+1], poly[i-2], poly[i-1]);
+ 184         }
+ 185         return acc;
+ 186     }
+ 187 
+ 188     static float linelen(float x1, float y1, float x2, float y2) {
+ 189         final float dx = x2 - x1;
+ 190         final float dy = y2 - y1;
+<a name="17" id="anc17"></a><span class="changed"> 191         return (float) Math.sqrt(dx*dx + dy*dy);</span>
+ 192     }
+ 193 
+ 194     static void subdivide(float[] src, int srcoff, float[] left, int leftoff,
+ 195                           float[] right, int rightoff, int type)
+ 196     {
+ 197         switch(type) {
+ 198         case 6:
+ 199             Helpers.subdivideQuad(src, srcoff, left, leftoff, right, rightoff);
+ 200             return;
+ 201         case 8:
+ 202             Helpers.subdivideCubic(src, srcoff, left, leftoff, right, rightoff);
+ 203             return;
+ 204         default:
+ 205             throw new InternalError("Unsupported curve type");
+ 206         }
+ 207     }
+ 208 
+ 209     static void isort(float[] a, int off, int len) {
+ 210         for (int i = off + 1, end = off + len; i &lt; end; i++) {
+ 211             float ai = a[i];
+ 212             int j = i - 1;
+ 213             for (; j &gt;= off &amp;&amp; a[j] &gt; ai; j--) {
+ 214                 a[j+1] = a[j];
+ 215             }
+ 216             a[j+1] = ai;
+ 217         }
+ 218     }
+ 219 
+ 220     // Most of these are copied from classes in java.awt.geom because we need
+<a name="18" id="anc18"></a><span class="changed"> 221     // both single and double precision variants of these functions, and Line2D,</span>
+<span class="changed"> 222     // CubicCurve2D, QuadCurve2D don't provide them.</span>
+ 223     /**
+ 224      * Subdivides the cubic curve specified by the coordinates
+ 225      * stored in the &lt;code&gt;src&lt;/code&gt; array at indices &lt;code&gt;srcoff&lt;/code&gt;
+ 226      * through (&lt;code&gt;srcoff&lt;/code&gt;&amp;nbsp;+&amp;nbsp;7) and stores the
+ 227      * resulting two subdivided curves into the two result arrays at the
+ 228      * corresponding indices.
+ 229      * Either or both of the &lt;code&gt;left&lt;/code&gt; and &lt;code&gt;right&lt;/code&gt;
+ 230      * arrays may be &lt;code&gt;null&lt;/code&gt; or a reference to the same array
+ 231      * as the &lt;code&gt;src&lt;/code&gt; array.
+ 232      * Note that the last point in the first subdivided curve is the
+ 233      * same as the first point in the second subdivided curve. Thus,
+ 234      * it is possible to pass the same array for &lt;code&gt;left&lt;/code&gt;
+ 235      * and &lt;code&gt;right&lt;/code&gt; and to use offsets, such as &lt;code&gt;rightoff&lt;/code&gt;
+ 236      * equals (&lt;code&gt;leftoff&lt;/code&gt; + 6), in order
+ 237      * to avoid allocating extra storage for this common point.
+ 238      * @param src the array holding the coordinates for the source curve
+ 239      * @param srcoff the offset into the array of the beginning of the
+ 240      * the 6 source coordinates
+ 241      * @param left the array for storing the coordinates for the first
+ 242      * half of the subdivided curve
+ 243      * @param leftoff the offset into the array of the beginning of the
+ 244      * the 6 left coordinates
+ 245      * @param right the array for storing the coordinates for the second
+ 246      * half of the subdivided curve
+ 247      * @param rightoff the offset into the array of the beginning of the
+ 248      * the 6 right coordinates
+ 249      * @since 1.7
+ 250      */
+ 251     static void subdivideCubic(float[] src, int srcoff,
+ 252                                float[] left, int leftoff,
+ 253                                float[] right, int rightoff)
+ 254     {
+ 255         float x1 = src[srcoff + 0];
+ 256         float y1 = src[srcoff + 1];
+ 257         float ctrlx1 = src[srcoff + 2];
+ 258         float ctrly1 = src[srcoff + 3];
+ 259         float ctrlx2 = src[srcoff + 4];
+ 260         float ctrly2 = src[srcoff + 5];
+ 261         float x2 = src[srcoff + 6];
+ 262         float y2 = src[srcoff + 7];
+ 263         if (left != null) {
+ 264             left[leftoff + 0] = x1;
+ 265             left[leftoff + 1] = y1;
+ 266         }
+ 267         if (right != null) {
+ 268             right[rightoff + 6] = x2;
+ 269             right[rightoff + 7] = y2;
+ 270         }
+<a name="19" id="anc19"></a><span class="changed"> 271         x1 = (x1 + ctrlx1) / 2.0f;</span>
+<span class="changed"> 272         y1 = (y1 + ctrly1) / 2.0f;</span>
+<span class="changed"> 273         x2 = (x2 + ctrlx2) / 2.0f;</span>
+<span class="changed"> 274         y2 = (y2 + ctrly2) / 2.0f;</span>
+<span class="changed"> 275         float centerx = (ctrlx1 + ctrlx2) / 2.0f;</span>
+<span class="changed"> 276         float centery = (ctrly1 + ctrly2) / 2.0f;</span>
+<span class="changed"> 277         ctrlx1 = (x1 + centerx) / 2.0f;</span>
+<span class="changed"> 278         ctrly1 = (y1 + centery) / 2.0f;</span>
+<span class="changed"> 279         ctrlx2 = (x2 + centerx) / 2.0f;</span>
+<span class="changed"> 280         ctrly2 = (y2 + centery) / 2.0f;</span>
+<span class="changed"> 281         centerx = (ctrlx1 + ctrlx2) / 2.0f;</span>
+<span class="changed"> 282         centery = (ctrly1 + ctrly2) / 2.0f;</span>
+ 283         if (left != null) {
+ 284             left[leftoff + 2] = x1;
+ 285             left[leftoff + 3] = y1;
+ 286             left[leftoff + 4] = ctrlx1;
+ 287             left[leftoff + 5] = ctrly1;
+ 288             left[leftoff + 6] = centerx;
+ 289             left[leftoff + 7] = centery;
+ 290         }
+ 291         if (right != null) {
+ 292             right[rightoff + 0] = centerx;
+ 293             right[rightoff + 1] = centery;
+ 294             right[rightoff + 2] = ctrlx2;
+ 295             right[rightoff + 3] = ctrly2;
+ 296             right[rightoff + 4] = x2;
+ 297             right[rightoff + 5] = y2;
+ 298         }
+ 299     }
+ 300 
+ 301 
+ 302     static void subdivideCubicAt(float t, float[] src, int srcoff,
+ 303                                  float[] left, int leftoff,
+ 304                                  float[] right, int rightoff)
+ 305     {
+ 306         float x1 = src[srcoff + 0];
+ 307         float y1 = src[srcoff + 1];
+ 308         float ctrlx1 = src[srcoff + 2];
+ 309         float ctrly1 = src[srcoff + 3];
+ 310         float ctrlx2 = src[srcoff + 4];
+ 311         float ctrly2 = src[srcoff + 5];
+ 312         float x2 = src[srcoff + 6];
+ 313         float y2 = src[srcoff + 7];
+ 314         if (left != null) {
+ 315             left[leftoff + 0] = x1;
+ 316             left[leftoff + 1] = y1;
+ 317         }
+ 318         if (right != null) {
+ 319             right[rightoff + 6] = x2;
+ 320             right[rightoff + 7] = y2;
+ 321         }
+ 322         x1 = x1 + t * (ctrlx1 - x1);
+ 323         y1 = y1 + t * (ctrly1 - y1);
+ 324         x2 = ctrlx2 + t * (x2 - ctrlx2);
+ 325         y2 = ctrly2 + t * (y2 - ctrly2);
+ 326         float centerx = ctrlx1 + t * (ctrlx2 - ctrlx1);
+ 327         float centery = ctrly1 + t * (ctrly2 - ctrly1);
+ 328         ctrlx1 = x1 + t * (centerx - x1);
+ 329         ctrly1 = y1 + t * (centery - y1);
+ 330         ctrlx2 = centerx + t * (x2 - centerx);
+ 331         ctrly2 = centery + t * (y2 - centery);
+ 332         centerx = ctrlx1 + t * (ctrlx2 - ctrlx1);
+ 333         centery = ctrly1 + t * (ctrly2 - ctrly1);
+ 334         if (left != null) {
+ 335             left[leftoff + 2] = x1;
+ 336             left[leftoff + 3] = y1;
+ 337             left[leftoff + 4] = ctrlx1;
+ 338             left[leftoff + 5] = ctrly1;
+ 339             left[leftoff + 6] = centerx;
+ 340             left[leftoff + 7] = centery;
+ 341         }
+ 342         if (right != null) {
+ 343             right[rightoff + 0] = centerx;
+ 344             right[rightoff + 1] = centery;
+ 345             right[rightoff + 2] = ctrlx2;
+ 346             right[rightoff + 3] = ctrly2;
+ 347             right[rightoff + 4] = x2;
+ 348             right[rightoff + 5] = y2;
+ 349         }
+ 350     }
+ 351 
+ 352     static void subdivideQuad(float[] src, int srcoff,
+ 353                               float[] left, int leftoff,
+ 354                               float[] right, int rightoff)
+ 355     {
+ 356         float x1 = src[srcoff + 0];
+ 357         float y1 = src[srcoff + 1];
+ 358         float ctrlx = src[srcoff + 2];
+ 359         float ctrly = src[srcoff + 3];
+ 360         float x2 = src[srcoff + 4];
+ 361         float y2 = src[srcoff + 5];
+ 362         if (left != null) {
+ 363             left[leftoff + 0] = x1;
+ 364             left[leftoff + 1] = y1;
+ 365         }
+ 366         if (right != null) {
+ 367             right[rightoff + 4] = x2;
+ 368             right[rightoff + 5] = y2;
+ 369         }
+<a name="20" id="anc20"></a><span class="changed"> 370         x1 = (x1 + ctrlx) / 2.0f;</span>
+<span class="changed"> 371         y1 = (y1 + ctrly) / 2.0f;</span>
+<span class="changed"> 372         x2 = (x2 + ctrlx) / 2.0f;</span>
+<span class="changed"> 373         y2 = (y2 + ctrly) / 2.0f;</span>
+<span class="changed"> 374         ctrlx = (x1 + x2) / 2.0f;</span>
+<span class="changed"> 375         ctrly = (y1 + y2) / 2.0f;</span>
+ 376         if (left != null) {
+ 377             left[leftoff + 2] = x1;
+ 378             left[leftoff + 3] = y1;
+ 379             left[leftoff + 4] = ctrlx;
+ 380             left[leftoff + 5] = ctrly;
+ 381         }
+ 382         if (right != null) {
+ 383             right[rightoff + 0] = ctrlx;
+ 384             right[rightoff + 1] = ctrly;
+ 385             right[rightoff + 2] = x2;
+ 386             right[rightoff + 3] = y2;
+ 387         }
+ 388     }
+ 389 
+ 390     static void subdivideQuadAt(float t, float[] src, int srcoff,
+ 391                                 float[] left, int leftoff,
+ 392                                 float[] right, int rightoff)
+ 393     {
+ 394         float x1 = src[srcoff + 0];
+ 395         float y1 = src[srcoff + 1];
+ 396         float ctrlx = src[srcoff + 2];
+ 397         float ctrly = src[srcoff + 3];
+ 398         float x2 = src[srcoff + 4];
+ 399         float y2 = src[srcoff + 5];
+ 400         if (left != null) {
+ 401             left[leftoff + 0] = x1;
+ 402             left[leftoff + 1] = y1;
+ 403         }
+ 404         if (right != null) {
+ 405             right[rightoff + 4] = x2;
+ 406             right[rightoff + 5] = y2;
+ 407         }
+ 408         x1 = x1 + t * (ctrlx - x1);
+ 409         y1 = y1 + t * (ctrly - y1);
+ 410         x2 = ctrlx + t * (x2 - ctrlx);
+ 411         y2 = ctrly + t * (y2 - ctrly);
+ 412         ctrlx = x1 + t * (x2 - x1);
+ 413         ctrly = y1 + t * (y2 - y1);
+ 414         if (left != null) {
+ 415             left[leftoff + 2] = x1;
+ 416             left[leftoff + 3] = y1;
+ 417             left[leftoff + 4] = ctrlx;
+ 418             left[leftoff + 5] = ctrly;
+ 419         }
+ 420         if (right != null) {
+ 421             right[rightoff + 0] = ctrlx;
+ 422             right[rightoff + 1] = ctrly;
+ 423             right[rightoff + 2] = x2;
+ 424             right[rightoff + 3] = y2;
+ 425         }
+ 426     }
+ 427 
+ 428     static void subdivideAt(float t, float[] src, int srcoff,
+ 429                             float[] left, int leftoff,
+ 430                             float[] right, int rightoff, int size)
+ 431     {
+ 432         switch(size) {
+ 433         case 8:
+ 434             subdivideCubicAt(t, src, srcoff, left, leftoff, right, rightoff);
+ 435             return;
+ 436         case 6:
+ 437             subdivideQuadAt(t, src, srcoff, left, leftoff, right, rightoff);
+ 438             return;
+ 439         }
+ 440     }
+ 441 }
+<a name="21" id="anc21"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="21" type="hidden" /></form></body></html>

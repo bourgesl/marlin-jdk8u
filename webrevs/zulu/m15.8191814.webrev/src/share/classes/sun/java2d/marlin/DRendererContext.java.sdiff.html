@@ -1,0 +1,387 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DRenderer.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DStroker.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/DRendererContext.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13694">13694</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8191814">8191814</a>: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
+Summary: upgrade to Marlin 0.8.2 providing efficient path clipping (Stroker and Filler)
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  58     final double[] double6 = new double[6];
+  59     // shared curve (dirty) (Renderer / Stroker)
+  60     final DCurve curve = new DCurve();
+  61     // MarlinRenderingEngine NormalizingPathIterator NearestPixelCenter:
+  62     final NormalizingPathIterator nPCPathIterator;
+  63     // MarlinRenderingEngine NearestPixelQuarter NormalizingPathIterator:
+  64     final NormalizingPathIterator nPQPathIterator;
+  65     // MarlinRenderingEngine.TransformingPathConsumer2D
+  66     final DTransformingPathConsumer2D transformerPC2D;
+  67     // recycled Path2D instance (weak)
+  68     private WeakReference&lt;Path2D.Double&gt; refPath2D = null;
+  69     final DRenderer renderer;
+  70     final DStroker stroker;
+  71     // Simplifies out collinear lines
+  72     final DCollinearSimplifier simplifier = new DCollinearSimplifier();
+  73     final DDasher dasher;
+  74     final MarlinTileGenerator ptg;
+  75     final MarlinCache cache;
+  76     // flag indicating the shape is stroked (1) or filled (0)
+  77     int stroking = 0;
+
+
+
+
+
+
+  78 
+  79     // Array caches:
+  80     /* clean int[] cache (zero-filled) = 5 refs */
+  81     private final IntArrayCache cleanIntCache = new IntArrayCache(true, 5);
+<span class="changed">  82     /* dirty int[] cache = 4 refs */</span>
+<span class="changed">  83     private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 4);</span>
+<span class="changed">  84     /* dirty double[] cache = 3 refs */</span>
+<span class="changed">  85     private final DoubleArrayCache dirtyDoubleCache = new DoubleArrayCache(false, 3);</span>
+<span class="changed">  86     /* dirty byte[] cache = 1 ref */</span>
+<span class="changed">  87     private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 1);</span>
+  88 
+  89     // RendererContext statistics
+  90     final RendererStats stats;
+  91 
+  92     final PathConsumer2DAdapter p2dAdapter = new PathConsumer2DAdapter();
+  93 
+  94 
+  95     /**
+  96      * Constructor
+  97      *
+  98      * @param name context name (debugging)
+  99      */
+ 100     DRendererContext(final String name) {
+ 101         if (LOG_CREATE_CONTEXT) {
+ 102             MarlinUtils.logInfo("new RendererContext = " + name);
+ 103         }
+ 104         this.cleanerObj = new Object();
+ 105 
+ 106         // create first stats (needed by newOffHeapArray):
+ 107         if (DO_STATS || DO_MONITORS) {
+ 108             stats = RendererStats.createInstance(cleanerObj, name);
+ 109             // push cache stats:
+ 110             stats.cacheStats = new CacheStats[] { cleanIntCache.stats,
+ 111                 dirtyIntCache.stats, dirtyDoubleCache.stats, dirtyByteCache.stats
+ 112             };
+ 113         } else {
+ 114             stats = null;
+ 115         }
+ 116 
+ 117         // NormalizingPathIterator instances:
+ 118         nPCPathIterator = new NormalizingPathIterator.NearestPixelCenter(double6);
+ 119         nPQPathIterator  = new NormalizingPathIterator.NearestPixelQuarter(double6);
+ 120 
+ 121         // MarlinRenderingEngine.TransformingPathConsumer2D
+<span class="changed"> 122         transformerPC2D = new DTransformingPathConsumer2D();</span>
+ 123 
+ 124         // Renderer:
+ 125         cache = new MarlinCache(this);
+ 126         renderer = new DRenderer(this); // needs MarlinCache from rdrCtx.cache
+ 127         ptg = new MarlinTileGenerator(stats, renderer, cache);
+ 128 
+ 129         stroker = new DStroker(this);
+ 130         dasher = new DDasher(this);
+ 131     }
+ 132 
+ 133     /**
+ 134      * Disposes this renderer context:
+ 135      * clean up before reusing this context
+ 136      */
+ 137     void dispose() {
+ 138         if (DO_STATS) {
+ 139             if (stats.totalOffHeap &gt; stats.totalOffHeapMax) {
+ 140                 stats.totalOffHeapMax = stats.totalOffHeap;
+ 141             }
+ 142             stats.totalOffHeap = 0L;
+ 143         }
+ 144         stroking = 0;
+
+
+
+ 145         // if context is maked as DIRTY:
+ 146         if (dirty) {
+ 147             // may happen if an exception if thrown in the pipeline processing:
+ 148             // force cleanup of all possible pipelined blocks (except Renderer):
+ 149 
+ 150             // NormalizingPathIterator instances:
+ 151             this.nPCPathIterator.dispose();
+ 152             this.nPQPathIterator.dispose();
+ 153             // Dasher:
+ 154             this.dasher.dispose();
+ 155             // Stroker:
+ 156             this.stroker.dispose();
+ 157 
+ 158             // mark context as CLEAN:
+ 159             dirty = false;
+ 160         }
+ 161     }
+ 162 
+ 163     Path2D.Double getPath2D() {
+ 164         // resolve reference:
+<span class="changed"> 165         Path2D.Double p2d</span>
+<span class="changed"> 166             = (refPath2D != null) ? refPath2D.get() : null;</span>
+ 167 
+ 168         // create a new Path2D ?
+ 169         if (p2d == null) {
+<span class="changed"> 170             p2d = new Path2D.Double(Path2D.WIND_NON_ZERO, INITIAL_EDGES_COUNT); // 32K</span>
+ 171 
+ 172             // update weak reference:
+ 173             refPath2D = new WeakReference&lt;Path2D.Double&gt;(p2d);
+ 174         }
+ 175         // reset the path anyway:
+ 176         p2d.reset();
+ 177         return p2d;
+ 178     }
+ 179 
+ 180     @Override
+ 181     public RendererStats stats() {
+ 182         return stats;
+ 183     }
+ 184 
+ 185     @Override
+ 186     public OffHeapArray newOffHeapArray(final long initialSize) {
+ 187         if (DO_STATS) {
+ 188             stats.totalOffHeapInitial += initialSize;
+ 189         }
+ 190         return new OffHeapArray(cleanerObj, initialSize);
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  58     final double[] double6 = new double[6];
+  59     // shared curve (dirty) (Renderer / Stroker)
+  60     final DCurve curve = new DCurve();
+  61     // MarlinRenderingEngine NormalizingPathIterator NearestPixelCenter:
+  62     final NormalizingPathIterator nPCPathIterator;
+  63     // MarlinRenderingEngine NearestPixelQuarter NormalizingPathIterator:
+  64     final NormalizingPathIterator nPQPathIterator;
+  65     // MarlinRenderingEngine.TransformingPathConsumer2D
+  66     final DTransformingPathConsumer2D transformerPC2D;
+  67     // recycled Path2D instance (weak)
+  68     private WeakReference&lt;Path2D.Double&gt; refPath2D = null;
+  69     final DRenderer renderer;
+  70     final DStroker stroker;
+  71     // Simplifies out collinear lines
+  72     final DCollinearSimplifier simplifier = new DCollinearSimplifier();
+  73     final DDasher dasher;
+  74     final MarlinTileGenerator ptg;
+  75     final MarlinCache cache;
+  76     // flag indicating the shape is stroked (1) or filled (0)
+  77     int stroking = 0;
+<span class="new">  78     // flag indicating to clip the shape</span>
+<span class="new">  79     boolean doClip = false;</span>
+<span class="new">  80     // flag indicating if the path is closed or not (in advance) to handle properly caps</span>
+<span class="new">  81     boolean closedPath = false;</span>
+<span class="new">  82     // clip rectangle (ymin, ymax, xmin, xmax):</span>
+<span class="new">  83     final double[] clipRect = new double[4];</span>
+  84 
+  85     // Array caches:
+  86     /* clean int[] cache (zero-filled) = 5 refs */
+  87     private final IntArrayCache cleanIntCache = new IntArrayCache(true, 5);
+<span class="changed">  88     /* dirty int[] cache = 5 refs */</span>
+<span class="changed">  89     private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 5);</span>
+<span class="changed">  90     /* dirty double[] cache = 4 refs (2 polystack) */</span>
+<span class="changed">  91     private final DoubleArrayCache dirtyDoubleCache = new DoubleArrayCache(false, 4);</span>
+<span class="changed">  92     /* dirty byte[] cache = 2 ref (2 polystack) */</span>
+<span class="changed">  93     private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 2);</span>
+  94 
+  95     // RendererContext statistics
+  96     final RendererStats stats;
+  97 
+  98     final PathConsumer2DAdapter p2dAdapter = new PathConsumer2DAdapter();
+  99 
+ 100 
+ 101     /**
+ 102      * Constructor
+ 103      *
+ 104      * @param name context name (debugging)
+ 105      */
+ 106     DRendererContext(final String name) {
+ 107         if (LOG_CREATE_CONTEXT) {
+ 108             MarlinUtils.logInfo("new RendererContext = " + name);
+ 109         }
+ 110         this.cleanerObj = new Object();
+ 111 
+ 112         // create first stats (needed by newOffHeapArray):
+ 113         if (DO_STATS || DO_MONITORS) {
+ 114             stats = RendererStats.createInstance(cleanerObj, name);
+ 115             // push cache stats:
+ 116             stats.cacheStats = new CacheStats[] { cleanIntCache.stats,
+ 117                 dirtyIntCache.stats, dirtyDoubleCache.stats, dirtyByteCache.stats
+ 118             };
+ 119         } else {
+ 120             stats = null;
+ 121         }
+ 122 
+ 123         // NormalizingPathIterator instances:
+ 124         nPCPathIterator = new NormalizingPathIterator.NearestPixelCenter(double6);
+ 125         nPQPathIterator  = new NormalizingPathIterator.NearestPixelQuarter(double6);
+ 126 
+ 127         // MarlinRenderingEngine.TransformingPathConsumer2D
+<span class="changed"> 128         transformerPC2D = new DTransformingPathConsumer2D(this);</span>
+ 129 
+ 130         // Renderer:
+ 131         cache = new MarlinCache(this);
+ 132         renderer = new DRenderer(this); // needs MarlinCache from rdrCtx.cache
+ 133         ptg = new MarlinTileGenerator(stats, renderer, cache);
+ 134 
+ 135         stroker = new DStroker(this);
+ 136         dasher = new DDasher(this);
+ 137     }
+ 138 
+ 139     /**
+ 140      * Disposes this renderer context:
+ 141      * clean up before reusing this context
+ 142      */
+ 143     void dispose() {
+ 144         if (DO_STATS) {
+ 145             if (stats.totalOffHeap &gt; stats.totalOffHeapMax) {
+ 146                 stats.totalOffHeapMax = stats.totalOffHeap;
+ 147             }
+ 148             stats.totalOffHeap = 0L;
+ 149         }
+ 150         stroking   = 0;
+<span class="new"> 151         doClip     = false;</span>
+<span class="new"> 152         closedPath = false;</span>
+<span class="new"> 153 </span>
+ 154         // if context is maked as DIRTY:
+ 155         if (dirty) {
+ 156             // may happen if an exception if thrown in the pipeline processing:
+ 157             // force cleanup of all possible pipelined blocks (except Renderer):
+ 158 
+ 159             // NormalizingPathIterator instances:
+ 160             this.nPCPathIterator.dispose();
+ 161             this.nPQPathIterator.dispose();
+ 162             // Dasher:
+ 163             this.dasher.dispose();
+ 164             // Stroker:
+ 165             this.stroker.dispose();
+ 166 
+ 167             // mark context as CLEAN:
+ 168             dirty = false;
+ 169         }
+ 170     }
+ 171 
+ 172     Path2D.Double getPath2D() {
+ 173         // resolve reference:
+<span class="changed"> 174         Path2D.Double p2d = (refPath2D != null) ? refPath2D.get() : null;</span>
+
+ 175 
+ 176         // create a new Path2D ?
+ 177         if (p2d == null) {
+<span class="changed"> 178             p2d = new Path2D.Double(WIND_NON_ZERO, INITIAL_EDGES_COUNT); // 32K</span>
+ 179 
+ 180             // update weak reference:
+ 181             refPath2D = new WeakReference&lt;Path2D.Double&gt;(p2d);
+ 182         }
+ 183         // reset the path anyway:
+ 184         p2d.reset();
+ 185         return p2d;
+ 186     }
+ 187 
+ 188     @Override
+ 189     public RendererStats stats() {
+ 190         return stats;
+ 191     }
+ 192 
+ 193     @Override
+ 194     public OffHeapArray newOffHeapArray(final long initialSize) {
+ 195         if (DO_STATS) {
+ 196             stats.totalOffHeapInitial += initialSize;
+ 197         }
+ 198         return new OffHeapArray(cleanerObj, initialSize);
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DRenderer.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DStroker.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

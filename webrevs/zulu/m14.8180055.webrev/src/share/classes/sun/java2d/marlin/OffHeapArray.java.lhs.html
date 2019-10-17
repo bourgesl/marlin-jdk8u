@@ -1,0 +1,335 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13693">13693</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8180055">8180055</a>: Upgrade the Marlin renderer in Java2D
+Summary: added the double-precision variant + MarlinFX backports + Improved MarlinTileGenerator + higher precision of the cubic / quadratic curve
+Reviewed-by: flar, pnarayanan</pre><hr></hr>
+<pre>
+   1 /*
+   2  * Copyright (c) 2007, 2015, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.lang.ref.PhantomReference;
+  29 import java.lang.ref.ReferenceQueue;
+  30 import java.security.AccessController;
+  31 import java.security.PrivilegedAction;
+  32 import java.util.Vector;
+  33 import static sun.java2d.marlin.MarlinConst.LOG_UNSAFE_MALLOC;
+  34 import sun.misc.ThreadGroupUtils;
+  35 import sun.misc.Unsafe;
+  36 
+  37 /**
+  38  *
+  39  * @author bourgesl
+  40  */
+  41 final class OffHeapArray  {
+  42 
+  43     // unsafe reference
+  44     static final Unsafe UNSAFE;
+  45     // size of int / float
+  46     static final int SIZE_INT;
+  47 
+  48     // RendererContext reference queue
+  49     private static final ReferenceQueue&lt;Object&gt; rdrQueue
+  50         = new ReferenceQueue&lt;Object&gt;();
+  51     // reference list
+  52     private static final Vector&lt;OffHeapReference&gt; refList
+  53         = new Vector&lt;OffHeapReference&gt;(32);
+  54 
+  55     static {
+  56         UNSAFE   = Unsafe.getUnsafe();
+  57         SIZE_INT = Unsafe.ARRAY_INT_INDEX_SCALE;
+  58 
+  59         // Mimics Java2D Disposer:
+  60         AccessController.doPrivileged(
+  61             (PrivilegedAction&lt;Void&gt;) () -&gt; {
+  62                 /*
+  63                  * The thread must be a member of a thread group
+  64                  * which will not get GCed before VM exit.
+  65                  * Make its parent the top-level thread group.
+  66                  */
+  67                 final ThreadGroup rootTG
+  68                     = ThreadGroupUtils.getRootThreadGroup();
+  69                 final Thread t = new Thread(rootTG, new OffHeapDisposer(),
+  70                     "MarlinRenderer Disposer");
+  71                 t.setContextClassLoader(null);
+  72                 t.setDaemon(true);
+  73                 t.setPriority(Thread.MAX_PRIORITY);
+  74                 t.start();
+  75                 return null;
+  76             }
+  77         );
+  78     }
+  79 
+  80     /* members */
+  81     long address;
+  82     long length;
+  83     int  used;
+  84 
+  85     OffHeapArray(final Object parent, final long len) {
+  86         // note: may throw OOME:
+  87         this.address = UNSAFE.allocateMemory(len);
+  88         this.length  = len;
+  89         this.used    = 0;
+  90         if (LOG_UNSAFE_MALLOC) {
+  91             MarlinUtils.logInfo(System.currentTimeMillis()
+  92                                 + ": OffHeapArray.allocateMemory = "
+  93                                 + len + " to addr = " + this.address);
+  94         }
+  95 
+  96         // Create the phantom reference to ensure freeing off-heap memory:
+  97         refList.add(new OffHeapReference(parent, this));
+  98     }
+  99 
+ 100     /*
+ 101      * As realloc may change the address, updating address is MANDATORY
+ 102      * @param len new array length
+ 103      * @throws OutOfMemoryError if the allocation is refused by the system
+ 104      */
+ 105     void resize(final long len) {
+ 106         // note: may throw OOME:
+ 107         this.address = UNSAFE.reallocateMemory(address, len);
+ 108         this.length  = len;
+ 109         if (LOG_UNSAFE_MALLOC) {
+ 110             MarlinUtils.logInfo(System.currentTimeMillis()
+ 111                                 + ": OffHeapArray.reallocateMemory = "
+ 112                                 + len + " to addr = " + this.address);
+ 113         }
+ 114     }
+ 115 
+ 116     void free() {
+ 117         UNSAFE.freeMemory(this.address);
+ 118         if (LOG_UNSAFE_MALLOC) {
+ 119             MarlinUtils.logInfo(System.currentTimeMillis()
+ 120                                 + ": OffHeapEdgeArray.free = "
+ 121                                 + this.length
+ 122                                 + " at addr = " + this.address);
+ 123         }
+<a name="1" id="anc1"></a>
+ 124     }
+ 125 
+ 126     void fill(final byte val) {
+ 127         UNSAFE.setMemory(this.address, this.length, val);
+ 128     }
+ 129 
+ 130     static final class OffHeapReference extends PhantomReference&lt;Object&gt; {
+ 131 
+ 132         private final OffHeapArray array;
+ 133 
+ 134         OffHeapReference(final Object parent, final OffHeapArray edges) {
+ 135             super(parent, rdrQueue);
+ 136             this.array = edges;
+ 137         }
+ 138 
+ 139         void dispose() {
+ 140             // free off-heap blocks
+ 141             this.array.free();
+ 142         }
+ 143     }
+ 144 
+ 145     static final class OffHeapDisposer implements Runnable {
+ 146         @Override
+ 147         public void run() {
+ 148             final Thread currentThread = Thread.currentThread();
+ 149             OffHeapReference ref;
+ 150 
+ 151             // check interrupted:
+ 152             for (; !currentThread.isInterrupted();) {
+ 153                 try {
+ 154                     ref = (OffHeapReference)rdrQueue.remove();
+ 155                     ref.dispose();
+ 156 
+ 157                     refList.remove(ref);
+ 158 
+ 159                 } catch (InterruptedException ie) {
+ 160                     MarlinUtils.logException("OffHeapDisposer interrupted:",
+ 161                                              ie);
+ 162                 }
+ 163             }
+ 164         }
+ 165     }
+ 166 }
+<a name="2" id="anc2"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="2" type="hidden" /></form></body></html>

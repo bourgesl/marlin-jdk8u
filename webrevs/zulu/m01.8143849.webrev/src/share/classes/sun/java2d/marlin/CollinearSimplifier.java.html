@@ -1,0 +1,238 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New src/share/classes/sun/java2d/marlin/CollinearSimplifier.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import sun.awt.geom.PathConsumer2D;
+  29 
+  30 final class CollinearSimplifier implements PathConsumer2D {
+  31 
+  32     enum SimplifierState {
+  33 
+  34         Empty, PreviousPoint, PreviousLine
+  35     };
+  36     // slope precision threshold
+  37     static final float EPS = 1e-4f; // aaime proposed 1e-3f
+  38 
+  39     PathConsumer2D delegate;
+  40     SimplifierState state;
+  41     float px1, py1, px2, py2;
+  42     float pslope;
+  43 
+  44     CollinearSimplifier() {
+  45     }
+  46 
+  47     public CollinearSimplifier init(PathConsumer2D delegate) {
+  48         this.delegate = delegate;
+  49         this.state = SimplifierState.Empty;
+  50 
+  51         return this; // fluent API
+  52     }
+  53 
+  54     @Override
+  55     public void pathDone() {
+  56         emitStashedLine();
+  57         state = SimplifierState.Empty;
+  58         delegate.pathDone();
+  59     }
+  60 
+  61     @Override
+  62     public void closePath() {
+  63         emitStashedLine();
+  64         state = SimplifierState.Empty;
+  65         delegate.closePath();
+  66     }
+  67 
+  68     @Override
+  69     public long getNativeConsumer() {
+  70         return 0;
+  71     }
+  72 
+  73     @Override
+  74     public void quadTo(float x1, float y1, float x2, float y2) {
+  75         emitStashedLine();
+  76         delegate.quadTo(x1, y1, x2, y2);
+  77         // final end point:
+  78         state = SimplifierState.PreviousPoint;
+  79         px1 = x2;
+  80         py1 = y2;
+  81     }
+  82 
+  83     @Override
+  84     public void curveTo(float x1, float y1, float x2, float y2,
+  85                         float x3, float y3) {
+  86         emitStashedLine();
+  87         delegate.curveTo(x1, y1, x2, y2, x3, y3);
+  88         // final end point:
+  89         state = SimplifierState.PreviousPoint;
+  90         px1 = x3;
+  91         py1 = y3;
+  92     }
+  93 
+  94     @Override
+  95     public void moveTo(float x, float y) {
+  96         emitStashedLine();
+  97         delegate.moveTo(x, y);
+  98         state = SimplifierState.PreviousPoint;
+  99         px1 = x;
+ 100         py1 = y;
+ 101     }
+ 102 
+ 103     @Override
+ 104     public void lineTo(final float x, final float y) {
+ 105         switch (state) {
+ 106             case Empty:
+ 107                 delegate.lineTo(x, y);
+ 108                 state = SimplifierState.PreviousPoint;
+ 109                 px1 = x;
+ 110                 py1 = y;
+ 111                 return;
+ 112 
+ 113             case PreviousPoint:
+ 114                 state = SimplifierState.PreviousLine;
+ 115                 px2 = x;
+ 116                 py2 = y;
+ 117                 pslope = getSlope(px1, py1, x, y);
+ 118                 return;
+ 119 
+ 120             case PreviousLine:
+ 121                 final float slope = getSlope(px2, py2, x, y);
+ 122                 // test for collinearity
+ 123                 if ((slope == pslope) || (Math.abs(pslope - slope) &lt; EPS)) {
+ 124                     // merge segments
+ 125                     px2 = x;
+ 126                     py2 = y;
+ 127                     return;
+ 128                 }
+ 129                 // emit previous segment
+ 130                 delegate.lineTo(px2, py2);
+ 131                 px1 = px2;
+ 132                 py1 = py2;
+ 133                 px2 = x;
+ 134                 py2 = y;
+ 135                 pslope = slope;
+ 136                 return;
+ 137             default:
+ 138         }
+ 139     }
+ 140 
+ 141     private void emitStashedLine() {
+ 142         if (state == SimplifierState.PreviousLine) {
+ 143             delegate.lineTo(px2, py2);
+ 144         }
+ 145     }
+ 146 
+ 147     private static float getSlope(float x1, float y1, float x2, float y2) {
+ 148         float dy = y2 - y1;
+ 149         if (dy == 0f) {
+ 150             return (x2 &gt; x1) ? Float.POSITIVE_INFINITY
+ 151                    : Float.NEGATIVE_INFINITY;
+ 152         }
+ 153         return (x2 - x1) / dy;
+ 154     }
+ 155 }
+</pre></body></html>

@@ -1,0 +1,288 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New test/sun/java2d/marlin/CrashPaintTest.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  */
+  23 
+  24 import java.awt.Color;
+  25 import java.awt.Graphics2D;
+  26 import java.awt.Paint;
+  27 import java.awt.PaintContext;
+  28 import java.awt.Rectangle;
+  29 import java.awt.RenderingHints;
+  30 import java.awt.TexturePaint;
+  31 import java.awt.geom.AffineTransform;
+  32 import java.awt.geom.Ellipse2D;
+  33 import java.awt.geom.Rectangle2D;
+  34 import java.awt.image.BufferedImage;
+  35 import java.awt.image.ColorModel;
+  36 import java.awt.image.Raster;
+  37 import java.io.File;
+  38 import java.io.IOException;
+  39 import java.util.Locale;
+  40 import java.util.logging.Handler;
+  41 import java.util.logging.LogRecord;
+  42 import java.util.logging.Logger;
+  43 import javax.imageio.ImageIO;
+  44 
+  45 /**
+  46  * @test
+  47  * @bug 8148886
+  48  * @summary Verifies that Marlin supports reentrant operations (ThreadLocal)
+  49  * like in custom Paint or custom Composite
+  50  * @run main CrashPaintTest
+  51  */
+  52 public class CrashPaintTest {
+  53 
+  54     static final boolean SAVE_IMAGE = false;
+  55 
+  56     public static void main(String argv[]) {
+  57         Locale.setDefault(Locale.US);
+  58 
+  59         // initialize j.u.l Looger:
+  60         final Logger log = Logger.getLogger("sun.java2d.marlin");
+  61         log.addHandler(new Handler() {
+  62             @Override
+  63             public void publish(LogRecord record) {
+  64                 Throwable th = record.getThrown();
+  65                 // detect any Throwable:
+  66                 if (th != null) {
+  67                     System.out.println("Test failed:\n" + record.getMessage());
+  68                     th.printStackTrace(System.out);
+  69 
+  70                     throw new RuntimeException("Test failed: ", th);
+  71                 }
+  72             }
+  73 
+  74             @Override
+  75             public void flush() {
+  76             }
+  77 
+  78             @Override
+  79             public void close() throws SecurityException {
+  80             }
+  81         });
+  82 
+  83         // enable Marlin logging &amp; internal checks:
+  84         System.setProperty("sun.java2d.renderer.log", "true");
+  85         System.setProperty("sun.java2d.renderer.useLogger", "true");
+  86         System.setProperty("sun.java2d.renderer.doChecks", "true");
+  87 
+  88         // Force using thread-local storage:
+  89         System.setProperty("sun.java2d.renderer.useThreadLocal", "true");
+  90         // Force smaller pixelsize to force using array caches:
+  91         System.setProperty("sun.java2d.renderer.pixelsize", "256");
+  92 
+  93         final int width = 300;
+  94         final int height = 300;
+  95 
+  96         final BufferedImage image = new BufferedImage(width, height,
+  97                 BufferedImage.TYPE_INT_ARGB);
+  98 
+  99         final Graphics2D g2d = (Graphics2D) image.getGraphics();
+ 100         try {
+ 101             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+ 102                     RenderingHints.VALUE_ANTIALIAS_ON);
+ 103 
+ 104             g2d.setBackground(Color.WHITE);
+ 105             g2d.clearRect(0, 0, width, height);
+ 106 
+ 107             final Ellipse2D.Double ellipse
+ 108                 = new Ellipse2D.Double(0, 0, width, height);
+ 109 
+ 110             final Paint paint = new CustomPaint(100);
+ 111 
+ 112             for (int i = 0; i &lt; 20; i++) {
+ 113                 final long start = System.nanoTime();
+ 114                 g2d.setPaint(paint);
+ 115                 g2d.fill(ellipse);
+ 116 
+ 117                 g2d.setColor(Color.GREEN);
+ 118                 g2d.draw(ellipse);
+ 119 
+ 120                 final long time = System.nanoTime() - start;
+ 121                 System.out.println("paint: duration= " + (1e-6 * time) + " ms.");
+ 122             }
+ 123 
+ 124             if (SAVE_IMAGE) {
+ 125                 try {
+ 126                     final File file = new File("CrashPaintTest.png");
+ 127                     System.out.println("Writing file: "
+ 128                             + file.getAbsolutePath());
+ 129                     ImageIO.write(image, "PNG", file);
+ 130                 } catch (IOException ex) {
+ 131                     System.out.println("Writing file failure:");
+ 132                     ex.printStackTrace();
+ 133                 }
+ 134             }
+ 135 
+ 136             // Check image on few pixels:
+ 137             final Raster raster = image.getData();
+ 138 
+ 139             // 170, 175 = blue
+ 140             checkPixel(raster, 170, 175, Color.BLUE.getRGB());
+ 141             // 50, 50 = blue
+ 142             checkPixel(raster, 50, 50, Color.BLUE.getRGB());
+ 143 
+ 144             // 190, 110 = pink
+ 145             checkPixel(raster, 190, 110, Color.PINK.getRGB());
+ 146             // 280, 210 = pink
+ 147             checkPixel(raster, 280, 210, Color.PINK.getRGB());
+ 148 
+ 149         } finally {
+ 150             g2d.dispose();
+ 151         }
+ 152     }
+ 153 
+ 154     private static void checkPixel(final Raster raster,
+ 155                                    final int x, final int y,
+ 156                                    final int expected) {
+ 157 
+ 158         final int[] rgb = (int[]) raster.getDataElements(x, y, null);
+ 159 
+ 160         if (rgb[0] != expected) {
+ 161             throw new IllegalStateException("bad pixel at (" + x + ", " + y
+ 162                 + ") = " + rgb[0] + " expected: " + expected);
+ 163         }
+ 164     }
+ 165 
+ 166     private static class CustomPaint extends TexturePaint {
+ 167         private int size;
+ 168 
+ 169         CustomPaint(final int size) {
+ 170             super(new BufferedImage(size, size,
+ 171                     BufferedImage.TYPE_INT_ARGB),
+ 172                     new Rectangle2D.Double(0, 0, size, size)
+ 173             );
+ 174             this.size = size;
+ 175         }
+ 176 
+ 177         @Override
+ 178         public PaintContext createContext(ColorModel cm,
+ 179                                           Rectangle deviceBounds,
+ 180                                           Rectangle2D userBounds,
+ 181                                           AffineTransform at,
+ 182                                           RenderingHints hints) {
+ 183 
+ 184             // Fill bufferedImage using
+ 185             final Graphics2D g2d = (Graphics2D) getImage().getGraphics();
+ 186             try {
+ 187                 g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+ 188                         RenderingHints.VALUE_ANTIALIAS_ON);
+ 189                 g2d.setBackground(Color.PINK);
+ 190                 g2d.clearRect(0, 0, size, size);
+ 191 
+ 192                 g2d.setColor(Color.BLUE);
+ 193                 g2d.drawRect(0, 0, size, size);
+ 194 
+ 195                 g2d.fillOval(size / 10, size / 10,
+ 196                              size * 8 / 10, size * 8 / 10);
+ 197 
+ 198             } finally {
+ 199                 g2d.dispose();
+ 200             }
+ 201 
+ 202             return super.createContext(cm, deviceBounds, userBounds, at, hints);
+ 203         }
+ 204     }
+ 205 }
+</pre></body></html>

@@ -1,0 +1,561 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>Old src/share/classes/sun/java2d/pipe/RenderingEngine.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2007, 2013, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.pipe;
+  27 
+  28 import java.awt.Shape;
+  29 import java.awt.BasicStroke;
+  30 import java.awt.geom.PathIterator;
+  31 import java.awt.geom.AffineTransform;
+  32 
+  33 import java.security.PrivilegedAction;
+  34 import java.security.AccessController;
+  35 import java.util.ServiceLoader;
+  36 import sun.security.action.GetPropertyAction;
+  37 
+  38 import sun.awt.geom.PathConsumer2D;
+  39 
+  40 /**
+  41  * This class abstracts a number of features for which the Java 2D
+  42  * implementation relies on proprietary licensed software libraries.
+  43  * Access to those features is now achieved by retrieving the singleton
+  44  * instance of this class and calling the appropriate methods on it.
+  45  * The 3 primary features abstracted here include:
+  46  * &lt;dl&gt;
+  47  * &lt;dt&gt;Shape createStrokedShape(Shape, [BasicStroke attributes]);
+  48  * &lt;dd&gt;This method implements the functionality of the method of the
+  49  * same name on the {@link BasicStroke} class.
+  50  * &lt;dt&gt;void strokeTo(Shape, [rendering parameters], PathConsumer2D);
+  51  * &lt;dd&gt;This method performs widening of the source path on the fly
+  52  * and sends the results to the given {@link PathConsumer2D} object.
+  53  * This procedure avoids having to create an intermediate Shape
+  54  * object to hold the results of the {@code createStrokedShape} method.
+  55  * The main user of this method is the Java 2D non-antialiasing renderer.
+  56  * &lt;dt&gt;AATileGenerator getAATileGenerator(Shape, [rendering parameters]);
+  57  * &lt;dd&gt;This method returns an object which can iterate over the
+  58  * specified bounding box and produce tiles of coverage values for
+  59  * antialiased rendering.  The details of the operation of the
+  60  * {@link AATileGenerator} object are explained in its class comments.
+  61  * &lt;/dl&gt;
+  62  * Additionally, the following informational method supplies important
+  63  * data about the implementation.
+  64  * &lt;dl&gt;
+  65  * &lt;dt&gt;float getMinimumAAPenSize()
+  66  * &lt;dd&gt;This method provides information on how small the BasicStroke
+  67  * line width can get before dropouts occur.  Rendering with a BasicStroke
+  68  * is defined to never allow the line to have breaks, gaps, or dropouts
+  69  * even if the width is set to 0.0f, so this information allows the
+  70  * {@link SunGraphics2D} class to detect the "thin line" case and set
+  71  * the rendering attributes accordingly.
+  72  * &lt;/dl&gt;
+  73  * At startup the runtime will load a single instance of this class.
+  74  * It searches the classpath for a registered provider of this API
+  75  * and returns either the last one it finds, or the instance whose
+  76  * class name matches the value supplied in the System property
+  77  * {@code sun.java2d.renderer}.
+  78  * Additionally, a runtime System property flag can be set to trace
+  79  * all calls to methods on the {@code RenderingEngine} in use by
+  80  * setting the sun.java2d.renderer.trace property to any non-null value.
+  81  * &lt;p&gt;
+  82  * Parts of the system that need to use any of the above features should
+  83  * call {@code RenderingEngine.getInstance()} to obtain the properly
+  84  * registered (and possibly trace-enabled) version of the RenderingEngine.
+  85  */
+  86 public abstract class RenderingEngine {
+  87     private static RenderingEngine reImpl;
+  88 
+  89     /**
+  90      * Returns an instance of {@code RenderingEngine} as determined
+  91      * by the installation environment and runtime flags.
+  92      * &lt;p&gt;
+  93      * A specific instance of the {@code RenderingEngine} can be
+  94      * chosen by specifying the runtime flag:
+  95      * &lt;pre&gt;
+  96      *     java -Dsun.java2d.renderer=&amp;lt;classname&amp;gt;
+  97      * &lt;/pre&gt;
+  98      *
+  99      * If no specific {@code RenderingEngine} is specified on the command
+ 100      * or Ductus renderer is specified, it will attempt loading the
+ 101      * sun.dc.DuctusRenderingEngine class using Class.forName as a fastpath;
+ 102      * if not found, use the ServiceLoader.
+ 103      * If no specific {@code RenderingEngine} is specified on the command
+ 104      * line then the last one returned by enumerating all subclasses of
+ 105      * {@code RenderingEngine} known to the ServiceLoader is used.
+ 106      * &lt;p&gt;
+ 107      * Runtime tracing of the actions of the {@code RenderingEngine}
+ 108      * can be enabled by specifying the runtime flag:
+ 109      * &lt;pre&gt;
+ 110      *     java -Dsun.java2d.renderer.trace=&amp;lt;any string&amp;gt;
+ 111      * &lt;/pre&gt;
+ 112      * @return an instance of {@code RenderingEngine}
+ 113      * @since 1.7
+ 114      */
+ 115     public static synchronized RenderingEngine getInstance() {
+ 116         if (reImpl != null) {
+ 117             return reImpl;
+ 118         }
+ 119 
+ 120         reImpl =
+ 121             AccessController.doPrivileged(new PrivilegedAction&lt;RenderingEngine&gt;() {
+ 122                 public RenderingEngine run() {
+ 123                     final String ductusREClass = "sun.dc.DuctusRenderingEngine";
+ 124                     String reClass =
+ 125                         System.getProperty("sun.java2d.renderer", ductusREClass);
+ 126                     if (reClass.equals(ductusREClass)) {
+ 127                         try {
+ 128                             Class&lt;?&gt; cls = Class.forName(ductusREClass);
+ 129                             return (RenderingEngine) cls.newInstance();
+ 130                         } catch (ReflectiveOperationException ignored) {
+ 131                             // not found
+ 132                         }
+ 133                     }
+ 134 
+ 135                     ServiceLoader&lt;RenderingEngine&gt; reLoader =
+ 136                         ServiceLoader.loadInstalled(RenderingEngine.class);
+ 137 
+ 138                     RenderingEngine service = null;
+ 139 
+ 140                     for (RenderingEngine re : reLoader) {
+ 141                         service = re;
+ 142                         if (re.getClass().getName().equals(reClass)) {
+ 143                             break;
+ 144                         }
+ 145                     }
+ 146                     return service;
+ 147                 }
+ 148             });
+ 149 
+ 150         if (reImpl == null) {
+ 151             throw new InternalError("No RenderingEngine module found");
+ 152         }
+ 153 
+ 154         GetPropertyAction gpa =
+ 155             new GetPropertyAction("sun.java2d.renderer.trace");
+ 156         String reTrace = AccessController.doPrivileged(gpa);
+ 157         if (reTrace != null) {
+ 158             reImpl = new Tracer(reImpl);
+ 159         }
+ 160 
+ 161         return reImpl;
+ 162     }
+ 163 
+ 164     /**
+ 165      * Create a widened path as specified by the parameters.
+ 166      * &lt;p&gt;
+ 167      * The specified {@code src} {@link Shape} is widened according
+ 168      * to the specified attribute parameters as per the
+ 169      * {@link BasicStroke} specification.
+ 170      *
+ 171      * @param src the source path to be widened
+ 172      * @param width the width of the widened path as per {@code BasicStroke}
+ 173      * @param caps the end cap decorations as per {@code BasicStroke}
+ 174      * @param join the segment join decorations as per {@code BasicStroke}
+ 175      * @param miterlimit the miter limit as per {@code BasicStroke}
+ 176      * @param dashes the dash length array as per {@code BasicStroke}
+ 177      * @param dashphase the initial dash phase as per {@code BasicStroke}
+ 178      * @return the widened path stored in a new {@code Shape} object
+ 179      * @since 1.7
+ 180      */
+ 181     public abstract Shape createStrokedShape(Shape src,
+ 182                                              float width,
+ 183                                              int caps,
+ 184                                              int join,
+ 185                                              float miterlimit,
+ 186                                              float dashes[],
+ 187                                              float dashphase);
+ 188 
+ 189     /**
+ 190      * Sends the geometry for a widened path as specified by the parameters
+ 191      * to the specified consumer.
+ 192      * &lt;p&gt;
+ 193      * The specified {@code src} {@link Shape} is widened according
+ 194      * to the parameters specified by the {@link BasicStroke} object.
+ 195      * Adjustments are made to the path as appropriate for the
+ 196      * {@link VALUE_STROKE_NORMALIZE} hint if the {@code normalize}
+ 197      * boolean parameter is true.
+ 198      * Adjustments are made to the path as appropriate for the
+ 199      * {@link VALUE_ANTIALIAS_ON} hint if the {@code antialias}
+ 200      * boolean parameter is true.
+ 201      * &lt;p&gt;
+ 202      * The geometry of the widened path is forwarded to the indicated
+ 203      * {@link PathConsumer2D} object as it is calculated.
+ 204      *
+ 205      * @param src the source path to be widened
+ 206      * @param bs the {@code BasicSroke} object specifying the
+ 207      *           decorations to be applied to the widened path
+ 208      * @param normalize indicates whether stroke normalization should
+ 209      *                  be applied
+ 210      * @param antialias indicates whether or not adjustments appropriate
+ 211      *                  to antialiased rendering should be applied
+ 212      * @param consumer the {@code PathConsumer2D} instance to forward
+ 213      *                 the widened geometry to
+ 214      * @since 1.7
+ 215      */
+ 216     public abstract void strokeTo(Shape src,
+ 217                                   AffineTransform at,
+ 218                                   BasicStroke bs,
+ 219                                   boolean thin,
+ 220                                   boolean normalize,
+ 221                                   boolean antialias,
+ 222                                   PathConsumer2D consumer);
+ 223 
+ 224     /**
+ 225      * Construct an antialiased tile generator for the given shape with
+ 226      * the given rendering attributes and store the bounds of the tile
+ 227      * iteration in the bbox parameter.
+ 228      * The {@code at} parameter specifies a transform that should affect
+ 229      * both the shape and the {@code BasicStroke} attributes.
+ 230      * The {@code clip} parameter specifies the current clip in effect
+ 231      * in device coordinates and can be used to prune the data for the
+ 232      * operation, but the renderer is not required to perform any
+ 233      * clipping.
+ 234      * If the {@code BasicStroke} parameter is null then the shape
+ 235      * should be filled as is, otherwise the attributes of the
+ 236      * {@code BasicStroke} should be used to specify a draw operation.
+ 237      * The {@code thin} parameter indicates whether or not the
+ 238      * transformed {@code BasicStroke} represents coordinates smaller
+ 239      * than the minimum resolution of the antialiasing rasterizer as
+ 240      * specified by the {@code getMinimumAAPenWidth()} method.
+ 241      * &lt;p&gt;
+ 242      * Upon returning, this method will fill the {@code bbox} parameter
+ 243      * with 4 values indicating the bounds of the iteration of the
+ 244      * tile generator.
+ 245      * The iteration order of the tiles will be as specified by the
+ 246      * pseudo-code:
+ 247      * &lt;pre&gt;
+ 248      *     for (y = bbox[1]; y &lt; bbox[3]; y += tileheight) {
+ 249      *         for (x = bbox[0]; x &lt; bbox[2]; x += tilewidth) {
+ 250      *         }
+ 251      *     }
+ 252      * &lt;/pre&gt;
+ 253      * If there is no output to be rendered, this method may return
+ 254      * null.
+ 255      *
+ 256      * @param s the shape to be rendered (fill or draw)
+ 257      * @param at the transform to be applied to the shape and the
+ 258      *           stroke attributes
+ 259      * @param clip the current clip in effect in device coordinates
+ 260      * @param bs if non-null, a {@code BasicStroke} whose attributes
+ 261      *           should be applied to this operation
+ 262      * @param thin true if the transformed stroke attributes are smaller
+ 263      *             than the minimum dropout pen width
+ 264      * @param normalize true if the {@code VALUE_STROKE_NORMALIZE}
+ 265      *                  {@code RenderingHint} is in effect
+ 266      * @param bbox returns the bounds of the iteration
+ 267      * @return the {@code AATileGenerator} instance to be consulted
+ 268      *         for tile coverages, or null if there is no output to render
+ 269      * @since 1.7
+ 270      */
+ 271     public abstract AATileGenerator getAATileGenerator(Shape s,
+ 272                                                        AffineTransform at,
+ 273                                                        Region clip,
+ 274                                                        BasicStroke bs,
+ 275                                                        boolean thin,
+ 276                                                        boolean normalize,
+ 277                                                        int bbox[]);
+ 278 
+ 279     /**
+ 280      * Construct an antialiased tile generator for the given parallelogram
+ 281      * store the bounds of the tile iteration in the bbox parameter.
+ 282      * The parallelogram is specified as a starting point and 2 delta
+ 283      * vectors that indicate the slopes of the 2 pairs of sides of the
+ 284      * parallelogram.
+ 285      * The 4 corners of the parallelogram are defined by the 4 points:
+ 286      * &lt;ul&gt;
+ 287      * &lt;li&gt; {@code x}, {@code y}
+ 288      * &lt;li&gt; {@code x+dx1}, {@code y+dy1}
+ 289      * &lt;li&gt; {@code x+dx1+dx2}, {@code y+dy1+dy2}
+ 290      * &lt;li&gt; {@code x+dx2}, {@code y+dy2}
+ 291      * &lt;/ul&gt;
+ 292      * The {@code lw1} and {@code lw2} parameters provide a specification
+ 293      * for an optionally stroked parallelogram if they are positive numbers.
+ 294      * The {@code lw1} parameter is the ratio of the length of the {@code dx1},
+ 295      * {@code dx2} delta vector to half of the line width in that same
+ 296      * direction.
+ 297      * The {@code lw2} parameter provides the same ratio for the other delta
+ 298      * vector.
+ 299      * If {@code lw1} and {@code lw2} are both greater than zero, then
+ 300      * the parallelogram figure is doubled by both expanding and contracting
+ 301      * each delta vector by its corresponding {@code lw} value.
+ 302      * If either (@code lw1) or {@code lw2} are also greater than 1, then
+ 303      * the inner (contracted) parallelogram disappears and the figure is
+ 304      * simply a single expanded parallelogram.
+ 305      * The {@code clip} parameter specifies the current clip in effect
+ 306      * in device coordinates and can be used to prune the data for the
+ 307      * operation, but the renderer is not required to perform any
+ 308      * clipping.
+ 309      * &lt;p&gt;
+ 310      * Upon returning, this method will fill the {@code bbox} parameter
+ 311      * with 4 values indicating the bounds of the iteration of the
+ 312      * tile generator.
+ 313      * The iteration order of the tiles will be as specified by the
+ 314      * pseudo-code:
+ 315      * &lt;pre&gt;
+ 316      *     for (y = bbox[1]; y &lt; bbox[3]; y += tileheight) {
+ 317      *         for (x = bbox[0]; x &lt; bbox[2]; x += tilewidth) {
+ 318      *         }
+ 319      *     }
+ 320      * &lt;/pre&gt;
+ 321      * If there is no output to be rendered, this method may return
+ 322      * null.
+ 323      *
+ 324      * @param x the X coordinate of the first corner of the parallelogram
+ 325      * @param y the Y coordinate of the first corner of the parallelogram
+ 326      * @param dx1 the X coordinate delta of the first leg of the parallelogram
+ 327      * @param dy1 the Y coordinate delta of the first leg of the parallelogram
+ 328      * @param dx2 the X coordinate delta of the second leg of the parallelogram
+ 329      * @param dy2 the Y coordinate delta of the second leg of the parallelogram
+ 330      * @param lw1 the line width ratio for the first leg of the parallelogram
+ 331      * @param lw2 the line width ratio for the second leg of the parallelogram
+ 332      * @param clip the current clip in effect in device coordinates
+ 333      * @param bbox returns the bounds of the iteration
+ 334      * @return the {@code AATileGenerator} instance to be consulted
+ 335      *         for tile coverages, or null if there is no output to render
+ 336      * @since 1.7
+ 337      */
+ 338     public abstract AATileGenerator getAATileGenerator(double x, double y,
+ 339                                                        double dx1, double dy1,
+ 340                                                        double dx2, double dy2,
+ 341                                                        double lw1, double lw2,
+ 342                                                        Region clip,
+ 343                                                        int bbox[]);
+ 344 
+ 345     /**
+ 346      * Returns the minimum pen width that the antialiasing rasterizer
+ 347      * can represent without dropouts occurring.
+ 348      * @since 1.7
+ 349      */
+ 350     public abstract float getMinimumAAPenSize();
+ 351 
+ 352     /**
+ 353      * Utility method to feed a {@link PathConsumer2D} object from a
+ 354      * given {@link PathIterator}.
+ 355      * This method deals with the details of running the iterator and
+ 356      * feeding the consumer a segment at a time.
+ 357      */
+ 358     public static void feedConsumer(PathIterator pi, PathConsumer2D consumer) {
+ 359         float coords[] = new float[6];
+ 360         while (!pi.isDone()) {
+ 361             switch (pi.currentSegment(coords)) {
+ 362             case PathIterator.SEG_MOVETO:
+ 363                 consumer.moveTo(coords[0], coords[1]);
+ 364                 break;
+ 365             case PathIterator.SEG_LINETO:
+ 366                 consumer.lineTo(coords[0], coords[1]);
+ 367                 break;
+ 368             case PathIterator.SEG_QUADTO:
+ 369                 consumer.quadTo(coords[0], coords[1],
+ 370                                 coords[2], coords[3]);
+ 371                 break;
+ 372             case PathIterator.SEG_CUBICTO:
+ 373                 consumer.curveTo(coords[0], coords[1],
+ 374                                  coords[2], coords[3],
+ 375                                  coords[4], coords[5]);
+ 376                 break;
+ 377             case PathIterator.SEG_CLOSE:
+ 378                 consumer.closePath();
+ 379                 break;
+ 380             }
+ 381             pi.next();
+ 382         }
+ 383     }
+ 384 
+ 385     static class Tracer extends RenderingEngine {
+ 386         RenderingEngine target;
+ 387         String name;
+ 388 
+ 389         public Tracer(RenderingEngine target) {
+ 390             this.target = target;
+ 391             name = target.getClass().getName();
+ 392         }
+ 393 
+ 394         public Shape createStrokedShape(Shape src,
+ 395                                         float width,
+ 396                                         int caps,
+ 397                                         int join,
+ 398                                         float miterlimit,
+ 399                                         float dashes[],
+ 400                                         float dashphase)
+ 401         {
+ 402             System.out.println(name+".createStrokedShape("+
+ 403                                src.getClass().getName()+", "+
+ 404                                "width = "+width+", "+
+ 405                                "caps = "+caps+", "+
+ 406                                "join = "+join+", "+
+ 407                                "miter = "+miterlimit+", "+
+ 408                                "dashes = "+dashes+", "+
+ 409                                "dashphase = "+dashphase+")");
+ 410             return target.createStrokedShape(src,
+ 411                                              width, caps, join, miterlimit,
+ 412                                              dashes, dashphase);
+ 413         }
+ 414 
+ 415         public void strokeTo(Shape src,
+ 416                              AffineTransform at,
+ 417                              BasicStroke bs,
+ 418                              boolean thin,
+ 419                              boolean normalize,
+ 420                              boolean antialias,
+ 421                              PathConsumer2D consumer)
+ 422         {
+ 423             System.out.println(name+".strokeTo("+
+ 424                                src.getClass().getName()+", "+
+ 425                                at+", "+
+ 426                                bs+", "+
+ 427                                (thin ? "thin" : "wide")+", "+
+ 428                                (normalize ? "normalized" : "pure")+", "+
+ 429                                (antialias ? "AA" : "non-AA")+", "+
+ 430                                consumer.getClass().getName()+")");
+ 431             target.strokeTo(src, at, bs, thin, normalize, antialias, consumer);
+ 432         }
+ 433 
+ 434         public float getMinimumAAPenSize() {
+ 435             System.out.println(name+".getMinimumAAPenSize()");
+ 436             return target.getMinimumAAPenSize();
+ 437         }
+ 438 
+ 439         public AATileGenerator getAATileGenerator(Shape s,
+ 440                                                   AffineTransform at,
+ 441                                                   Region clip,
+ 442                                                   BasicStroke bs,
+ 443                                                   boolean thin,
+ 444                                                   boolean normalize,
+ 445                                                   int bbox[])
+ 446         {
+ 447             System.out.println(name+".getAATileGenerator("+
+ 448                                s.getClass().getName()+", "+
+ 449                                at+", "+
+ 450                                clip+", "+
+ 451                                bs+", "+
+ 452                                (thin ? "thin" : "wide")+", "+
+ 453                                (normalize ? "normalized" : "pure")+")");
+ 454             return target.getAATileGenerator(s, at, clip,
+ 455                                              bs, thin, normalize,
+ 456                                              bbox);
+ 457         }
+ 458         public AATileGenerator getAATileGenerator(double x, double y,
+ 459                                                   double dx1, double dy1,
+ 460                                                   double dx2, double dy2,
+ 461                                                   double lw1, double lw2,
+ 462                                                   Region clip,
+ 463                                                   int bbox[])
+ 464         {
+ 465             System.out.println(name+".getAATileGenerator("+
+ 466                                x+", "+y+", "+
+ 467                                dx1+", "+dy1+", "+
+ 468                                dx2+", "+dy2+", "+
+ 469                                lw1+", "+lw2+", "+
+ 470                                clip+")");
+ 471             return target.getAATileGenerator(x, y,
+ 472                                              dx1, dy1,
+ 473                                              dx2, dy2,
+ 474                                              lw1, lw2,
+ 475                                              clip, bbox);
+ 476         }
+ 477     }
+ 478 }
+</pre></body></html>

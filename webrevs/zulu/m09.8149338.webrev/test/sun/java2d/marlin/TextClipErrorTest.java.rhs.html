@@ -1,0 +1,490 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13688">13688</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8149338">8149338</a>: JVM Crash caused by Marlin renderer not handling NaN coordinates
+Summary: use first / last Y crossings to compute edge min/max Y and ensure consistency with edgeBuckets / edgeBucketCounts arrays
+Reviewed-by: flar, prr</pre><hr></hr>
+<pre>
+   1 /*
+   2  * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  */
+  23 
+  24 import java.awt.BasicStroke;
+  25 import java.awt.Color;
+  26 import java.awt.Font;
+  27 import java.awt.Graphics2D;
+  28 import java.awt.RenderingHints;
+  29 import java.awt.Shape;
+  30 import java.awt.font.FontRenderContext;
+  31 import java.awt.font.GlyphVector;
+  32 import java.awt.geom.AffineTransform;
+  33 import java.awt.geom.Line2D;
+  34 import java.awt.geom.Path2D;
+  35 import java.awt.geom.PathIterator;
+  36 import static java.awt.geom.PathIterator.SEG_CLOSE;
+  37 import static java.awt.geom.PathIterator.SEG_CUBICTO;
+  38 import static java.awt.geom.PathIterator.SEG_LINETO;
+  39 import static java.awt.geom.PathIterator.SEG_MOVETO;
+  40 import static java.awt.geom.PathIterator.SEG_QUADTO;
+  41 import java.awt.image.BufferedImage;
+  42 import java.io.File;
+  43 import java.io.IOException;
+  44 import java.util.ArrayList;
+  45 import java.util.Arrays;
+  46 import java.util.Locale;
+  47 import java.util.logging.Handler;
+  48 import java.util.logging.LogRecord;
+  49 import java.util.logging.Logger;
+  50 import javax.imageio.ImageIO;
+  51 
+  52 /**
+  53  * @test @bug 8144718
+  54  * @summary Check the Stroker.drawBezApproxForArc() bug (stoke with round
+  55  * joins): if cosext2 &gt; 0.5, it generates curves with NaN coordinates
+  56  * @run main TextClipErrorTest
+  57  */
+  58 public class TextClipErrorTest {
+  59 
+  60     static final boolean SAVE_IMAGE = false;
+  61     static final boolean SERIALIZE = false;
+  62 
+  63     public static void main(String[] args) {
+  64         Locale.setDefault(Locale.US);
+  65 
+  66         // initialize j.u.l Looger:
+  67         final Logger log = Logger.getLogger("sun.java2d.marlin");
+  68         log.addHandler(new Handler() {
+  69             @Override
+  70             public void publish(LogRecord record) {
+  71                 Throwable th = record.getThrown();
+<a name="1" id="anc1"></a><span class="changed">  72                 // detect any Throwable:</span>
+<span class="changed">  73                 if (th != null) {</span>
+<span class="changed">  74                     System.out.println("Test failed:\n" + record.getMessage());</span>
+
+
+
+
+
+
+
+
+
+
+  75                     th.printStackTrace(System.out);
+  76 
+  77                     throw new RuntimeException("Test failed: ", th);
+  78                 }
+  79             }
+<a name="2" id="anc2"></a>
+
+  80 
+  81             @Override
+  82             public void flush() {
+  83             }
+  84 
+  85             @Override
+  86             public void close() throws SecurityException {
+  87             }
+  88         });
+  89 
+  90         log.info("TextClipErrorTest: start");
+  91 
+  92         // enable Marlin logging &amp; internal checks:
+  93         System.setProperty("sun.java2d.renderer.log", "true");
+  94         System.setProperty("sun.java2d.renderer.useLogger", "true");
+  95         System.setProperty("sun.java2d.renderer.doChecks", "true");
+  96 
+  97         BufferedImage image = new BufferedImage(256, 256,
+  98                                                 BufferedImage.TYPE_INT_ARGB);
+  99 
+ 100         Graphics2D g2d = image.createGraphics();
+ 101         g2d.setColor(Color.red);
+ 102         try {
+ 103             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+ 104                                  RenderingHints.VALUE_ANTIALIAS_ON);
+ 105 
+ 106             Font font = g2d.getFont();
+ 107             FontRenderContext frc = new FontRenderContext(
+ 108                 new AffineTransform(), true, true);
+ 109 
+ 110             g2d.setStroke(new BasicStroke(4.0f,
+ 111                                           BasicStroke.CAP_ROUND,
+ 112                                           BasicStroke.JOIN_ROUND));
+ 113 
+ 114             final Shape badShape;
+ 115             if (SERIALIZE) {
+ 116                 final GlyphVector gv1 = font.createGlyphVector(frc, "\u00d6");
+ 117                 final Shape textShape = gv1.getOutline();
+ 118 
+ 119                 final AffineTransform at1 = AffineTransform.getTranslateInstance(
+ 120                     -2091202.554154681, 5548.601436981691);
+ 121                 badShape = at1.createTransformedShape(textShape);
+ 122                 serializeShape(badShape);
+ 123             } else {
+ 124                 badShape = deserializeShape();
+ 125             }
+ 126 
+ 127             g2d.draw(badShape);
+ 128 
+ 129             // Draw anything within bounds and it fails:
+ 130             g2d.draw(new Line2D.Double(10, 20, 30, 40));
+ 131 
+ 132             if (SAVE_IMAGE) {
+ 133                 final File file = new File("TextClipErrorTest.png");
+ 134                 System.out.println("Writing file: " + file.getAbsolutePath());
+ 135                 ImageIO.write(image, "PNG", file);
+ 136             }
+ 137         } catch (IOException ex) {
+ 138             ex.printStackTrace();
+ 139         } finally {
+ 140             g2d.dispose();
+ 141             log.info("TextClipErrorTest: end");
+ 142         }
+ 143     }
+ 144 
+ 145     private static void serializeShape(Shape shape) {
+ 146         final double[] coords = new double[6];
+ 147 
+ 148         final int len = 32;
+ 149         final ArrayList&lt;Integer&gt; typeList = new ArrayList&lt;Integer&gt;(len);
+ 150         final ArrayList&lt;double[]&gt; coordsList = new ArrayList&lt;double[]&gt;(len);
+ 151 
+ 152         for (PathIterator pi = shape.getPathIterator(null);
+ 153                 !pi.isDone(); pi.next())
+ 154         {
+ 155             switch (pi.currentSegment(coords)) {
+ 156                 case SEG_MOVETO:
+ 157                     typeList.add(SEG_MOVETO);
+ 158                     coordsList.add(Arrays.copyOf(coords, 2));
+ 159                     break;
+ 160                 case SEG_LINETO:
+ 161                     typeList.add(SEG_LINETO);
+ 162                     coordsList.add(Arrays.copyOf(coords, 2));
+ 163                     break;
+ 164                 case SEG_QUADTO:
+ 165                     typeList.add(SEG_QUADTO);
+ 166                     coordsList.add(Arrays.copyOf(coords, 4));
+ 167                     break;
+ 168                 case SEG_CUBICTO:
+ 169                     typeList.add(SEG_CUBICTO);
+ 170                     coordsList.add(Arrays.copyOf(coords, 6));
+ 171                     break;
+ 172                 case SEG_CLOSE:
+ 173                     typeList.add(SEG_CLOSE);
+ 174                     coordsList.add(null);
+ 175                     break;
+ 176                 default:
+ 177             }
+ 178         }
+ 179 
+ 180         final StringBuilder sb = new StringBuilder(1024);
+ 181         // types:
+ 182         sb.append("private static final int[] SHAPE_TYPES = new int[]{\n");
+ 183         for (Integer i : typeList) {
+ 184             sb.append(i).append(",\n");
+ 185         }
+ 186         sb.append("};\n");
+ 187 
+ 188         // coords:
+ 189         sb.append("private static final double[][] SHAPE_COORDS = new double[][]{\n");
+ 190         for (double[] c : coordsList) {
+ 191             if (c == null) {
+ 192                 sb.append("null,\n");
+ 193             } else {
+ 194                 sb.append("new double[]{");
+ 195                 for (int i = 0; i &lt; c.length; i++) {
+ 196                     sb.append(c[i]).append(",");
+ 197                 }
+ 198                 sb.append("},\n");
+ 199             }
+ 200         }
+ 201         sb.append("};\n");
+ 202 
+ 203         System.out.println("Shape size: " + typeList.size());
+ 204         System.out.println("Serialized shape:\n" + sb.toString());
+ 205     }
+ 206 
+ 207     private static Shape deserializeShape() {
+ 208         final Path2D.Double path = new Path2D.Double();
+ 209 
+ 210         for (int i = 0; i &lt; SHAPE_TYPES.length; i++) {
+ 211             double[] coords = SHAPE_COORDS[i];
+ 212 
+ 213             switch (SHAPE_TYPES[i]) {
+ 214                 case SEG_MOVETO:
+ 215                     path.moveTo(coords[0], coords[1]);
+ 216                     break;
+ 217                 case SEG_LINETO:
+ 218                     path.lineTo(coords[0], coords[1]);
+ 219                     break;
+ 220                 case SEG_QUADTO:
+ 221                     path.quadTo(coords[0], coords[1],
+ 222                                 coords[2], coords[3]);
+ 223                     break;
+ 224                 case SEG_CUBICTO:
+ 225                     path.curveTo(coords[0], coords[1],
+ 226                                  coords[2], coords[3],
+ 227                                  coords[4], coords[5]);
+ 228                     break;
+ 229                 case SEG_CLOSE:
+ 230                     path.closePath();
+ 231                     break;
+ 232                 default:
+ 233             }
+ 234         }
+ 235 
+ 236         return path;
+ 237     }
+ 238 
+ 239     // generated code:
+ 240     private static final int[] SHAPE_TYPES = new int[]{
+ 241         0,
+ 242         2,
+ 243         2,
+ 244         2,
+ 245         2,
+ 246         2,
+ 247         2,
+ 248         2,
+ 249         2,
+ 250         4,
+ 251         0,
+ 252         2,
+ 253         2,
+ 254         2,
+ 255         2,
+ 256         2,
+ 257         2,
+ 258         2,
+ 259         2,
+ 260         4,
+ 261         0,
+ 262         1,
+ 263         1,
+ 264         1,
+ 265         1,
+ 266         4,
+ 267         0,
+ 268         1,
+ 269         1,
+ 270         1,
+ 271         1,
+ 272         4,
+ 273     };
+ 274 
+ 275     private static final double[][] SHAPE_COORDS = new double[][]{
+ 276         new double[]{-2091197.819779681, 5540.648311981691,},
+ 277         new double[]{-2091199.116654681, 5540.648311981691, -2091199.874467181, 5541.609249481691,},
+ 278         new double[]{-2091200.632279681, 5542.570186981691, -2091200.632279681, 5544.242061981691,},
+ 279         new double[]{-2091200.632279681, 5545.882686981691, -2091199.874467181, 5546.843624481691,},
+ 280         new double[]{-2091199.116654681, 5547.804561981691, -2091197.819779681, 5547.804561981691,},
+ 281         new double[]{-2091196.538529681, 5547.804561981691, -2091195.780717181, 5546.843624481691,},
+ 282         new double[]{-2091195.022904681, 5545.882686981691, -2091195.022904681, 5544.242061981691,},
+ 283         new double[]{-2091195.022904681, 5542.570186981691, -2091195.780717181, 5541.609249481691,},
+ 284         new double[]{-2091196.538529681, 5540.648311981691, -2091197.819779681, 5540.648311981691,},
+ 285         null,
+ 286         new double[]{-2091197.819779681, 5539.695186981691,},
+ 287         new double[]{-2091195.991654681, 5539.695186981691, -2091194.890092181, 5540.929561981691,},
+ 288         new double[]{-2091193.788529681, 5542.163936981691, -2091193.788529681, 5544.242061981691,},
+ 289         new double[]{-2091193.788529681, 5546.304561981691, -2091194.890092181, 5547.538936981691,},
+ 290         new double[]{-2091195.991654681, 5548.773311981691, -2091197.819779681, 5548.773311981691,},
+ 291         new double[]{-2091199.663529681, 5548.773311981691, -2091200.772904681, 5547.538936981691,},
+ 292         new double[]{-2091201.882279681, 5546.304561981691, -2091201.882279681, 5544.242061981691,},
+ 293         new double[]{-2091201.882279681, 5542.163936981691, -2091200.772904681, 5540.929561981691,},
+ 294         new double[]{-2091199.663529681, 5539.695186981691, -2091197.819779681, 5539.695186981691,},
+ 295         null,
+ 296         new double[]{-2091197.210404681, 5537.835811981691,},
+ 297         new double[]{-2091196.022904681, 5537.835811981691,},
+ 298         new double[]{-2091196.022904681, 5539.023311981691,},
+ 299         new double[]{-2091197.210404681, 5539.023311981691,},
+ 300         new double[]{-2091197.210404681, 5537.835811981691,},
+ 301         null,
+ 302         new double[]{-2091199.632279681, 5537.835811981691,},
+ 303         new double[]{-2091198.444779681, 5537.835811981691,},
+ 304         new double[]{-2091198.444779681, 5539.023311981691,},
+ 305         new double[]{-2091199.632279681, 5539.023311981691,},
+ 306         new double[]{-2091199.632279681, 5537.835811981691,},
+ 307         null,
+ 308     };
+ 309 
+ 310 }
+<a name="3" id="anc3"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="3" type="hidden" /></form></body></html>

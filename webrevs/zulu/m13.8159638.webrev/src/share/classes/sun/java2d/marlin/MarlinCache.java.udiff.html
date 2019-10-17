@@ -1,0 +1,208 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/MarlinCache.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/IntArrayCache.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinConst.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/MarlinCache.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -98,23 +98,24 @@</span>
+     int[] touchedTile;
+ 
+     // per-thread renderer context
+     final RendererContext rdrCtx;
+ 
+<span class="removed">-    // large cached touchedTile (dirty)</span>
+<span class="removed">-    final int[] touchedTile_initial = new int[INITIAL_ARRAY]; // 1 tile line</span>
+<span class="new">+    // touchedTile ref (clean)</span>
+<span class="new">+    private final IntArrayCache.Reference touchedTile_ref;</span>
+ 
+     int tileMin, tileMax;
+ 
+     boolean useRLE = false;
+ 
+     MarlinCache(final RendererContext rdrCtx) {
+         this.rdrCtx = rdrCtx;
+ 
+<span class="removed">-        rowAAChunk = new OffHeapArray(rdrCtx, INITIAL_CHUNK_ARRAY);</span>
+<span class="new">+        rowAAChunk = rdrCtx.newOffHeapArray(INITIAL_CHUNK_ARRAY); // 64K</span>
+ 
+<span class="removed">-        touchedTile = touchedTile_initial;</span>
+<span class="new">+        touchedTile_ref = rdrCtx.newCleanIntArrayRef(INITIAL_ARRAY); // 1K = 1 tile line</span>
+<span class="new">+        touchedTile     = touchedTile_ref.initial;</span>
+ 
+         // tile used marks:
+         tileMin = Integer.MAX_VALUE;
+         tileMax = Integer.MIN_VALUE;
+     }
+</pre><hr /><pre>
+<span class="newmarker">@@ -179,14 +180,13 @@</span>
+         // the ceiling of (maxy - miny + 1) / TILE_SIZE;
+         final int nxTiles = (width + TILE_SIZE) &gt;&gt; TILE_SIZE_LG;
+ 
+         if (nxTiles &gt; INITIAL_ARRAY) {
+             if (DO_STATS) {
+<span class="removed">-                rdrCtx.stats.stat_array_marlincache_touchedTile</span>
+<span class="removed">-                    .add(nxTiles);</span>
+<span class="new">+                rdrCtx.stats.stat_array_marlincache_touchedTile.add(nxTiles);</span>
+             }
+<span class="removed">-            touchedTile = rdrCtx.getIntArray(nxTiles);</span>
+<span class="new">+            touchedTile = touchedTile_ref.getArray(nxTiles);</span>
+         }
+     }
+ 
+     /**
+      * Disposes this cache:
+</pre><hr /><pre>
+<span class="newmarker">@@ -194,15 +194,17 @@</span>
+      */
+     void dispose() {
+         // Reset touchedTile if needed:
+         resetTileLine(0);
+ 
+<span class="removed">-        // Return arrays:</span>
+<span class="removed">-        if (touchedTile != touchedTile_initial) {</span>
+<span class="removed">-            rdrCtx.putIntArray(touchedTile, 0, 0); // already zero filled</span>
+<span class="removed">-            touchedTile = touchedTile_initial;</span>
+<span class="new">+        if (DO_STATS) {</span>
+<span class="new">+            rdrCtx.stats.totalOffHeap += rowAAChunk.length;</span>
+         }
+<span class="new">+</span>
+<span class="new">+        // Return arrays:</span>
+<span class="new">+        touchedTile = touchedTile_ref.putArray(touchedTile, 0, 0); // already zero filled</span>
+<span class="new">+</span>
+         // At last: resize back off-heap rowAA to initial size
+         if (rowAAChunk.length != INITIAL_CHUNK_ARRAY) {
+             // note: may throw OOME:
+             rowAAChunk.resize(INITIAL_CHUNK_ARRAY);
+         }
+</pre><hr /><pre>
+<span class="newmarker">@@ -552,12 +554,11 @@</span>
+             }
+         }
+         addr_off += SIZE_INT;
+ 
+         if (DO_STATS) {
+<span class="removed">-            rdrCtx.stats.hist_tile_generator_encoding_runLen</span>
+<span class="removed">-                .add(runLen);</span>
+<span class="new">+            rdrCtx.stats.hist_tile_generator_encoding_runLen.add(runLen);</span>
+         }
+ 
+         long len = (addr_off - _rowAAChunk.address);
+ 
+         // update coded length as bytes:
+</pre><hr /><pre>
+<span class="newmarker">@@ -610,16 +611,16 @@</span>
+         return (rowAAChunkIndex[row] = rowAAChunkPos);
+     }
+ 
+     private void expandRowAAChunk(final long needSize) {
+         if (DO_STATS) {
+<span class="removed">-            rdrCtx.stats.stat_array_marlincache_rowAAChunk</span>
+<span class="removed">-                .add(needSize);</span>
+<span class="new">+            rdrCtx.stats.stat_array_marlincache_rowAAChunk.add(needSize);</span>
+         }
+ 
+         // note: throw IOOB if neededSize &gt; 2Gb:
+<span class="removed">-        final long newSize = ArrayCache.getNewLargeSize(rowAAChunk.length, needSize);</span>
+<span class="new">+        final long newSize = ArrayCacheConst.getNewLargeSize(rowAAChunk.length,</span>
+<span class="new">+                                                             needSize);</span>
+ 
+         rowAAChunk.resize(newSize);
+     }
+ 
+     private void touchTile(final int x0, final int val, final int x1,
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/IntArrayCache.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinConst.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

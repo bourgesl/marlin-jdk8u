@@ -1,0 +1,806 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import sun.misc.Unsafe;
+  29 
+  30 /**
+  31  * An object used to cache pre-rendered complex paths.
+  32  *
+  33  * @see Renderer
+  34  */
+  35 public final class MarlinCache implements MarlinConst {
+  36 
+  37     static final boolean FORCE_RLE = MarlinProperties.isForceRLE();
+  38     static final boolean FORCE_NO_RLE = MarlinProperties.isForceNoRLE();
+  39     // minimum width to try using RLE encoding:
+  40     static final int RLE_MIN_WIDTH
+  41         = Math.max(BLOCK_SIZE, MarlinProperties.getRLEMinWidth());
+  42     // maximum width for RLE encoding:
+  43     // values are stored as int [x|alpha] where alpha is 8 bits
+  44     static final int RLE_MAX_WIDTH = 1 &lt;&lt; (24 - 1);
+  45 
+<a name="2" id="anc2"></a><span class="changed">  46     // 2048 (pixelSize) alpha values (width) x 32 rows (tile) = 64K bytes</span>
+  47     // x1 instead of 4 bytes (RLE) ie 1/4 capacity or average good RLE compression
+<a name="3" id="anc3"></a><span class="changed">  48     static final long INITIAL_CHUNK_ARRAY = TILE_H * INITIAL_PIXEL_DIM; // 64K</span>
+  49 
+  50     // The alpha map used by this object (taken out of our map cache) to convert
+  51     // pixel coverage counts gotten from MarlinCache (which are in the range
+  52     // [0, maxalpha]) into alpha values, which are in [0,256).
+  53     static final byte[] ALPHA_MAP;
+  54 
+  55     static final OffHeapArray ALPHA_MAP_UNSAFE;
+  56 
+  57     static {
+  58         final byte[] _ALPHA_MAP = buildAlphaMap(MAX_AA_ALPHA);
+  59 
+  60         ALPHA_MAP_UNSAFE = new OffHeapArray(_ALPHA_MAP, _ALPHA_MAP.length); // 1K
+  61         ALPHA_MAP =_ALPHA_MAP;
+  62 
+  63         final Unsafe _unsafe = OffHeapArray.UNSAFE;
+  64         final long addr = ALPHA_MAP_UNSAFE.address;
+  65 
+  66         for (int i = 0; i &lt; _ALPHA_MAP.length; i++) {
+  67             _unsafe.putByte(addr + i, _ALPHA_MAP[i]);
+  68         }
+  69     }
+  70 
+  71     int bboxX0, bboxY0, bboxX1, bboxY1;
+  72 
+  73     // 1D dirty arrays
+  74     // row index in rowAAChunk[]
+  75     final long[] rowAAChunkIndex = new long[TILE_H];
+  76     // first pixel (inclusive) for each row
+  77     final int[] rowAAx0 = new int[TILE_H];
+  78     // last pixel (exclusive) for each row
+  79     final int[] rowAAx1 = new int[TILE_H];
+  80     // encoding mode (0=raw, 1=RLE encoding) for each row
+  81     final int[] rowAAEnc = new int[TILE_H];
+  82     // coded length (RLE encoding) for each row
+  83     final long[] rowAALen = new long[TILE_H];
+  84     // last position in RLE decoding for each row (getAlpha):
+  85     final long[] rowAAPos = new long[TILE_H];
+  86 
+  87     // dirty off-heap array containing pixel coverages for (32) rows (packed)
+  88     // if encoding=raw, it contains alpha coverage values (val) as integer
+  89     // if encoding=RLE, it contains tuples (val, last x-coordinate exclusive)
+  90     // use rowAAx0/rowAAx1 to get row indices within this chunk
+  91     final OffHeapArray rowAAChunk;
+  92 
+  93     // current position in rowAAChunk array
+  94     long rowAAChunkPos;
+  95 
+  96     // touchedTile[i] is the sum of all the alphas in the tile with
+  97     // x=j*TILE_SIZE+bboxX0.
+  98     int[] touchedTile;
+  99 
+ 100     // per-thread renderer stats
+ 101     final RendererStats rdrStats;
+ 102 
+ 103     // touchedTile ref (clean)
+ 104     private final IntArrayCache.Reference touchedTile_ref;
+ 105 
+ 106     int tileMin, tileMax;
+ 107 
+ 108     boolean useRLE = false;
+ 109 
+ 110     MarlinCache(final IRendererContext rdrCtx) {
+ 111         this.rdrStats = rdrCtx.stats();
+ 112 
+ 113         rowAAChunk = rdrCtx.newOffHeapArray(INITIAL_CHUNK_ARRAY); // 64K
+ 114 
+ 115         touchedTile_ref = rdrCtx.newCleanIntArrayRef(INITIAL_ARRAY); // 1K = 1 tile line
+ 116         touchedTile     = touchedTile_ref.initial;
+ 117 
+ 118         // tile used marks:
+ 119         tileMin = Integer.MAX_VALUE;
+ 120         tileMax = Integer.MIN_VALUE;
+ 121     }
+ 122 
+ 123     void init(int minx, int miny, int maxx, int maxy)
+ 124     {
+ 125         // assert maxy &gt;= miny &amp;&amp; maxx &gt;= minx;
+ 126         bboxX0 = minx;
+ 127         bboxY0 = miny;
+ 128         bboxX1 = maxx;
+ 129         bboxY1 = maxy;
+ 130 
+ 131         final int width = (maxx - minx);
+ 132 
+ 133         if (FORCE_NO_RLE) {
+ 134             useRLE = false;
+ 135         } else if (FORCE_RLE) {
+ 136             useRLE = true;
+ 137         } else {
+ 138             // heuristics: use both bbox area and complexity
+ 139             // ie number of primitives:
+ 140 
+ 141             // fast check min and max width (maxx &lt; 23bits):
+ 142             useRLE = (width &gt; RLE_MIN_WIDTH &amp;&amp; width &lt; RLE_MAX_WIDTH);
+ 143         }
+ 144 
+ 145         // the ceiling of (maxy - miny + 1) / TILE_SIZE;
+ 146         final int nxTiles = (width + TILE_W) &gt;&gt; TILE_W_LG;
+ 147 
+ 148         if (nxTiles &gt; INITIAL_ARRAY) {
+ 149             if (DO_STATS) {
+ 150                 rdrStats.stat_array_marlincache_touchedTile.add(nxTiles);
+ 151             }
+ 152             touchedTile = touchedTile_ref.getArray(nxTiles);
+ 153         }
+ 154     }
+ 155 
+ 156     /**
+ 157      * Disposes this cache:
+ 158      * clean up before reusing this instance
+ 159      */
+ 160     void dispose() {
+ 161         // Reset touchedTile if needed:
+ 162         resetTileLine(0);
+ 163 
+ 164         if (DO_STATS) {
+ 165             rdrStats.totalOffHeap += rowAAChunk.length;
+ 166         }
+ 167 
+ 168         // Return arrays:
+ 169         touchedTile = touchedTile_ref.putArray(touchedTile, 0, 0); // already zero filled
+ 170 
+ 171         // At last: resize back off-heap rowAA to initial size
+ 172         if (rowAAChunk.length != INITIAL_CHUNK_ARRAY) {
+ 173             // note: may throw OOME:
+ 174             rowAAChunk.resize(INITIAL_CHUNK_ARRAY);
+ 175         }
+ 176         if (DO_CLEAN_DIRTY) {
+ 177             // Force zero-fill dirty arrays:
+ 178             rowAAChunk.fill(BYTE_0);
+ 179         }
+ 180     }
+ 181 
+ 182     void resetTileLine(final int pminY) {
+ 183         // update bboxY0 to process a complete tile line [0 - 32]
+ 184         bboxY0 = pminY;
+ 185 
+ 186         // reset current pos
+ 187         if (DO_STATS) {
+ 188             rdrStats.stat_cache_rowAAChunk.add(rowAAChunkPos);
+ 189         }
+ 190         rowAAChunkPos = 0L;
+ 191 
+ 192         // Reset touchedTile:
+ 193         if (tileMin != Integer.MAX_VALUE) {
+ 194             if (DO_STATS) {
+ 195                 rdrStats.stat_cache_tiles.add(tileMax - tileMin);
+ 196             }
+ 197             // clean only dirty touchedTile:
+ 198             if (tileMax == 1) {
+ 199                 touchedTile[0] = 0;
+ 200             } else {
+ 201                 IntArrayCache.fill(touchedTile, tileMin, tileMax, 0);
+ 202             }
+ 203             // reset tile used marks:
+ 204             tileMin = Integer.MAX_VALUE;
+ 205             tileMax = Integer.MIN_VALUE;
+ 206         }
+ 207 
+ 208         if (DO_CLEAN_DIRTY) {
+ 209             // Force zero-fill dirty arrays:
+ 210             rowAAChunk.fill(BYTE_0);
+ 211         }
+ 212     }
+ 213 
+ 214     void clearAARow(final int y) {
+ 215         // process tile line [0 - 32]
+ 216         final int row = y - bboxY0;
+ 217 
+ 218         // update pixel range:
+ 219         rowAAx0[row]  = 0; // first pixel inclusive
+ 220         rowAAx1[row]  = 0; //  last pixel exclusive
+ 221         rowAAEnc[row] = 0; // raw encoding
+ 222 
+ 223         // note: leave rowAAChunkIndex[row] undefined
+ 224         // and rowAALen[row] &amp; rowAAPos[row] (RLE)
+ 225     }
+ 226 
+ 227     /**
+ 228      * Copy the given alpha data into the rowAA cache
+ 229      * @param alphaRow alpha data to copy from
+ 230      * @param y y pixel coordinate
+ 231      * @param px0 first pixel inclusive x0
+ 232      * @param px1 last pixel exclusive x1
+ 233      */
+ 234     void copyAARowNoRLE(final int[] alphaRow, final int y,
+ 235                    final int px0, final int px1)
+ 236     {
+ 237         // skip useless pixels above boundary
+ 238         final int px_bbox1 = FloatMath.min(px1, bboxX1);
+ 239 
+ 240         if (DO_LOG_BOUNDS) {
+ 241             MarlinUtils.logInfo("row = [" + px0 + " ... " + px_bbox1
+ 242                                 + " (" + px1 + ") [ for y=" + y);
+ 243         }
+ 244 
+ 245         final int row = y - bboxY0;
+ 246 
+ 247         // update pixel range:
+ 248         rowAAx0[row]  = px0;      // first pixel inclusive
+ 249         rowAAx1[row]  = px_bbox1; //  last pixel exclusive
+ 250         rowAAEnc[row] = 0; // raw encoding
+ 251 
+ 252         // get current position (bytes):
+ 253         final long pos = rowAAChunkPos;
+ 254         // update row index to current position:
+ 255         rowAAChunkIndex[row] = pos;
+ 256 
+ 257         // determine need array size:
+ 258         // for RLE encoding, position must be aligned to 4 bytes (int):
+ 259         // align - 1 = 3 so add +3 and round-off by mask ~3 = -4
+ 260         final long needSize = pos + ((px_bbox1 - px0 + 3) &amp; -4);
+ 261 
+ 262         // update next position (bytes):
+ 263         rowAAChunkPos = needSize;
+ 264 
+ 265         // update row data:
+ 266         final OffHeapArray _rowAAChunk = rowAAChunk;
+ 267         // ensure rowAAChunk capacity:
+ 268         if (_rowAAChunk.length &lt; needSize) {
+ 269             expandRowAAChunk(needSize);
+ 270         }
+ 271         if (DO_STATS) {
+ 272             rdrStats.stat_cache_rowAA.add(px_bbox1 - px0);
+ 273         }
+ 274 
+ 275         // rowAA contains only alpha values for range[x0; x1[
+ 276         final int[] _touchedTile = touchedTile;
+ 277         final int _TILE_SIZE_LG = TILE_W_LG;
+ 278 
+ 279         final int from = px0      - bboxX0; // first pixel inclusive
+ 280         final int to   = px_bbox1 - bboxX0; //  last pixel exclusive
+ 281 
+ 282         final Unsafe _unsafe = OffHeapArray.UNSAFE;
+ 283         final long SIZE_BYTE = 1L;
+ 284         final long addr_alpha = ALPHA_MAP_UNSAFE.address;
+ 285         long addr_off = _rowAAChunk.address + pos;
+ 286 
+ 287         // compute alpha sum into rowAA:
+ 288         for (int x = from, val = 0; x &lt; to; x++) {
+ 289             // alphaRow is in [0; MAX_COVERAGE]
+ 290             val += alphaRow[x]; // [from; to[
+ 291 
+ 292             // ensure values are in [0; MAX_AA_ALPHA] range
+ 293             if (DO_AA_RANGE_CHECK) {
+ 294                 if (val &lt; 0) {
+<a name="4" id="anc4"></a><span class="changed"> 295                     System.out.println("Invalid coverage = " + val);</span>
+ 296                     val = 0;
+ 297                 }
+ 298                 if (val &gt; MAX_AA_ALPHA) {
+<a name="5" id="anc5"></a><span class="changed"> 299                     System.out.println("Invalid coverage = " + val);</span>
+ 300                     val = MAX_AA_ALPHA;
+ 301                 }
+ 302             }
+ 303 
+ 304             // store alpha sum (as byte):
+ 305             if (val == 0) {
+ 306                 _unsafe.putByte(addr_off, (byte)0); // [0-255]
+ 307             } else {
+ 308                 _unsafe.putByte(addr_off, _unsafe.getByte(addr_alpha + val)); // [0-255]
+ 309 
+ 310                 // update touchedTile
+ 311                 _touchedTile[x &gt;&gt; _TILE_SIZE_LG] += val;
+ 312             }
+ 313             addr_off += SIZE_BYTE;
+ 314         }
+ 315 
+ 316         // update tile used marks:
+ 317         int tx = from &gt;&gt; _TILE_SIZE_LG; // inclusive
+ 318         if (tx &lt; tileMin) {
+ 319             tileMin = tx;
+ 320         }
+ 321 
+ 322         tx = ((to - 1) &gt;&gt; _TILE_SIZE_LG) + 1; // exclusive (+1 to be sure)
+ 323         if (tx &gt; tileMax) {
+ 324             tileMax = tx;
+ 325         }
+ 326 
+ 327         if (DO_LOG_BOUNDS) {
+ 328             MarlinUtils.logInfo("clear = [" + from + " ... " + to + "[");
+ 329         }
+ 330 
+ 331         // Clear alpha row for reuse:
+ 332         IntArrayCache.fill(alphaRow, from, px1 + 1 - bboxX0, 0);
+ 333     }
+ 334 
+ 335     void copyAARowRLE_WithBlockFlags(final int[] blkFlags, final int[] alphaRow,
+ 336                       final int y, final int px0, final int px1)
+ 337     {
+ 338         // Copy rowAA data into the piscesCache if one is present
+ 339         final int _bboxX0 = bboxX0;
+ 340 
+ 341         // process tile line [0 - 32]
+ 342         final int row  =   y -  bboxY0;
+ 343         final int from = px0 - _bboxX0; // first pixel inclusive
+ 344 
+ 345         // skip useless pixels above boundary
+ 346         final int px_bbox1 = FloatMath.min(px1, bboxX1);
+ 347         final int to       = px_bbox1 - _bboxX0; //  last pixel exclusive
+ 348 
+ 349         if (DO_LOG_BOUNDS) {
+ 350             MarlinUtils.logInfo("row = [" + px0 + " ... " + px_bbox1
+ 351                                 + " (" + px1 + ") [ for y=" + y);
+ 352         }
+ 353 
+ 354         // get current position:
+ 355         final long initialPos = startRLERow(row, px0, px_bbox1);
+ 356 
+ 357         // determine need array size:
+ 358         // pessimistic: max needed size = deltaX x 4 (1 int)
+ 359         final long needSize = initialPos + ((to - from) &lt;&lt; 2);
+ 360 
+ 361         // update row data:
+ 362         OffHeapArray _rowAAChunk = rowAAChunk;
+ 363         // ensure rowAAChunk capacity:
+ 364         if (_rowAAChunk.length &lt; needSize) {
+ 365             expandRowAAChunk(needSize);
+ 366         }
+ 367 
+ 368         final Unsafe _unsafe = OffHeapArray.UNSAFE;
+ 369         final long SIZE_INT = 4L;
+ 370         final long addr_alpha = ALPHA_MAP_UNSAFE.address;
+ 371         long addr_off = _rowAAChunk.address + initialPos;
+ 372 
+ 373         final int[] _touchedTile = touchedTile;
+ 374         final int _TILE_SIZE_LG = TILE_W_LG;
+ 375         final int _BLK_SIZE_LG  = BLOCK_SIZE_LG;
+ 376 
+ 377         // traverse flagged blocks:
+ 378         final int blkW = (from &gt;&gt; _BLK_SIZE_LG);
+ 379         final int blkE = (to   &gt;&gt; _BLK_SIZE_LG) + 1;
+ 380         // ensure last block flag = 0 to process final block:
+ 381         blkFlags[blkE] = 0;
+ 382 
+ 383         // Perform run-length encoding and store results in the piscesCache
+ 384         int val = 0;
+ 385         int cx0 = from;
+ 386         int runLen;
+ 387 
+ 388         final int _MAX_VALUE = Integer.MAX_VALUE;
+ 389         int last_t0 = _MAX_VALUE;
+ 390 
+ 391         int skip = 0;
+ 392 
+ 393         for (int t = blkW, blk_x0, blk_x1, cx, delta; t &lt;= blkE; t++) {
+ 394             if (blkFlags[t] != 0) {
+ 395                 blkFlags[t] = 0;
+ 396 
+ 397                 if (last_t0 == _MAX_VALUE) {
+ 398                     last_t0 = t;
+ 399                 }
+ 400                 continue;
+ 401             }
+ 402             if (last_t0 != _MAX_VALUE) {
+ 403                 // emit blocks:
+ 404                 blk_x0 = FloatMath.max(last_t0 &lt;&lt; _BLK_SIZE_LG, from);
+ 405                 last_t0 = _MAX_VALUE;
+ 406 
+ 407                 // (last block pixel+1) inclusive =&gt; +1
+ 408                 blk_x1 = FloatMath.min((t &lt;&lt; _BLK_SIZE_LG) + 1, to);
+ 409 
+ 410                 for (cx = blk_x0; cx &lt; blk_x1; cx++) {
+ 411                     if ((delta = alphaRow[cx]) != 0) {
+ 412                         alphaRow[cx] = 0;
+ 413 
+ 414                         // not first rle entry:
+ 415                         if (cx != cx0) {
+ 416                             runLen = cx - cx0;
+ 417 
+ 418                             // store alpha coverage (ensure within bounds):
+ 419                             // as [absX|val] where:
+ 420                             // absX is the absolute x-coordinate:
+ 421                             // note: last pixel exclusive (&gt;= 0)
+ 422                             // note: it should check X is smaller than 23bits (overflow)!
+ 423 
+ 424                             // check address alignment to 4 bytes:
+ 425                             if (DO_CHECK_UNSAFE) {
+ 426                                 if ((addr_off &amp; 3) != 0) {
+ 427                                     MarlinUtils.logInfo("Misaligned Unsafe address: " + addr_off);
+ 428                                 }
+ 429                             }
+ 430 
+ 431                             // special case to encode entries into a single int:
+ 432                             if (val == 0) {
+ 433                                 _unsafe.putInt(addr_off,
+ 434                                     ((_bboxX0 + cx) &lt;&lt; 8)
+ 435                                 );
+ 436                             } else {
+ 437                                 _unsafe.putInt(addr_off,
+ 438                                     ((_bboxX0 + cx) &lt;&lt; 8)
+ 439                                     | (((int) _unsafe.getByte(addr_alpha + val)) &amp; 0xFF) // [0-255]
+ 440                                 );
+ 441 
+ 442                                 if (runLen == 1) {
+ 443                                     _touchedTile[cx0 &gt;&gt; _TILE_SIZE_LG] += val;
+ 444                                 } else {
+ 445                                     touchTile(cx0, val, cx, runLen, _touchedTile);
+ 446                                 }
+ 447                             }
+ 448                             addr_off += SIZE_INT;
+ 449 
+ 450                             if (DO_STATS) {
+ 451                                 rdrStats.hist_tile_generator_encoding_runLen
+ 452                                     .add(runLen);
+ 453                             }
+ 454                             cx0 = cx;
+ 455                         }
+ 456 
+ 457                         // alpha value = running sum of coverage delta:
+ 458                         val += delta;
+ 459 
+ 460                         // ensure values are in [0; MAX_AA_ALPHA] range
+ 461                         if (DO_AA_RANGE_CHECK) {
+ 462                             if (val &lt; 0) {
+<a name="6" id="anc6"></a><span class="changed"> 463                                 System.out.println("Invalid coverage = " + val);</span>
+ 464                                 val = 0;
+ 465                             }
+ 466                             if (val &gt; MAX_AA_ALPHA) {
+<a name="7" id="anc7"></a><span class="changed"> 467                                 System.out.println("Invalid coverage = " + val);</span>
+ 468                                 val = MAX_AA_ALPHA;
+ 469                             }
+ 470                         }
+ 471                     }
+ 472                 }
+ 473             } else if (DO_STATS) {
+ 474                 skip++;
+ 475             }
+ 476         }
+ 477 
+ 478         // Process remaining RLE run:
+ 479         runLen = to - cx0;
+ 480 
+ 481         // store alpha coverage (ensure within bounds):
+ 482         // as (int)[absX|val] where:
+ 483         // absX is the absolute x-coordinate in bits 31 to 8 and val in bits 0..7
+ 484         // note: last pixel exclusive (&gt;= 0)
+ 485         // note: it should check X is smaller than 23bits (overflow)!
+ 486 
+ 487         // check address alignment to 4 bytes:
+ 488         if (DO_CHECK_UNSAFE) {
+ 489             if ((addr_off &amp; 3) != 0) {
+ 490                 MarlinUtils.logInfo("Misaligned Unsafe address: " + addr_off);
+ 491             }
+ 492         }
+ 493 
+ 494         // special case to encode entries into a single int:
+ 495         if (val == 0) {
+ 496             _unsafe.putInt(addr_off,
+ 497                 ((_bboxX0 + to) &lt;&lt; 8)
+ 498             );
+ 499         } else {
+ 500             _unsafe.putInt(addr_off,
+ 501                 ((_bboxX0 + to) &lt;&lt; 8)
+ 502                 | (((int) _unsafe.getByte(addr_alpha + val)) &amp; 0xFF) // [0-255]
+ 503             );
+ 504 
+ 505             if (runLen == 1) {
+ 506                 _touchedTile[cx0 &gt;&gt; _TILE_SIZE_LG] += val;
+ 507             } else {
+ 508                 touchTile(cx0, val, to, runLen, _touchedTile);
+ 509             }
+ 510         }
+ 511         addr_off += SIZE_INT;
+ 512 
+ 513         if (DO_STATS) {
+ 514             rdrStats.hist_tile_generator_encoding_runLen.add(runLen);
+ 515         }
+ 516 
+ 517         long len = (addr_off - _rowAAChunk.address);
+ 518 
+ 519         // update coded length as bytes:
+ 520         rowAALen[row] = (len - initialPos);
+ 521 
+ 522         // update current position:
+ 523         rowAAChunkPos = len;
+ 524 
+ 525         if (DO_STATS) {
+ 526             rdrStats.stat_cache_rowAA.add(rowAALen[row]);
+ 527             rdrStats.hist_tile_generator_encoding_ratio.add(
+ 528                 (100 * skip) / (blkE - blkW)
+ 529             );
+ 530         }
+ 531 
+ 532         // update tile used marks:
+ 533         int tx = from &gt;&gt; _TILE_SIZE_LG; // inclusive
+ 534         if (tx &lt; tileMin) {
+ 535             tileMin = tx;
+ 536         }
+ 537 
+ 538         tx = ((to - 1) &gt;&gt; _TILE_SIZE_LG) + 1; // exclusive (+1 to be sure)
+ 539         if (tx &gt; tileMax) {
+ 540             tileMax = tx;
+ 541         }
+ 542 
+ 543         // Clear alpha row for reuse:
+ 544         alphaRow[to] = 0;
+ 545         if (DO_CHECKS) {
+ 546             IntArrayCache.check(blkFlags, blkW, blkE, 0);
+ 547             IntArrayCache.check(alphaRow, from, px1 + 1 - bboxX0, 0);
+ 548         }
+ 549     }
+ 550 
+ 551     long startRLERow(final int row, final int x0, final int x1) {
+ 552         // rows are supposed to be added by increasing y.
+ 553         rowAAx0[row]  = x0; // first pixel inclusive
+ 554         rowAAx1[row]  = x1; // last pixel exclusive
+ 555         rowAAEnc[row] = 1; // RLE encoding
+ 556         rowAAPos[row] = 0L; // position = 0
+ 557 
+ 558         // update row index to current position:
+ 559         return (rowAAChunkIndex[row] = rowAAChunkPos);
+ 560     }
+ 561 
+ 562     private void expandRowAAChunk(final long needSize) {
+ 563         if (DO_STATS) {
+ 564             rdrStats.stat_array_marlincache_rowAAChunk.add(needSize);
+ 565         }
+ 566 
+ 567         // note: throw IOOB if neededSize &gt; 2Gb:
+ 568         final long newSize = ArrayCacheConst.getNewLargeSize(rowAAChunk.length,
+ 569                                                              needSize);
+ 570 
+ 571         rowAAChunk.resize(newSize);
+ 572     }
+ 573 
+ 574     private void touchTile(final int x0, final int val, final int x1,
+ 575                            final int runLen,
+ 576                            final int[] _touchedTile)
+ 577     {
+ 578         // the x and y of the current row, minus bboxX0, bboxY0
+ 579         // process tile line [0 - 32]
+ 580         final int _TILE_SIZE_LG = TILE_W_LG;
+ 581 
+ 582         // update touchedTile
+ 583         int tx = (x0 &gt;&gt; _TILE_SIZE_LG);
+ 584 
+ 585         // handle trivial case: same tile (x0, x0+runLen)
+ 586         if (tx == (x1 &gt;&gt; _TILE_SIZE_LG)) {
+ 587             // same tile:
+ 588             _touchedTile[tx] += val * runLen;
+ 589             return;
+ 590         }
+ 591 
+ 592         final int tx1 = (x1 - 1) &gt;&gt; _TILE_SIZE_LG;
+ 593 
+ 594         if (tx &lt;= tx1) {
+ 595             final int nextTileXCoord = (tx + 1) &lt;&lt; _TILE_SIZE_LG;
+ 596             _touchedTile[tx++] += val * (nextTileXCoord - x0);
+ 597         }
+ 598         if (tx &lt; tx1) {
+ 599             // don't go all the way to tx1 - we need to handle the last
+ 600             // tile as a special case (just like we did with the first
+ 601             final int tileVal = (val &lt;&lt; _TILE_SIZE_LG);
+ 602             for (; tx &lt; tx1; tx++) {
+ 603                 _touchedTile[tx] += tileVal;
+ 604             }
+ 605         }
+ 606         // they will be equal unless x0 &gt;&gt; TILE_SIZE_LG == tx1
+ 607         if (tx == tx1) {
+ 608             final int txXCoord       =  tx      &lt;&lt; _TILE_SIZE_LG;
+ 609             final int nextTileXCoord = (tx + 1) &lt;&lt; _TILE_SIZE_LG;
+ 610 
+ 611             final int lastXCoord = (nextTileXCoord &lt;= x1) ? nextTileXCoord : x1;
+ 612             _touchedTile[tx] += val * (lastXCoord - txXCoord);
+ 613         }
+ 614     }
+ 615 
+ 616     int alphaSumInTile(final int x) {
+ 617         return touchedTile[(x - bboxX0) &gt;&gt; TILE_W_LG];
+ 618     }
+ 619 
+ 620     @Override
+ 621     public String toString() {
+ 622         return "bbox = ["
+ 623             + bboxX0 + ", " + bboxY0 + " =&gt; "
+ 624             + bboxX1 + ", " + bboxY1 + "]\n";
+ 625     }
+ 626 
+ 627     private static byte[] buildAlphaMap(final int maxalpha) {
+ 628         // double size !
+ 629         final byte[] alMap = new byte[maxalpha &lt;&lt; 1];
+ 630         final int halfmaxalpha = maxalpha &gt;&gt; 2;
+ 631         for (int i = 0; i &lt;= maxalpha; i++) {
+ 632             alMap[i] = (byte) ((i * 255 + halfmaxalpha) / maxalpha);
+<a name="8" id="anc8"></a><span class="removed"> 633 //            System.out.println("alphaMap[" + i + "] = "</span>
+<span class="removed"> 634 //                               + Byte.toUnsignedInt(alMap[i]));</span>
+ 635         }
+ 636         return alMap;
+ 637     }
+ 638 }
+<a name="9" id="anc9"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="9" type="hidden" /></form></body></html>

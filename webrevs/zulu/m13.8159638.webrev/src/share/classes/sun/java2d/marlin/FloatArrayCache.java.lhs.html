@@ -1,0 +1,452 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre><hr></hr>
+<pre>
+   1 /*
+   2  * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+<a name="1" id="anc1"></a><span class="removed">  25 </span>
+  26 package sun.java2d.marlin;
+  27 
+<a name="2" id="anc2"></a><span class="changed">  28 import java.util.ArrayDeque;</span>
+<span class="changed">  29 import java.util.Arrays;</span>
+<span class="changed">  30 import static sun.java2d.marlin.MarlinUtils.logException;</span>
+  31 import static sun.java2d.marlin.MarlinUtils.logInfo;
+<a name="3" id="anc3"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  32 
+  33 final class FloatArrayCache implements MarlinConst {
+  34 
+<a name="4" id="anc4"></a><span class="changed">  35     private final int arraySize;</span>
+<span class="changed">  36     private final ArrayDeque&lt;float[]&gt; floatArrays;</span>
+<span class="changed">  37     // stats</span>
+<span class="changed">  38     private int getOp = 0;</span>
+<span class="changed">  39     private int createOp = 0;</span>
+<span class="changed">  40     private int returnOp = 0;</span>
+  41 
+<a name="5" id="anc5"></a><span class="changed">  42     void dumpStats() {</span>
+<span class="changed">  43         if (getOp &gt; 0) {</span>
+<span class="changed">  44             logInfo("FloatArrayCache[" + arraySize + "]: get: " + getOp</span>
+<span class="changed">  45                     + " created: " + createOp + " - returned: " + returnOp</span>
+<span class="changed">  46                     + " :: cache size: " + floatArrays.size());</span>
+  47         }
+<a name="6" id="anc6"></a>
+
+
+
+  48     }
+  49 
+<a name="7" id="anc7"></a><span class="changed">  50     FloatArrayCache(final int arraySize) {</span>
+<span class="changed">  51         this.arraySize = arraySize;</span>
+<span class="changed">  52         // small but enough: almost 1 cache line</span>
+<span class="changed">  53         this.floatArrays = new ArrayDeque&lt;float[]&gt;(6);</span>
+
+
+
+
+
+
+
+  54     }
+  55 
+<a name="8" id="anc8"></a><span class="changed">  56     float[] getArray() {</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  57         if (DO_STATS) {
+<a name="9" id="anc9"></a><span class="changed">  58             getOp++;</span>
+
+  59         }
+  60 
+<a name="10" id="anc10"></a><span class="changed">  61         // use cache</span>
+<span class="changed">  62         final float[] array = floatArrays.pollLast();</span>
+
+
+
+
+
+
+
+
+
+
+
+  63 
+<a name="11" id="anc11"></a><span class="changed">  64         if (array != null) {</span>
+
+
+
+
+  65             return array;
+  66         }
+<a name="12" id="anc12"></a><span class="removed">  67 </span>
+  68         if (DO_STATS) {
+<a name="13" id="anc13"></a><span class="changed">  69             createOp++;</span>
+  70         }
+  71 
+<a name="14" id="anc14"></a><span class="changed">  72         return new float[arraySize];</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  73     }
+  74 
+<a name="15" id="anc15"></a><span class="changed">  75     void putDirtyArray(final float[] array, final int length) {</span>
+<span class="changed">  76         if (length != arraySize) {</span>
+<span class="changed">  77             if (DO_CHECKS) {</span>
+<span class="changed">  78                 MarlinUtils.logInfo("ArrayCache: bad length = " + length);</span>
+  79             }
+<a name="16" id="anc16"></a><span class="changed">  80             return;</span>
+
+
+
+
+
+
+
+  81         }
+<a name="17" id="anc17"></a><span class="changed">  82         if (DO_STATS) {</span>
+<span class="changed">  83             returnOp++;</span>
+
+  84         }
+<a name="18" id="anc18"></a>
+
+
+
+
+
+  85 
+<a name="19" id="anc19"></a><span class="changed">  86         // NO clean-up of array data = DIRTY ARRAY</span>
+
+
+
+
+  87 
+<a name="20" id="anc20"></a><span class="changed">  88         if (DO_CLEAN_DIRTY) {</span>
+<span class="changed">  89             // Force zero-fill dirty arrays:</span>
+<span class="changed">  90             Arrays.fill(array, 0, array.length, 0f);</span>
+
+
+
+
+  91         }
+  92 
+<a name="21" id="anc21"></a><span class="changed">  93         // fill cache:</span>
+<span class="changed">  94         floatArrays.addLast(array);</span>
+
+
+
+
+
+
+
+
+
+
+
+
+  95     }
+  96 
+<a name="22" id="anc22"></a><span class="changed">  97     void putArray(final float[] array, final int length,</span>
+<span class="changed">  98                   final int fromIndex, final int toIndex)</span>
+  99     {
+<a name="23" id="anc23"></a><span class="changed"> 100         if (length != arraySize) {</span>
+<span class="changed"> 101             if (DO_CHECKS) {</span>
+<span class="changed"> 102                 MarlinUtils.logInfo("ArrayCache: bad length = " + length);</span>
+<span class="changed"> 103             }</span>
+ 104             return;
+ 105         }
+ 106         if (DO_STATS) {
+<a name="24" id="anc24"></a><span class="changed"> 107             returnOp++;</span>
+ 108         }
+<a name="25" id="anc25"></a>
+
+
+ 109 
+<a name="26" id="anc26"></a><span class="changed"> 110         // clean-up array of dirty part[fromIndex; toIndex[</span>
+<span class="changed"> 111         fill(array, fromIndex, toIndex, 0f);</span>
+
+
+
+
+
+
+
+ 112 
+<a name="27" id="anc27"></a><span class="changed"> 113         // fill cache:</span>
+<span class="changed"> 114         floatArrays.addLast(array);</span>
+
+
+
+
+ 115     }
+ 116 
+ 117     static void fill(final float[] array, final int fromIndex,
+ 118                      final int toIndex, final float value)
+ 119     {
+ 120         // clear array data:
+<a name="28" id="anc28"></a><span class="removed"> 121         /*</span>
+<span class="removed"> 122          * Arrays.fill is faster than System.arraycopy(empty array)</span>
+<span class="removed"> 123          * or Unsafe.setMemory(byte 0)</span>
+<span class="removed"> 124          */</span>
+<span class="removed"> 125         if (toIndex != 0) {</span>
+ 126             Arrays.fill(array, fromIndex, toIndex, value);
+<a name="29" id="anc29"></a><span class="removed"> 127         }</span>
+<span class="removed"> 128 </span>
+ 129         if (DO_CHECKS) {
+ 130             check(array, fromIndex, toIndex, value);
+ 131         }
+ 132     }
+ 133 
+ 134     static void check(final float[] array, final int fromIndex,
+ 135                       final int toIndex, final float value)
+ 136     {
+ 137         if (DO_CHECKS) {
+ 138             // check zero on full array:
+ 139             for (int i = 0; i &lt; array.length; i++) {
+ 140                 if (array[i] != value) {
+ 141                     logException("Invalid value at: " + i + " = " + array[i]
+ 142                             + " from: " + fromIndex + " to: " + toIndex + "\n"
+ 143                             + Arrays.toString(array), new Throwable());
+ 144 
+ 145                     // ensure array is correctly filled:
+ 146                     Arrays.fill(array, value);
+ 147 
+ 148                     return;
+ 149                 }
+ 150             }
+ 151         }
+ 152     }
+<a name="30" id="anc30"></a>
+
+
+
+ 153 }
+<a name="31" id="anc31"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="31" type="hidden" /></form></body></html>

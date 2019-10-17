@@ -1,0 +1,366 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Cdiff src/share/classes/sun/java2d/marlin/Renderer.java</title>
+</head>
+<body id="SUNWwebrev">
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../test/sun/java2d/marlin/TextClipErrorTest.java.cdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Renderer.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13688">13688</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8149338">8149338</a>: JVM Crash caused by Marlin renderer not handling NaN coordinates
+Summary: use first / last Y crossings to compute edge min/max Y and ensure consistency with edgeBuckets / edgeBucketCounts arrays
+Reviewed-by: flar, prr</pre>
+        <pre>
+<hr /><span class="oldmarker">*** 146,157 ****</span>
+      private final int[] aux_edgePtrs_initial  = new int[INITIAL_SMALL_ARRAY + 1]; // 4K
+  
+  //////////////////////////////////////////////////////////////////////////////
+  //  EDGE LIST
+  //////////////////////////////////////////////////////////////////////////////
+<span class="changed">!     private float edgeMinY = Float.POSITIVE_INFINITY;</span>
+<span class="changed">!     private float edgeMaxY = Float.NEGATIVE_INFINITY;</span>
+      private float edgeMinX = Float.POSITIVE_INFINITY;
+      private float edgeMaxX = Float.NEGATIVE_INFINITY;
+  
+      // edges [floats|ints] stored in off-heap memory
+      private final OffHeapArray edges;
+<span class="newmarker">--- 146,157 ----</span>
+      private final int[] aux_edgePtrs_initial  = new int[INITIAL_SMALL_ARRAY + 1]; // 4K
+  
+  //////////////////////////////////////////////////////////////////////////////
+  //  EDGE LIST
+  //////////////////////////////////////////////////////////////////////////////
+<span class="changed">!     private int edgeMinY = Integer.MAX_VALUE;</span>
+<span class="changed">!     private int edgeMaxY = Integer.MIN_VALUE;</span>
+      private float edgeMinX = Float.POSITIVE_INFINITY;
+      private float edgeMaxX = Float.NEGATIVE_INFINITY;
+  
+      // edges [floats|ints] stored in off-heap memory
+      private final OffHeapArray edges;
+<hr /><span class="oldmarker">*** 355,376 ****</span>
+              if (doStats) {
+                  RendererContext.stats.stat_rdr_addLine_skip.add(1);
+              }
+              return;
+          }
+<span class="changed">!         // edge min/max X/Y are in subpixel space (inclusive)</span>
+<span class="changed">!         if (y1 &lt; edgeMinY) {</span>
+<span class="changed">!             edgeMinY = y1;</span>
+          }
+<span class="changed">!         if (y2 &gt; edgeMaxY) {</span>
+<span class="changed">!             edgeMaxY = y2;</span>
+          }
+  
+          // Use double-precision for improved accuracy:
+          final double x1d   = x1;
+          final double y1d   = y1;
+<span class="changed">!         final double slope = (x2 - x1d) / (y2 - y1d);</span>
+  
+          if (slope &gt;= 0.0) { // &lt;==&gt; x1 &lt; x2
+              if (x1 &lt; edgeMinX) {
+                  edgeMinX = x1;
+              }
+<span class="newmarker">--- 355,379 ----</span>
+              if (doStats) {
+                  RendererContext.stats.stat_rdr_addLine_skip.add(1);
+              }
+              return;
+          }
+<span class="changed">! </span>
+<span class="changed">!         // edge min/max X/Y are in subpixel space (inclusive) within bounds:</span>
+<span class="changed">!         // note: Use integer crossings to ensure consistent range within</span>
+<span class="changed">!         // edgeBuckets / edgeBucketCounts arrays in case of NaN values (int = 0)</span>
+<span class="changed">!         if (firstCrossing &lt; edgeMinY) {</span>
+<span class="changed">!             edgeMinY = firstCrossing;</span>
+          }
+<span class="changed">!         if (lastCrossing &gt; edgeMaxY) {</span>
+<span class="changed">!             edgeMaxY = lastCrossing;</span>
+          }
+  
+          // Use double-precision for improved accuracy:
+          final double x1d   = x1;
+          final double y1d   = y1;
+<span class="changed">!         final double slope = (x1d - x2) / (y1d - y2);</span>
+  
+          if (slope &gt;= 0.0) { // &lt;==&gt; x1 &lt; x2
+              if (x1 &lt; edgeMinX) {
+                  edgeMinX = x1;
+              }
+<hr /><span class="oldmarker">*** 502,512 ****</span>
+  
+      // Current drawing position, i.e., final point of last segment
+      private float x0, y0;
+  
+      // Position of most recent 'moveTo' command
+<span class="changed">!     private float pix_sx0, pix_sy0;</span>
+  
+      // per-thread renderer context
+      final RendererContext rdrCtx;
+      // dirty curve
+      private final Curve curve;
+<span class="newmarker">--- 505,515 ----</span>
+  
+      // Current drawing position, i.e., final point of last segment
+      private float x0, y0;
+  
+      // Position of most recent 'moveTo' command
+<span class="changed">!     private float sx0, sy0;</span>
+  
+      // per-thread renderer context
+      final RendererContext rdrCtx;
+      // dirty curve
+      private final Curve curve;
+<hr /><span class="oldmarker">*** 568,579 ****</span>
+              }
+              edgeBuckets = rdrCtx.getIntArray(edgeBucketsLength);
+              edgeBucketCounts = rdrCtx.getIntArray(edgeBucketsLength);
+          }
+  
+<span class="changed">!         edgeMinY = Float.POSITIVE_INFINITY;</span>
+<span class="changed">!         edgeMaxY = Float.NEGATIVE_INFINITY;</span>
+          edgeMinX = Float.POSITIVE_INFINITY;
+          edgeMaxX = Float.NEGATIVE_INFINITY;
+  
+          // reset used mark:
+          edgeCount = 0;
+<span class="newmarker">--- 571,582 ----</span>
+              }
+              edgeBuckets = rdrCtx.getIntArray(edgeBucketsLength);
+              edgeBucketCounts = rdrCtx.getIntArray(edgeBucketsLength);
+          }
+  
+<span class="changed">!         edgeMinY = Integer.MAX_VALUE;</span>
+<span class="changed">!         edgeMaxY = Integer.MIN_VALUE;</span>
+          edgeMinX = Float.POSITIVE_INFINITY;
+          edgeMaxX = Float.NEGATIVE_INFINITY;
+  
+          // reset used mark:
+          edgeCount = 0;
+<hr /><span class="oldmarker">*** 626,636 ****</span>
+          if (blkFlags != blkFlags_initial) {
+              rdrCtx.putIntArray(blkFlags, 0, 0); // already zero filled
+              blkFlags = blkFlags_initial;
+          }
+  
+<span class="changed">!         if (edgeMinY != Float.POSITIVE_INFINITY) {</span>
+              // if context is maked as DIRTY:
+              if (rdrCtx.dirty) {
+                  // may happen if an exception if thrown in the pipeline processing:
+                  // clear completely buckets arrays:
+                  buckets_minY = 0;
+<span class="newmarker">--- 629,639 ----</span>
+          if (blkFlags != blkFlags_initial) {
+              rdrCtx.putIntArray(blkFlags, 0, 0); // already zero filled
+              blkFlags = blkFlags_initial;
+          }
+  
+<span class="changed">!         if (edgeMinY != Integer.MAX_VALUE) {</span>
+              // if context is maked as DIRTY:
+              if (rdrCtx.dirty) {
+                  // may happen if an exception if thrown in the pipeline processing:
+                  // clear completely buckets arrays:
+                  buckets_minY = 0;
+<hr /><span class="oldmarker">*** 686,705 ****</span>
+      }
+  
+      @Override
+      public void moveTo(float pix_x0, float pix_y0) {
+          closePath();
+<span class="changed">!         this.pix_sx0 = pix_x0;</span>
+<span class="changed">!         this.pix_sy0 = pix_y0;</span>
+<span class="changed">!         this.y0 = tosubpixy(pix_y0);</span>
+<span class="changed">!         this.x0 = tosubpixx(pix_x0);</span>
+      }
+  
+      @Override
+      public void lineTo(float pix_x1, float pix_y1) {
+<span class="changed">!         float x1 = tosubpixx(pix_x1);</span>
+<span class="changed">!         float y1 = tosubpixy(pix_y1);</span>
+          addLine(x0, y0, x1, y1);
+          x0 = x1;
+          y0 = y1;
+      }
+  
+<span class="newmarker">--- 689,710 ----</span>
+      }
+  
+      @Override
+      public void moveTo(float pix_x0, float pix_y0) {
+          closePath();
+<span class="changed">!         final float sx = tosubpixx(pix_x0);</span>
+<span class="changed">!         final float sy = tosubpixy(pix_y0);</span>
+<span class="changed">!         this.sx0 = sx;</span>
+<span class="changed">!         this.sy0 = sy;</span>
+<span class="changed">!         this.x0 = sx;</span>
+<span class="changed">!         this.y0 = sy;</span>
+      }
+  
+      @Override
+      public void lineTo(float pix_x1, float pix_y1) {
+<span class="changed">!         final float x1 = tosubpixx(pix_x1);</span>
+<span class="changed">!         final float y1 = tosubpixy(pix_y1);</span>
+          addLine(x0, y0, x1, y1);
+          x0 = x1;
+          y0 = y1;
+      }
+  
+<hr /><span class="oldmarker">*** 727,738 ****</span>
+          y0 = ye;
+      }
+  
+      @Override
+      public void closePath() {
+<span class="changed">!         // lineTo expects its input in pixel coordinates.</span>
+<span class="changed">!         lineTo(pix_sx0, pix_sy0);</span>
+      }
+  
+      @Override
+      public void pathDone() {
+          closePath();
+<span class="newmarker">--- 732,744 ----</span>
+          y0 = ye;
+      }
+  
+      @Override
+      public void closePath() {
+<span class="changed">!         addLine(x0, y0, sx0, sy0);</span>
+<span class="changed">!         x0 = sx0;</span>
+<span class="changed">!         y0 = sy0;</span>
+      }
+  
+      @Override
+      public void pathDone() {
+          closePath();
+<hr /><span class="oldmarker">*** 1394,1419 ****</span>
+  
+      boolean endRendering() {
+          if (doMonitors) {
+              RendererContext.stats.mon_rdr_endRendering.start();
+          }
+<span class="changed">!         if (edgeMinY == Float.POSITIVE_INFINITY) {</span>
+              return false; // undefined edges bounds
+          }
+  
+          final int _boundsMinY = boundsMinY;
+          final int _boundsMaxY = boundsMaxY;
+  
+          // bounds as inclusive intervals
+          final int spminX = FloatMath.max(FloatMath.ceil_int(edgeMinX - 0.5f), boundsMinX);
+          final int spmaxX = FloatMath.min(FloatMath.ceil_int(edgeMaxX - 0.5f), boundsMaxX - 1);
+  
+<span class="changed">!         // y1 (and y2) are already biased by -0.5 in tosubpixy():</span>
+<span class="changed">!         final int spminY = FloatMath.max(FloatMath.ceil_int(edgeMinY), _boundsMinY);</span>
+<span class="changed">!         int maxY = FloatMath.ceil_int(edgeMaxY);</span>
+<span class="changed">! </span>
+          final int spmaxY;
+  
+          if (maxY &lt;= _boundsMaxY - 1) {
+              spmaxY = maxY;
+          } else {
+              spmaxY = _boundsMaxY - 1;
+<span class="newmarker">--- 1400,1424 ----</span>
+  
+      boolean endRendering() {
+          if (doMonitors) {
+              RendererContext.stats.mon_rdr_endRendering.start();
+          }
+<span class="changed">!         if (edgeMinY == Integer.MAX_VALUE) {</span>
+              return false; // undefined edges bounds
+          }
+  
+          final int _boundsMinY = boundsMinY;
+          final int _boundsMaxY = boundsMaxY;
+  
+          // bounds as inclusive intervals
+          final int spminX = FloatMath.max(FloatMath.ceil_int(edgeMinX - 0.5f), boundsMinX);
+          final int spmaxX = FloatMath.min(FloatMath.ceil_int(edgeMaxX - 0.5f), boundsMaxX - 1);
+  
+<span class="changed">!         // edge Min/Max Y are already rounded to subpixels within bounds:</span>
+<span class="changed">!         final int spminY = edgeMinY;</span>
+          final int spmaxY;
+<span class="new">+         int maxY = edgeMaxY;</span>
+  
+          if (maxY &lt;= _boundsMaxY - 1) {
+              spmaxY = maxY;
+          } else {
+              spmaxY = _boundsMaxY - 1;
+</pre>
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../test/sun/java2d/marlin/TextClipErrorTest.java.cdiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

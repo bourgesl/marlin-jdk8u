@@ -1,0 +1,1204 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2007, 2016, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.BasicStroke;
+  29 import java.awt.Shape;
+  30 import java.awt.geom.AffineTransform;
+  31 import java.awt.geom.Path2D;
+  32 import java.awt.geom.PathIterator;
+  33 import java.security.AccessController;
+  34 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  35 import sun.awt.geom.PathConsumer2D;
+  36 import sun.java2d.ReentrantContextProvider;
+  37 import sun.java2d.ReentrantContextProviderCLQ;
+  38 import sun.java2d.ReentrantContextProviderTL;
+  39 import sun.java2d.pipe.AATileGenerator;
+  40 import sun.java2d.pipe.Region;
+  41 import sun.java2d.pipe.RenderingEngine;
+  42 import sun.security.action.GetPropertyAction;
+  43 
+  44 /**
+  45  * Marlin RendererEngine implementation (derived from Pisces)
+  46  */
+  47 public class MarlinRenderingEngine extends RenderingEngine
+  48                                    implements MarlinConst
+  49 {
+  50     private static enum NormMode {
+  51         ON_WITH_AA {
+  52             @Override
+  53             PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,
+  54                                                     final PathIterator src)
+  55             {
+  56                 // NormalizingPathIterator NearestPixelCenter:
+  57                 return rdrCtx.nPCPathIterator.init(src);
+  58             }
+  59         },
+  60         ON_NO_AA{
+  61             @Override
+  62             PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,
+  63                                                     final PathIterator src)
+  64             {
+  65                 // NearestPixel NormalizingPathIterator:
+  66                 return rdrCtx.nPQPathIterator.init(src);
+  67             }
+  68         },
+  69         OFF{
+  70             @Override
+  71             PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,
+  72                                                     final PathIterator src)
+  73             {
+  74                 // return original path iterator if normalization is disabled:
+  75                 return src;
+  76             }
+  77         };
+  78 
+  79         abstract PathIterator getNormalizingPathIterator(RendererContext rdrCtx,
+  80                                                          PathIterator src);
+  81     }
+  82 
+  83     private static final float MIN_PEN_SIZE = 1f / NORM_SUBPIXELS;
+  84 
+  85     static final float UPPER_BND = Float.MAX_VALUE / 2.0f;
+  86     static final float LOWER_BND = -UPPER_BND;
+  87 
+  88     /**
+  89      * Public constructor
+  90      */
+  91     public MarlinRenderingEngine() {
+  92         super();
+  93         logSettings(MarlinRenderingEngine.class.getName());
+  94     }
+  95 
+  96     /**
+  97      * Create a widened path as specified by the parameters.
+  98      * &lt;p&gt;
+  99      * The specified {@code src} {@link Shape} is widened according
+ 100      * to the specified attribute parameters as per the
+ 101      * {@link BasicStroke} specification.
+ 102      *
+ 103      * @param src the source path to be widened
+ 104      * @param width the width of the widened path as per {@code BasicStroke}
+ 105      * @param caps the end cap decorations as per {@code BasicStroke}
+ 106      * @param join the segment join decorations as per {@code BasicStroke}
+ 107      * @param miterlimit the miter limit as per {@code BasicStroke}
+ 108      * @param dashes the dash length array as per {@code BasicStroke}
+ 109      * @param dashphase the initial dash phase as per {@code BasicStroke}
+ 110      * @return the widened path stored in a new {@code Shape} object
+ 111      * @since 1.7
+ 112      */
+ 113     @Override
+ 114     public Shape createStrokedShape(Shape src,
+ 115                                     float width,
+ 116                                     int caps,
+ 117                                     int join,
+ 118                                     float miterlimit,
+ 119                                     float[] dashes,
+ 120                                     float dashphase)
+ 121     {
+ 122         final RendererContext rdrCtx = getRendererContext();
+ 123         try {
+ 124             // initialize a large copyable Path2D to avoid a lot of array growing:
+ 125             final Path2D.Float p2d = rdrCtx.getPath2D();
+ 126 
+ 127             strokeTo(rdrCtx,
+ 128                      src,
+ 129                      null,
+ 130                      width,
+ 131                      NormMode.OFF,
+ 132                      caps,
+ 133                      join,
+ 134                      miterlimit,
+ 135                      dashes,
+ 136                      dashphase,
+ 137                      rdrCtx.transformerPC2D.wrapPath2d(p2d)
+ 138                     );
+ 139 
+ 140             // Use Path2D copy constructor (trim)
+ 141             return new Path2D.Float(p2d);
+ 142 
+ 143         } finally {
+ 144             // recycle the RendererContext instance
+ 145             returnRendererContext(rdrCtx);
+ 146         }
+ 147     }
+ 148 
+ 149     /**
+ 150      * Sends the geometry for a widened path as specified by the parameters
+ 151      * to the specified consumer.
+ 152      * &lt;p&gt;
+ 153      * The specified {@code src} {@link Shape} is widened according
+ 154      * to the parameters specified by the {@link BasicStroke} object.
+ 155      * Adjustments are made to the path as appropriate for the
+ 156      * {@link VALUE_STROKE_NORMALIZE} hint if the {@code normalize}
+ 157      * boolean parameter is true.
+ 158      * Adjustments are made to the path as appropriate for the
+ 159      * {@link VALUE_ANTIALIAS_ON} hint if the {@code antialias}
+ 160      * boolean parameter is true.
+ 161      * &lt;p&gt;
+ 162      * The geometry of the widened path is forwarded to the indicated
+ 163      * {@link PathConsumer2D} object as it is calculated.
+ 164      *
+ 165      * @param src the source path to be widened
+ 166      * @param bs the {@code BasicSroke} object specifying the
+ 167      *           decorations to be applied to the widened path
+ 168      * @param normalize indicates whether stroke normalization should
+ 169      *                  be applied
+ 170      * @param antialias indicates whether or not adjustments appropriate
+ 171      *                  to antialiased rendering should be applied
+ 172      * @param consumer the {@code PathConsumer2D} instance to forward
+ 173      *                 the widened geometry to
+ 174      * @since 1.7
+ 175      */
+ 176     @Override
+ 177     public void strokeTo(Shape src,
+ 178                          AffineTransform at,
+ 179                          BasicStroke bs,
+ 180                          boolean thin,
+ 181                          boolean normalize,
+ 182                          boolean antialias,
+ 183                          final PathConsumer2D consumer)
+ 184     {
+ 185         final NormMode norm = (normalize) ?
+ 186                 ((antialias) ? NormMode.ON_WITH_AA : NormMode.ON_NO_AA)
+ 187                 : NormMode.OFF;
+ 188 
+ 189         final RendererContext rdrCtx = getRendererContext();
+ 190         try {
+ 191             strokeTo(rdrCtx, src, at, bs, thin, norm, antialias, consumer);
+ 192         } finally {
+ 193             // recycle the RendererContext instance
+ 194             returnRendererContext(rdrCtx);
+ 195         }
+ 196     }
+ 197 
+ 198     final void strokeTo(final RendererContext rdrCtx,
+ 199                         Shape src,
+ 200                         AffineTransform at,
+ 201                         BasicStroke bs,
+ 202                         boolean thin,
+ 203                         NormMode normalize,
+ 204                         boolean antialias,
+ 205                         PathConsumer2D pc2d)
+ 206     {
+ 207         float lw;
+ 208         if (thin) {
+ 209             if (antialias) {
+ 210                 lw = userSpaceLineWidth(at, MIN_PEN_SIZE);
+ 211             } else {
+ 212                 lw = userSpaceLineWidth(at, 1.0f);
+ 213             }
+ 214         } else {
+ 215             lw = bs.getLineWidth();
+ 216         }
+ 217         strokeTo(rdrCtx,
+ 218                  src,
+ 219                  at,
+ 220                  lw,
+ 221                  normalize,
+ 222                  bs.getEndCap(),
+ 223                  bs.getLineJoin(),
+ 224                  bs.getMiterLimit(),
+ 225                  bs.getDashArray(),
+ 226                  bs.getDashPhase(),
+ 227                  pc2d);
+ 228     }
+ 229 
+ 230     private final float userSpaceLineWidth(AffineTransform at, float lw) {
+ 231 
+ 232         float widthScale;
+ 233 
+ 234         if (at == null) {
+ 235             widthScale = 1.0f;
+ 236         } else if ((at.getType() &amp; (AffineTransform.TYPE_GENERAL_TRANSFORM  |
+ 237                                     AffineTransform.TYPE_GENERAL_SCALE)) != 0) {
+ 238             widthScale = (float)Math.sqrt(at.getDeterminant());
+ 239         } else {
+ 240             // First calculate the "maximum scale" of this transform.
+ 241             double A = at.getScaleX();       // m00
+ 242             double C = at.getShearX();       // m01
+ 243             double B = at.getShearY();       // m10
+ 244             double D = at.getScaleY();       // m11
+ 245 
+ 246             /*
+ 247              * Given a 2 x 2 affine matrix [ A B ] such that
+ 248              *                             [ C D ]
+ 249              * v' = [x' y'] = [Ax + Cy, Bx + Dy], we want to
+ 250              * find the maximum magnitude (norm) of the vector v'
+ 251              * with the constraint (x^2 + y^2 = 1).
+ 252              * The equation to maximize is
+ 253              *     |v'| = sqrt((Ax+Cy)^2+(Bx+Dy)^2)
+ 254              * or  |v'| = sqrt((AA+BB)x^2 + 2(AC+BD)xy + (CC+DD)y^2).
+ 255              * Since sqrt is monotonic we can maximize |v'|^2
+ 256              * instead and plug in the substitution y = sqrt(1 - x^2).
+ 257              * Trigonometric equalities can then be used to get
+ 258              * rid of most of the sqrt terms.
+ 259              */
+ 260 
+ 261             double EA = A*A + B*B;          // x^2 coefficient
+ 262             double EB = 2.0*(A*C + B*D);    // xy coefficient
+ 263             double EC = C*C + D*D;          // y^2 coefficient
+ 264 
+ 265             /*
+ 266              * There is a lot of calculus omitted here.
+ 267              *
+ 268              * Conceptually, in the interests of understanding the
+ 269              * terms that the calculus produced we can consider
+ 270              * that EA and EC end up providing the lengths along
+ 271              * the major axes and the hypot term ends up being an
+ 272              * adjustment for the additional length along the off-axis
+ 273              * angle of rotated or sheared ellipses as well as an
+ 274              * adjustment for the fact that the equation below
+ 275              * averages the two major axis lengths.  (Notice that
+ 276              * the hypot term contains a part which resolves to the
+ 277              * difference of these two axis lengths in the absence
+ 278              * of rotation.)
+ 279              *
+ 280              * In the calculus, the ratio of the EB and (EA-EC) terms
+ 281              * ends up being the tangent of 2*theta where theta is
+ 282              * the angle that the long axis of the ellipse makes
+ 283              * with the horizontal axis.  Thus, this equation is
+ 284              * calculating the length of the hypotenuse of a triangle
+ 285              * along that axis.
+ 286              */
+ 287 
+ 288             double hypot = Math.sqrt(EB*EB + (EA-EC)*(EA-EC));
+ 289             // sqrt omitted, compare to squared limits below.
+ 290             double widthsquared = ((EA + EC + hypot)/2.0);
+ 291 
+ 292             widthScale = (float)Math.sqrt(widthsquared);
+ 293         }
+ 294 
+ 295         return (lw / widthScale);
+ 296     }
+ 297 
+ 298     final void strokeTo(final RendererContext rdrCtx,
+ 299                         Shape src,
+ 300                         AffineTransform at,
+ 301                         float width,
+ 302                         NormMode norm,
+ 303                         int caps,
+ 304                         int join,
+ 305                         float miterlimit,
+ 306                         float[] dashes,
+ 307                         float dashphase,
+ 308                         PathConsumer2D pc2d)
+ 309     {
+ 310         // We use strokerat so that in Stroker and Dasher we can work only
+ 311         // with the pre-transformation coordinates. This will repeat a lot of
+ 312         // computations done in the path iterator, but the alternative is to
+ 313         // work with transformed paths and compute untransformed coordinates
+ 314         // as needed. This would be faster but I do not think the complexity
+ 315         // of working with both untransformed and transformed coordinates in
+ 316         // the same code is worth it.
+ 317         // However, if a path's width is constant after a transformation,
+ 318         // we can skip all this untransforming.
+ 319 
+ 320         // As pathTo() will check transformed coordinates for invalid values
+ 321         // (NaN / Infinity) to ignore such points, it is necessary to apply the
+ 322         // transformation before the path processing.
+ 323         AffineTransform strokerat = null;
+ 324 
+ 325         int dashLen = -1;
+ 326         boolean recycleDashes = false;
+ 327 
+ 328         if (at != null &amp;&amp; !at.isIdentity()) {
+ 329             final double a = at.getScaleX();
+ 330             final double b = at.getShearX();
+ 331             final double c = at.getShearY();
+ 332             final double d = at.getScaleY();
+ 333             final double det = a * d - c * b;
+ 334 
+ 335             if (Math.abs(det) &lt;= (2f * Float.MIN_VALUE)) {
+ 336                 // this rendering engine takes one dimensional curves and turns
+ 337                 // them into 2D shapes by giving them width.
+ 338                 // However, if everything is to be passed through a singular
+ 339                 // transformation, these 2D shapes will be squashed down to 1D
+ 340                 // again so, nothing can be drawn.
+ 341 
+ 342                 // Every path needs an initial moveTo and a pathDone. If these
+ 343                 // are not there this causes a SIGSEGV in libawt.so (at the time
+ 344                 // of writing of this comment (September 16, 2010)). Actually,
+ 345                 // I am not sure if the moveTo is necessary to avoid the SIGSEGV
+ 346                 // but the pathDone is definitely needed.
+ 347                 pc2d.moveTo(0f, 0f);
+ 348                 pc2d.pathDone();
+ 349                 return;
+ 350             }
+ 351 
+ 352             // If the transform is a constant multiple of an orthogonal transformation
+ 353             // then every length is just multiplied by a constant, so we just
+ 354             // need to transform input paths to stroker and tell stroker
+ 355             // the scaled width. This condition is satisfied if
+ 356             // a*b == -c*d &amp;&amp; a*a+c*c == b*b+d*d. In the actual check below, we
+ 357             // leave a bit of room for error.
+ 358             if (nearZero(a*b + c*d) &amp;&amp; nearZero(a*a + c*c - (b*b + d*d))) {
+ 359                 final float scale = (float) Math.sqrt(a*a + c*c);
+ 360 
+ 361                 if (dashes != null) {
+ 362                     recycleDashes = true;
+ 363                     dashLen = dashes.length;
+ 364                     final float[] newDashes;
+ 365                     if (dashLen &lt;= INITIAL_ARRAY) {
+ 366                         newDashes = rdrCtx.dasher.dashes_ref.initial;
+ 367                     } else {
+ 368                         if (DO_STATS) {
+ 369                             rdrCtx.stats.stat_array_dasher_dasher.add(dashLen);
+ 370                         }
+ 371                         newDashes = rdrCtx.dasher.dashes_ref.getArray(dashLen);
+ 372                     }
+ 373                     System.arraycopy(dashes, 0, newDashes, 0, dashLen);
+ 374                     dashes = newDashes;
+ 375                     for (int i = 0; i &lt; dashLen; i++) {
+ 376                         dashes[i] *= scale;
+ 377                     }
+ 378                     dashphase *= scale;
+ 379                 }
+ 380                 width *= scale;
+ 381 
+ 382                 // by now strokerat == null. Input paths to
+ 383                 // stroker (and maybe dasher) will have the full transform at
+ 384                 // applied to them and nothing will happen to the output paths.
+ 385             } else {
+ 386                 strokerat = at;
+ 387 
+ 388                 // by now strokerat == at. Input paths to
+ 389                 // stroker (and maybe dasher) will have the full transform at
+ 390                 // applied to them, then they will be normalized, and then
+ 391                 // the inverse of *only the non translation part of at* will
+ 392                 // be applied to the normalized paths. This won't cause problems
+ 393                 // in stroker, because, suppose at = T*A, where T is just the
+ 394                 // translation part of at, and A is the rest. T*A has already
+ 395                 // been applied to Stroker/Dasher's input. Then Ainv will be
+ 396                 // applied. Ainv*T*A is not equal to T, but it is a translation,
+ 397                 // which means that none of stroker's assumptions about its
+ 398                 // input will be violated. After all this, A will be applied
+ 399                 // to stroker's output.
+ 400             }
+ 401         } else {
+ 402             // either at is null or it's the identity. In either case
+ 403             // we don't transform the path.
+ 404             at = null;
+ 405         }
+ 406 
+ 407         if (USE_SIMPLIFIER) {
+ 408             // Use simplifier after stroker before Renderer
+ 409             // to remove collinear segments (notably due to cap square)
+ 410             pc2d = rdrCtx.simplifier.init(pc2d);
+ 411         }
+ 412 
+ 413         final TransformingPathConsumer2D transformerPC2D = rdrCtx.transformerPC2D;
+ 414         pc2d = transformerPC2D.deltaTransformConsumer(pc2d, strokerat);
+ 415 
+ 416         pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit);
+ 417 
+ 418         if (dashes != null) {
+ 419             if (!recycleDashes) {
+ 420                 dashLen = dashes.length;
+ 421             }
+ 422             pc2d = rdrCtx.dasher.init(pc2d, dashes, dashLen, dashphase,
+ 423                                       recycleDashes);
+ 424         }
+ 425         pc2d = transformerPC2D.inverseDeltaTransformConsumer(pc2d, strokerat);
+ 426 
+ 427         final PathIterator pi = norm.getNormalizingPathIterator(rdrCtx,
+ 428                                          src.getPathIterator(at));
+ 429 
+ 430         pathTo(rdrCtx, pi, pc2d);
+ 431 
+ 432         /*
+ 433          * Pipeline seems to be:
+ 434          * shape.getPathIterator(at)
+ 435          * -&gt; (NormalizingPathIterator)
+ 436          * -&gt; (inverseDeltaTransformConsumer)
+ 437          * -&gt; (Dasher)
+ 438          * -&gt; Stroker
+ 439          * -&gt; (deltaTransformConsumer)
+ 440          *
+ 441          * -&gt; (CollinearSimplifier) to remove redundant segments
+ 442          *
+ 443          * -&gt; pc2d = Renderer (bounding box)
+ 444          */
+ 445     }
+ 446 
+ 447     private static boolean nearZero(final double num) {
+ 448         return Math.abs(num) &lt; 2.0 * Math.ulp(num);
+ 449     }
+ 450 
+ 451     abstract static class NormalizingPathIterator implements PathIterator {
+ 452 
+ 453         private PathIterator src;
+ 454 
+ 455         // the adjustment applied to the current position.
+ 456         private float curx_adjust, cury_adjust;
+ 457         // the adjustment applied to the last moveTo position.
+ 458         private float movx_adjust, movy_adjust;
+ 459 
+ 460         private final float[] tmp;
+ 461 
+ 462         NormalizingPathIterator(final float[] tmp) {
+ 463             this.tmp = tmp;
+ 464         }
+ 465 
+ 466         final NormalizingPathIterator init(final PathIterator src) {
+ 467             this.src = src;
+ 468             return this; // fluent API
+ 469         }
+ 470 
+ 471         /**
+ 472          * Disposes this path iterator:
+ 473          * clean up before reusing this instance
+ 474          */
+ 475         final void dispose() {
+ 476             // free source PathIterator:
+ 477             this.src = null;
+ 478         }
+ 479 
+ 480         @Override
+ 481         public final int currentSegment(final float[] coords) {
+ 482             int lastCoord;
+ 483             final int type = src.currentSegment(coords);
+ 484 
+ 485             switch(type) {
+ 486                 case PathIterator.SEG_MOVETO:
+ 487                 case PathIterator.SEG_LINETO:
+ 488                     lastCoord = 0;
+ 489                     break;
+ 490                 case PathIterator.SEG_QUADTO:
+ 491                     lastCoord = 2;
+ 492                     break;
+ 493                 case PathIterator.SEG_CUBICTO:
+ 494                     lastCoord = 4;
+ 495                     break;
+ 496                 case PathIterator.SEG_CLOSE:
+ 497                     // we don't want to deal with this case later. We just exit now
+ 498                     curx_adjust = movx_adjust;
+ 499                     cury_adjust = movy_adjust;
+ 500                     return type;
+ 501                 default:
+ 502                     throw new InternalError("Unrecognized curve type");
+ 503             }
+ 504 
+ 505             // normalize endpoint
+ 506             float coord, x_adjust, y_adjust;
+ 507 
+ 508             coord = coords[lastCoord];
+ 509             x_adjust = normCoord(coord); // new coord
+ 510             coords[lastCoord] = x_adjust;
+ 511             x_adjust -= coord;
+ 512 
+ 513             coord = coords[lastCoord + 1];
+ 514             y_adjust = normCoord(coord); // new coord
+ 515             coords[lastCoord + 1] = y_adjust;
+ 516             y_adjust -= coord;
+ 517 
+ 518             // now that the end points are done, normalize the control points
+ 519             switch(type) {
+ 520                 case PathIterator.SEG_MOVETO:
+ 521                     movx_adjust = x_adjust;
+ 522                     movy_adjust = y_adjust;
+ 523                     break;
+ 524                 case PathIterator.SEG_LINETO:
+ 525                     break;
+ 526                 case PathIterator.SEG_QUADTO:
+ 527                     coords[0] += (curx_adjust + x_adjust) / 2f;
+ 528                     coords[1] += (cury_adjust + y_adjust) / 2f;
+ 529                     break;
+ 530                 case PathIterator.SEG_CUBICTO:
+ 531                     coords[0] += curx_adjust;
+ 532                     coords[1] += cury_adjust;
+ 533                     coords[2] += x_adjust;
+ 534                     coords[3] += y_adjust;
+ 535                     break;
+ 536                 case PathIterator.SEG_CLOSE:
+ 537                     // handled earlier
+ 538                 default:
+ 539             }
+ 540             curx_adjust = x_adjust;
+ 541             cury_adjust = y_adjust;
+ 542             return type;
+ 543         }
+ 544 
+ 545         abstract float normCoord(final float coord);
+ 546 
+ 547         @Override
+ 548         public final int currentSegment(final double[] coords) {
+ 549             final float[] _tmp = tmp; // dirty
+ 550             int type = this.currentSegment(_tmp);
+ 551             for (int i = 0; i &lt; 6; i++) {
+ 552                 coords[i] = _tmp[i];
+ 553             }
+ 554             return type;
+ 555         }
+ 556 
+ 557         @Override
+ 558         public final int getWindingRule() {
+ 559             return src.getWindingRule();
+ 560         }
+ 561 
+ 562         @Override
+ 563         public final boolean isDone() {
+ 564             if (src.isDone()) {
+ 565                 // Dispose this instance:
+ 566                 dispose();
+ 567                 return true;
+ 568             }
+ 569             return false;
+ 570         }
+ 571 
+ 572         @Override
+ 573         public final void next() {
+ 574             src.next();
+ 575         }
+ 576 
+ 577         static final class NearestPixelCenter
+ 578                                 extends NormalizingPathIterator
+ 579         {
+ 580             NearestPixelCenter(final float[] tmp) {
+ 581                 super(tmp);
+ 582             }
+ 583 
+ 584             @Override
+ 585             float normCoord(final float coord) {
+ 586                 // round to nearest pixel center
+ 587                 return FloatMath.floor_f(coord) + 0.5f;
+ 588             }
+ 589         }
+ 590 
+ 591         static final class NearestPixelQuarter
+ 592                                 extends NormalizingPathIterator
+ 593         {
+ 594             NearestPixelQuarter(final float[] tmp) {
+ 595                 super(tmp);
+ 596             }
+ 597 
+ 598             @Override
+ 599             float normCoord(final float coord) {
+ 600                 // round to nearest (0.25, 0.25) pixel quarter
+ 601                 return FloatMath.floor_f(coord + 0.25f) + 0.25f;
+ 602             }
+ 603         }
+ 604     }
+ 605 
+ 606     private static void pathTo(final RendererContext rdrCtx, final PathIterator pi,
+ 607                                final PathConsumer2D pc2d)
+ 608     {
+ 609         // mark context as DIRTY:
+ 610         rdrCtx.dirty = true;
+ 611 
+ 612         final float[] coords = rdrCtx.float6;
+ 613 
+ 614         pathToLoop(coords, pi, pc2d);
+ 615 
+ 616         // mark context as CLEAN:
+ 617         rdrCtx.dirty = false;
+ 618     }
+ 619 
+ 620     private static void pathToLoop(final float[] coords, final PathIterator pi,
+ 621                                    final PathConsumer2D pc2d)
+ 622     {
+ 623         // ported from DuctusRenderingEngine.feedConsumer() but simplified:
+ 624         // - removed skip flag = !subpathStarted
+ 625         // - removed pathClosed (ie subpathStarted not set to false)
+ 626         boolean subpathStarted = false;
+ 627 
+ 628         for (; !pi.isDone(); pi.next()) {
+ 629             switch (pi.currentSegment(coords)) {
+ 630             case PathIterator.SEG_MOVETO:
+ 631                 /* Checking SEG_MOVETO coordinates if they are out of the
+ 632                  * [LOWER_BND, UPPER_BND] range. This check also handles NaN
+ 633                  * and Infinity values. Skipping next path segment in case of
+ 634                  * invalid data.
+ 635                  */
+ 636                 if (coords[0] &lt; UPPER_BND &amp;&amp; coords[0] &gt; LOWER_BND &amp;&amp;
+ 637                     coords[1] &lt; UPPER_BND &amp;&amp; coords[1] &gt; LOWER_BND)
+ 638                 {
+ 639                     pc2d.moveTo(coords[0], coords[1]);
+ 640                     subpathStarted = true;
+ 641                 }
+ 642                 break;
+ 643             case PathIterator.SEG_LINETO:
+ 644                 /* Checking SEG_LINETO coordinates if they are out of the
+ 645                  * [LOWER_BND, UPPER_BND] range. This check also handles NaN
+ 646                  * and Infinity values. Ignoring current path segment in case
+ 647                  * of invalid data. If segment is skipped its endpoint
+ 648                  * (if valid) is used to begin new subpath.
+ 649                  */
+ 650                 if (coords[0] &lt; UPPER_BND &amp;&amp; coords[0] &gt; LOWER_BND &amp;&amp;
+ 651                     coords[1] &lt; UPPER_BND &amp;&amp; coords[1] &gt; LOWER_BND)
+ 652                 {
+ 653                     if (subpathStarted) {
+ 654                         pc2d.lineTo(coords[0], coords[1]);
+ 655                     } else {
+ 656                         pc2d.moveTo(coords[0], coords[1]);
+ 657                         subpathStarted = true;
+ 658                     }
+ 659                 }
+ 660                 break;
+ 661             case PathIterator.SEG_QUADTO:
+ 662                 // Quadratic curves take two points
+ 663                 /* Checking SEG_QUADTO coordinates if they are out of the
+ 664                  * [LOWER_BND, UPPER_BND] range. This check also handles NaN
+ 665                  * and Infinity values. Ignoring current path segment in case
+ 666                  * of invalid endpoints's data. Equivalent to the SEG_LINETO
+ 667                  * if endpoint coordinates are valid but there are invalid data
+ 668                  * among other coordinates
+ 669                  */
+ 670                 if (coords[2] &lt; UPPER_BND &amp;&amp; coords[2] &gt; LOWER_BND &amp;&amp;
+ 671                     coords[3] &lt; UPPER_BND &amp;&amp; coords[3] &gt; LOWER_BND)
+ 672                 {
+ 673                     if (subpathStarted) {
+ 674                         if (coords[0] &lt; UPPER_BND &amp;&amp; coords[0] &gt; LOWER_BND &amp;&amp;
+ 675                             coords[1] &lt; UPPER_BND &amp;&amp; coords[1] &gt; LOWER_BND)
+ 676                         {
+ 677                             pc2d.quadTo(coords[0], coords[1],
+ 678                                         coords[2], coords[3]);
+ 679                         } else {
+ 680                             pc2d.lineTo(coords[2], coords[3]);
+ 681                         }
+ 682                     } else {
+ 683                         pc2d.moveTo(coords[2], coords[3]);
+ 684                         subpathStarted = true;
+ 685                     }
+ 686                 }
+ 687                 break;
+ 688             case PathIterator.SEG_CUBICTO:
+ 689                 // Cubic curves take three points
+ 690                 /* Checking SEG_CUBICTO coordinates if they are out of the
+ 691                  * [LOWER_BND, UPPER_BND] range. This check also handles NaN
+ 692                  * and Infinity values. Ignoring current path segment in case
+ 693                  * of invalid endpoints's data. Equivalent to the SEG_LINETO
+ 694                  * if endpoint coordinates are valid but there are invalid data
+ 695                  * among other coordinates
+ 696                  */
+ 697                 if (coords[4] &lt; UPPER_BND &amp;&amp; coords[4] &gt; LOWER_BND &amp;&amp;
+ 698                     coords[5] &lt; UPPER_BND &amp;&amp; coords[5] &gt; LOWER_BND)
+ 699                 {
+ 700                     if (subpathStarted) {
+ 701                         if (coords[0] &lt; UPPER_BND &amp;&amp; coords[0] &gt; LOWER_BND &amp;&amp;
+ 702                             coords[1] &lt; UPPER_BND &amp;&amp; coords[1] &gt; LOWER_BND &amp;&amp;
+ 703                             coords[2] &lt; UPPER_BND &amp;&amp; coords[2] &gt; LOWER_BND &amp;&amp;
+ 704                             coords[3] &lt; UPPER_BND &amp;&amp; coords[3] &gt; LOWER_BND)
+ 705                         {
+ 706                             pc2d.curveTo(coords[0], coords[1],
+ 707                                          coords[2], coords[3],
+ 708                                          coords[4], coords[5]);
+ 709                         } else {
+ 710                             pc2d.lineTo(coords[4], coords[5]);
+ 711                         }
+ 712                     } else {
+ 713                         pc2d.moveTo(coords[4], coords[5]);
+ 714                         subpathStarted = true;
+ 715                     }
+ 716                 }
+ 717                 break;
+ 718             case PathIterator.SEG_CLOSE:
+ 719                 if (subpathStarted) {
+ 720                     pc2d.closePath();
+ 721                     // do not set subpathStarted to false
+ 722                     // in case of missing moveTo() after close()
+ 723                 }
+ 724                 break;
+ 725             default:
+ 726             }
+ 727         }
+ 728         pc2d.pathDone();
+ 729     }
+ 730 
+ 731     /**
+ 732      * Construct an antialiased tile generator for the given shape with
+ 733      * the given rendering attributes and store the bounds of the tile
+ 734      * iteration in the bbox parameter.
+ 735      * The {@code at} parameter specifies a transform that should affect
+ 736      * both the shape and the {@code BasicStroke} attributes.
+ 737      * The {@code clip} parameter specifies the current clip in effect
+ 738      * in device coordinates and can be used to prune the data for the
+ 739      * operation, but the renderer is not required to perform any
+ 740      * clipping.
+ 741      * If the {@code BasicStroke} parameter is null then the shape
+ 742      * should be filled as is, otherwise the attributes of the
+ 743      * {@code BasicStroke} should be used to specify a draw operation.
+ 744      * The {@code thin} parameter indicates whether or not the
+ 745      * transformed {@code BasicStroke} represents coordinates smaller
+ 746      * than the minimum resolution of the antialiasing rasterizer as
+ 747      * specified by the {@code getMinimumAAPenWidth()} method.
+ 748      * &lt;p&gt;
+ 749      * Upon returning, this method will fill the {@code bbox} parameter
+ 750      * with 4 values indicating the bounds of the iteration of the
+ 751      * tile generator.
+ 752      * The iteration order of the tiles will be as specified by the
+ 753      * pseudo-code:
+ 754      * &lt;pre&gt;
+ 755      *     for (y = bbox[1]; y &lt; bbox[3]; y += tileheight) {
+ 756      *         for (x = bbox[0]; x &lt; bbox[2]; x += tilewidth) {
+ 757      *         }
+ 758      *     }
+ 759      * &lt;/pre&gt;
+ 760      * If there is no output to be rendered, this method may return
+ 761      * null.
+ 762      *
+ 763      * @param s the shape to be rendered (fill or draw)
+ 764      * @param at the transform to be applied to the shape and the
+ 765      *           stroke attributes
+ 766      * @param clip the current clip in effect in device coordinates
+ 767      * @param bs if non-null, a {@code BasicStroke} whose attributes
+ 768      *           should be applied to this operation
+ 769      * @param thin true if the transformed stroke attributes are smaller
+ 770      *             than the minimum dropout pen width
+ 771      * @param normalize true if the {@code VALUE_STROKE_NORMALIZE}
+ 772      *                  {@code RenderingHint} is in effect
+ 773      * @param bbox returns the bounds of the iteration
+ 774      * @return the {@code AATileGenerator} instance to be consulted
+ 775      *         for tile coverages, or null if there is no output to render
+ 776      * @since 1.7
+ 777      */
+ 778     @Override
+ 779     public AATileGenerator getAATileGenerator(Shape s,
+ 780                                               AffineTransform at,
+ 781                                               Region clip,
+ 782                                               BasicStroke bs,
+ 783                                               boolean thin,
+ 784                                               boolean normalize,
+ 785                                               int[] bbox)
+ 786     {
+ 787         MarlinTileGenerator ptg = null;
+ 788         Renderer r = null;
+ 789 
+ 790         final RendererContext rdrCtx = getRendererContext();
+ 791         try {
+ 792             // Test if at is identity:
+ 793             final AffineTransform _at = (at != null &amp;&amp; !at.isIdentity()) ? at
+ 794                                         : null;
+ 795 
+ 796             final NormMode norm = (normalize) ? NormMode.ON_WITH_AA : NormMode.OFF;
+ 797 
+ 798             if (bs == null) {
+ 799                 // fill shape:
+ 800                 final PathIterator pi = norm.getNormalizingPathIterator(rdrCtx,
+ 801                                                  s.getPathIterator(_at));
+ 802 
+ 803                 // note: Winding rule may be EvenOdd ONLY for fill operations !
+ 804                 r = rdrCtx.renderer.init(clip.getLoX(), clip.getLoY(),
+ 805                                          clip.getWidth(), clip.getHeight(),
+ 806                                          pi.getWindingRule());
+ 807 
+ 808                 // TODO: subdivide quad/cubic curves into monotonic curves ?
+ 809                 pathTo(rdrCtx, pi, r);
+ 810             } else {
+ 811                 // draw shape with given stroke:
+ 812                 r = rdrCtx.renderer.init(clip.getLoX(), clip.getLoY(),
+ 813                                          clip.getWidth(), clip.getHeight(),
+ 814                                          PathIterator.WIND_NON_ZERO);
+ 815 
+ 816                 strokeTo(rdrCtx, s, _at, bs, thin, norm, true, r);
+ 817             }
+ 818             if (r.endRendering()) {
+ 819                 ptg = rdrCtx.ptg.init();
+ 820                 ptg.getBbox(bbox);
+ 821                 // note: do not returnRendererContext(rdrCtx)
+ 822                 // as it will be called later by MarlinTileGenerator.dispose()
+ 823                 r = null;
+ 824             }
+ 825         } finally {
+ 826             if (r != null) {
+ 827                 // dispose renderer:
+ 828                 r.dispose();
+ 829                 // recycle the RendererContext instance
+ 830                 MarlinRenderingEngine.returnRendererContext(rdrCtx);
+ 831             }
+ 832         }
+ 833 
+ 834         // Return null to cancel AA tile generation (nothing to render)
+ 835         return ptg;
+ 836     }
+ 837 
+ 838     @Override
+ 839     public final AATileGenerator getAATileGenerator(double x, double y,
+ 840                                                     double dx1, double dy1,
+ 841                                                     double dx2, double dy2,
+ 842                                                     double lw1, double lw2,
+ 843                                                     Region clip,
+ 844                                                     int[] bbox)
+ 845     {
+ 846         // REMIND: Deal with large coordinates!
+ 847         double ldx1, ldy1, ldx2, ldy2;
+ 848         boolean innerpgram = (lw1 &gt; 0.0 &amp;&amp; lw2 &gt; 0.0);
+ 849 
+ 850         if (innerpgram) {
+ 851             ldx1 = dx1 * lw1;
+ 852             ldy1 = dy1 * lw1;
+ 853             ldx2 = dx2 * lw2;
+ 854             ldy2 = dy2 * lw2;
+ 855             x -= (ldx1 + ldx2) / 2.0;
+ 856             y -= (ldy1 + ldy2) / 2.0;
+ 857             dx1 += ldx1;
+ 858             dy1 += ldy1;
+ 859             dx2 += ldx2;
+ 860             dy2 += ldy2;
+ 861             if (lw1 &gt; 1.0 &amp;&amp; lw2 &gt; 1.0) {
+ 862                 // Inner parallelogram was entirely consumed by stroke...
+ 863                 innerpgram = false;
+ 864             }
+ 865         } else {
+ 866             ldx1 = ldy1 = ldx2 = ldy2 = 0.0;
+ 867         }
+ 868 
+ 869         MarlinTileGenerator ptg = null;
+ 870         Renderer r = null;
+ 871 
+ 872         final RendererContext rdrCtx = getRendererContext();
+ 873         try {
+ 874             r = rdrCtx.renderer.init(clip.getLoX(), clip.getLoY(),
+ 875                                          clip.getWidth(), clip.getHeight(),
+ 876                                          Renderer.WIND_EVEN_ODD);
+ 877 
+ 878             r.moveTo((float) x, (float) y);
+ 879             r.lineTo((float) (x+dx1), (float) (y+dy1));
+ 880             r.lineTo((float) (x+dx1+dx2), (float) (y+dy1+dy2));
+ 881             r.lineTo((float) (x+dx2), (float) (y+dy2));
+ 882             r.closePath();
+ 883 
+ 884             if (innerpgram) {
+ 885                 x += ldx1 + ldx2;
+ 886                 y += ldy1 + ldy2;
+ 887                 dx1 -= 2.0 * ldx1;
+ 888                 dy1 -= 2.0 * ldy1;
+ 889                 dx2 -= 2.0 * ldx2;
+ 890                 dy2 -= 2.0 * ldy2;
+ 891                 r.moveTo((float) x, (float) y);
+ 892                 r.lineTo((float) (x+dx1), (float) (y+dy1));
+ 893                 r.lineTo((float) (x+dx1+dx2), (float) (y+dy1+dy2));
+ 894                 r.lineTo((float) (x+dx2), (float) (y+dy2));
+ 895                 r.closePath();
+ 896             }
+ 897             r.pathDone();
+ 898 
+ 899             if (r.endRendering()) {
+ 900                 ptg = rdrCtx.ptg.init();
+ 901                 ptg.getBbox(bbox);
+ 902                 // note: do not returnRendererContext(rdrCtx)
+ 903                 // as it will be called later by MarlinTileGenerator.dispose()
+ 904                 r = null;
+ 905             }
+ 906         } finally {
+ 907             if (r != null) {
+ 908                 // dispose renderer:
+ 909                 r.dispose();
+ 910                 // recycle the RendererContext instance
+ 911                 MarlinRenderingEngine.returnRendererContext(rdrCtx);
+ 912             }
+ 913         }
+ 914 
+ 915         // Return null to cancel AA tile generation (nothing to render)
+ 916         return ptg;
+ 917     }
+ 918 
+ 919     /**
+ 920      * Returns the minimum pen width that the antialiasing rasterizer
+ 921      * can represent without dropouts occuring.
+ 922      * @since 1.7
+ 923      */
+ 924     @Override
+ 925     public float getMinimumAAPenSize() {
+ 926         return MIN_PEN_SIZE;
+ 927     }
+ 928 
+ 929     static {
+ 930         if (PathIterator.WIND_NON_ZERO != Renderer.WIND_NON_ZERO ||
+ 931             PathIterator.WIND_EVEN_ODD != Renderer.WIND_EVEN_ODD ||
+ 932             BasicStroke.JOIN_MITER != Stroker.JOIN_MITER ||
+ 933             BasicStroke.JOIN_ROUND != Stroker.JOIN_ROUND ||
+ 934             BasicStroke.JOIN_BEVEL != Stroker.JOIN_BEVEL ||
+ 935             BasicStroke.CAP_BUTT != Stroker.CAP_BUTT ||
+ 936             BasicStroke.CAP_ROUND != Stroker.CAP_ROUND ||
+ 937             BasicStroke.CAP_SQUARE != Stroker.CAP_SQUARE)
+ 938         {
+ 939             throw new InternalError("mismatched renderer constants");
+ 940         }
+ 941     }
+ 942 
+ 943     // --- RendererContext handling ---
+ 944     // use ThreadLocal or ConcurrentLinkedQueue to get one RendererContext
+ 945     private static final boolean USE_THREAD_LOCAL;
+ 946 
+ 947     // reference type stored in either TL or CLQ
+ 948     static final int REF_TYPE;
+ 949 
+ 950     // Per-thread RendererContext
+ 951     private static final ReentrantContextProvider&lt;RendererContext&gt; RDR_CTX_PROVIDER;
+ 952 
+ 953     // Static initializer to use TL or CLQ mode
+ 954     static {
+ 955         USE_THREAD_LOCAL = MarlinProperties.isUseThreadLocal();
+ 956 
+ 957         // Soft reference by default:
+ 958         final String refType = AccessController.doPrivileged(
+ 959                             new GetPropertyAction("sun.java2d.renderer.useRef",
+ 960                             "soft"));
+ 961         switch (refType) {
+ 962             default:
+ 963             case "soft":
+ 964                 REF_TYPE = ReentrantContextProvider.REF_SOFT;
+ 965                 break;
+ 966             case "weak":
+ 967                 REF_TYPE = ReentrantContextProvider.REF_WEAK;
+ 968                 break;
+ 969             case "hard":
+ 970                 REF_TYPE = ReentrantContextProvider.REF_HARD;
+ 971                 break;
+ 972         }
+ 973 
+ 974         if (USE_THREAD_LOCAL) {
+ 975             RDR_CTX_PROVIDER = new ReentrantContextProviderTL&lt;RendererContext&gt;(REF_TYPE)
+ 976                 {
+ 977                     @Override
+ 978                     protected RendererContext newContext() {
+ 979                         return RendererContext.createContext();
+ 980                     }
+ 981                 };
+ 982         } else {
+ 983             RDR_CTX_PROVIDER = new ReentrantContextProviderCLQ&lt;RendererContext&gt;(REF_TYPE)
+ 984                 {
+ 985                     @Override
+ 986                     protected RendererContext newContext() {
+ 987                         return RendererContext.createContext();
+ 988                     }
+ 989                 };
+ 990         }
+ 991     }
+ 992 
+ 993     private static boolean SETTINGS_LOGGED = !ENABLE_LOGS;
+ 994 
+ 995     private static void logSettings(final String reClass) {
+ 996         // log information at startup
+ 997         if (SETTINGS_LOGGED) {
+ 998             return;
+ 999         }
+1000         SETTINGS_LOGGED = true;
+1001 
+1002         String refType;
+1003         switch (REF_TYPE) {
+1004             default:
+1005             case ReentrantContextProvider.REF_HARD:
+1006                 refType = "hard";
+1007                 break;
+1008             case ReentrantContextProvider.REF_SOFT:
+1009                 refType = "soft";
+1010                 break;
+1011             case ReentrantContextProvider.REF_WEAK:
+1012                 refType = "weak";
+1013                 break;
+1014         }
+1015 
+1016         logInfo("=========================================================="
+1017                 + "=====================");
+1018 
+1019         logInfo("Marlin software rasterizer           = ENABLED");
+1020         logInfo("Version                              = ["
+1021                 + Version.getVersion() + "]");
+1022         logInfo("sun.java2d.renderer                  = "
+1023                 + reClass);
+1024         logInfo("sun.java2d.renderer.useThreadLocal   = "
+1025                 + USE_THREAD_LOCAL);
+1026         logInfo("sun.java2d.renderer.useRef           = "
+1027                 + refType);
+1028 
+1029         logInfo("sun.java2d.renderer.edges            = "
+1030                 + MarlinConst.INITIAL_EDGES_COUNT);
+1031         logInfo("sun.java2d.renderer.pixelsize        = "
+1032                 + MarlinConst.INITIAL_PIXEL_DIM);
+1033 
+1034         logInfo("sun.java2d.renderer.subPixel_log2_X  = "
+1035                 + MarlinConst.SUBPIXEL_LG_POSITIONS_X);
+1036         logInfo("sun.java2d.renderer.subPixel_log2_Y  = "
+1037                 + MarlinConst.SUBPIXEL_LG_POSITIONS_Y);
+1038         logInfo("sun.java2d.renderer.tileSize_log2    = "
+1039                 + MarlinConst.TILE_SIZE_LG);
+1040 
+1041         logInfo("sun.java2d.renderer.blockSize_log2   = "
+1042                 + MarlinConst.BLOCK_SIZE_LG);
+1043 
+1044         logInfo("sun.java2d.renderer.blockSize_log2   = "
+1045                 + MarlinConst.BLOCK_SIZE_LG);
+1046 
+1047         // RLE / blockFlags settings
+1048 
+1049         logInfo("sun.java2d.renderer.forceRLE         = "
+1050                 + MarlinProperties.isForceRLE());
+1051         logInfo("sun.java2d.renderer.forceNoRLE       = "
+1052                 + MarlinProperties.isForceNoRLE());
+1053         logInfo("sun.java2d.renderer.useTileFlags     = "
+1054                 + MarlinProperties.isUseTileFlags());
+1055         logInfo("sun.java2d.renderer.useTileFlags.useHeuristics = "
+1056                 + MarlinProperties.isUseTileFlagsWithHeuristics());
+1057         logInfo("sun.java2d.renderer.rleMinWidth      = "
+1058                 + MarlinCache.RLE_MIN_WIDTH);
+1059 
+1060         // optimisation parameters
+1061         logInfo("sun.java2d.renderer.useSimplifier    = "
+1062                 + MarlinConst.USE_SIMPLIFIER);
+1063 
+1064         // debugging parameters
+1065         logInfo("sun.java2d.renderer.doStats          = "
+1066                 + MarlinConst.DO_STATS);
+1067         logInfo("sun.java2d.renderer.doMonitors       = "
+1068                 + MarlinConst.DO_MONITORS);
+1069         logInfo("sun.java2d.renderer.doChecks         = "
+1070                 + MarlinConst.DO_CHECKS);
+1071 
+1072         // logging parameters
+1073         logInfo("sun.java2d.renderer.useLogger        = "
+1074                 + MarlinConst.USE_LOGGER);
+1075         logInfo("sun.java2d.renderer.logCreateContext = "
+1076                 + MarlinConst.LOG_CREATE_CONTEXT);
+1077         logInfo("sun.java2d.renderer.logUnsafeMalloc  = "
+1078                 + MarlinConst.LOG_UNSAFE_MALLOC);
+1079 
+1080         // quality settings
+1081         logInfo("Renderer settings:");
+1082         logInfo("CUB_COUNT_LG = " + Renderer.CUB_COUNT_LG);
+1083         logInfo("CUB_DEC_BND  = " + Renderer.CUB_DEC_BND);
+1084         logInfo("CUB_INC_BND  = " + Renderer.CUB_INC_BND);
+1085         logInfo("QUAD_DEC_BND = " + Renderer.QUAD_DEC_BND);
+1086 
+1087         logInfo("INITIAL_EDGES_CAPACITY               = "
+1088                 + MarlinConst.INITIAL_EDGES_CAPACITY);
+1089         logInfo("INITIAL_CROSSING_COUNT               = "
+1090                 + Renderer.INITIAL_CROSSING_COUNT);
+1091 
+1092         logInfo("=========================================================="
+1093                 + "=====================");
+1094     }
+1095 
+1096     /**
+1097      * Get the RendererContext instance dedicated to the current thread
+1098      * @return RendererContext instance
+1099      */
+1100     @SuppressWarnings({"unchecked"})
+1101     static RendererContext getRendererContext() {
+1102         final RendererContext rdrCtx = RDR_CTX_PROVIDER.acquire();
+1103         if (DO_MONITORS) {
+1104             rdrCtx.stats.mon_pre_getAATileGenerator.start();
+1105         }
+1106         return rdrCtx;
+1107     }
+1108 
+1109     /**
+1110      * Reset and return the given RendererContext instance for reuse
+1111      * @param rdrCtx RendererContext instance
+1112      */
+1113     static void returnRendererContext(final RendererContext rdrCtx) {
+1114         rdrCtx.dispose();
+1115 
+1116         if (DO_MONITORS) {
+1117             rdrCtx.stats.mon_pre_getAATileGenerator.stop();
+1118         }
+1119         RDR_CTX_PROVIDER.release(rdrCtx);
+1120     }
+1121 }
+</pre></body></html>

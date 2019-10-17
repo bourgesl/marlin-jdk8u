@@ -1,0 +1,295 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinProperties.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Renderer.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -45,11 +45,42 @@</span>
+  * Marlin RendererEngine implementation (derived from Pisces)
+  */
+ public class MarlinRenderingEngine extends RenderingEngine
+                                    implements MarlinConst
+ {
+<span class="removed">-    private static enum NormMode {ON_WITH_AA, ON_NO_AA, OFF}</span>
+<span class="new">+    private static enum NormMode {</span>
+<span class="new">+        ON_WITH_AA {</span>
+<span class="new">+            @Override</span>
+<span class="new">+            PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,</span>
+<span class="new">+                                                    final PathIterator src)</span>
+<span class="new">+            {</span>
+<span class="new">+                // NormalizingPathIterator NearestPixelCenter:</span>
+<span class="new">+                return rdrCtx.nPCPathIterator.init(src);</span>
+<span class="new">+            }</span>
+<span class="new">+        },</span>
+<span class="new">+        ON_NO_AA{</span>
+<span class="new">+            @Override</span>
+<span class="new">+            PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,</span>
+<span class="new">+                                                    final PathIterator src)</span>
+<span class="new">+            {</span>
+<span class="new">+                // NearestPixel NormalizingPathIterator:</span>
+<span class="new">+                return rdrCtx.nPQPathIterator.init(src);</span>
+<span class="new">+            }</span>
+<span class="new">+        },</span>
+<span class="new">+        OFF{</span>
+<span class="new">+            @Override</span>
+<span class="new">+            PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,</span>
+<span class="new">+                                                    final PathIterator src)</span>
+<span class="new">+            {</span>
+<span class="new">+                // return original path iterator if normalization is disabled:</span>
+<span class="new">+                return src;</span>
+<span class="new">+            }</span>
+<span class="new">+        };</span>
+<span class="new">+</span>
+<span class="new">+        abstract PathIterator getNormalizingPathIterator(RendererContext rdrCtx,</span>
+<span class="new">+                                                         PathIterator src);</span>
+<span class="new">+    }</span>
+ 
+     private static final float MIN_PEN_SIZE = 1f / NORM_SUBPIXELS;
+ 
+     static final float UPPER_BND = Float.MAX_VALUE / 2.0f;
+     static final float LOWER_BND = -UPPER_BND;
+</pre><hr /><pre>
+<span class="newmarker">@@ -89,17 +120,11 @@</span>
+                                     float dashphase)
+     {
+         final RendererContext rdrCtx = getRendererContext();
+         try {
+             // initialize a large copyable Path2D to avoid a lot of array growing:
+<span class="removed">-            final Path2D.Float p2d =</span>
+<span class="removed">-                    (rdrCtx.p2d == null) ?</span>
+<span class="removed">-                    (rdrCtx.p2d = new Path2D.Float(Path2D.WIND_NON_ZERO,</span>
+<span class="removed">-                                                   INITIAL_MEDIUM_ARRAY))</span>
+<span class="removed">-                    : rdrCtx.p2d;</span>
+<span class="removed">-            // reset</span>
+<span class="removed">-            p2d.reset();</span>
+<span class="new">+            final Path2D.Float p2d = rdrCtx.getPath2D();</span>
+ 
+             strokeTo(rdrCtx,
+                      src,
+                      null,
+                      width,
+</pre><hr /><pre>
+<span class="newmarker">@@ -272,11 +297,11 @@</span>
+ 
+     final void strokeTo(final RendererContext rdrCtx,
+                         Shape src,
+                         AffineTransform at,
+                         float width,
+<span class="removed">-                        NormMode normalize,</span>
+<span class="new">+                        NormMode norm,</span>
+                         int caps,
+                         int join,
+                         float miterlimit,
+                         float[] dashes,
+                         float dashphase,
+</pre><hr /><pre>
+<span class="newmarker">@@ -336,17 +361,16 @@</span>
+                 if (dashes != null) {
+                     recycleDashes = true;
+                     dashLen = dashes.length;
+                     final float[] newDashes;
+                     if (dashLen &lt;= INITIAL_ARRAY) {
+<span class="removed">-                        newDashes = rdrCtx.dasher.dashes_initial;</span>
+<span class="new">+                        newDashes = rdrCtx.dasher.dashes_ref.initial;</span>
+                     } else {
+                         if (DO_STATS) {
+<span class="removed">-                            rdrCtx.stats.stat_array_dasher_dasher</span>
+<span class="removed">-                                .add(dashLen);</span>
+<span class="new">+                            rdrCtx.stats.stat_array_dasher_dasher.add(dashLen);</span>
+                         }
+<span class="removed">-                        newDashes = rdrCtx.getDirtyFloatArray(dashLen);</span>
+<span class="new">+                        newDashes = rdrCtx.dasher.dashes_ref.getArray(dashLen);</span>
+                     }
+                     System.arraycopy(dashes, 0, newDashes, 0, dashLen);
+                     dashes = newDashes;
+                     for (int i = 0; i &lt; dashLen; i++) {
+                         dashes[i] *= scale;
+</pre><hr /><pre>
+<span class="newmarker">@@ -398,11 +422,11 @@</span>
+             pc2d = rdrCtx.dasher.init(pc2d, dashes, dashLen, dashphase,
+                                       recycleDashes);
+         }
+         pc2d = transformerPC2D.inverseDeltaTransformConsumer(pc2d, strokerat);
+ 
+<span class="removed">-        final PathIterator pi = getNormalizingPathIterator(rdrCtx, normalize,</span>
+<span class="new">+        final PathIterator pi = norm.getNormalizingPathIterator(rdrCtx,</span>
+                                     src.getPathIterator(at));
+ 
+         pathTo(rdrCtx, pi, pc2d);
+ 
+         /*
+</pre><hr /><pre>
+<span class="newmarker">@@ -422,29 +446,10 @@</span>
+ 
+     private static boolean nearZero(final double num) {
+         return Math.abs(num) &lt; 2.0 * Math.ulp(num);
+     }
+ 
+<span class="removed">-    PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,</span>
+<span class="removed">-                                            final NormMode mode,</span>
+<span class="removed">-                                            final PathIterator src)</span>
+<span class="removed">-    {</span>
+<span class="removed">-        switch (mode) {</span>
+<span class="removed">-            case ON_WITH_AA:</span>
+<span class="removed">-                // NormalizingPathIterator NearestPixelCenter:</span>
+<span class="removed">-                return rdrCtx.nPCPathIterator.init(src);</span>
+<span class="removed">-            case ON_NO_AA:</span>
+<span class="removed">-                // NearestPixel NormalizingPathIterator:</span>
+<span class="removed">-                return rdrCtx.nPQPathIterator.init(src);</span>
+<span class="removed">-            case OFF:</span>
+<span class="removed">-                // return original path iterator if normalization is disabled:</span>
+<span class="removed">-                return src;</span>
+<span class="removed">-            default:</span>
+<span class="removed">-                throw new InternalError("Unrecognized normalization mode");</span>
+<span class="removed">-        }</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+     abstract static class NormalizingPathIterator implements PathIterator {
+ 
+         private PathIterator src;
+ 
+         // the adjustment applied to the current position.
+</pre><hr /><pre>
+<span class="newmarker">@@ -790,11 +795,11 @@</span>
+ 
+             final NormMode norm = (normalize) ? NormMode.ON_WITH_AA : NormMode.OFF;
+ 
+             if (bs == null) {
+                 // fill shape:
+<span class="removed">-                final PathIterator pi = getNormalizingPathIterator(rdrCtx, norm,</span>
+<span class="new">+                final PathIterator pi = norm.getNormalizingPathIterator(rdrCtx,</span>
+                                             s.getPathIterator(_at));
+ 
+                 // note: Winding rule may be EvenOdd ONLY for fill operations !
+                 r = rdrCtx.renderer.init(clip.getLoX(), clip.getLoY(),
+                                          clip.getWidth(), clip.getHeight(),
+</pre><hr /><pre>
+<span class="newmarker">@@ -1019,12 +1024,15 @@</span>
+         logInfo("sun.java2d.renderer.useThreadLocal   = "
+                 + USE_THREAD_LOCAL);
+         logInfo("sun.java2d.renderer.useRef           = "
+                 + refType);
+ 
+<span class="new">+        logInfo("sun.java2d.renderer.edges            = "</span>
+<span class="new">+                + MarlinConst.INITIAL_EDGES_COUNT);</span>
+         logInfo("sun.java2d.renderer.pixelsize        = "
+                 + MarlinConst.INITIAL_PIXEL_DIM);
+<span class="new">+</span>
+         logInfo("sun.java2d.renderer.subPixel_log2_X  = "
+                 + MarlinConst.SUBPIXEL_LG_POSITIONS_X);
+         logInfo("sun.java2d.renderer.subPixel_log2_Y  = "
+                 + MarlinConst.SUBPIXEL_LG_POSITIONS_Y);
+         logInfo("sun.java2d.renderer.tileSize_log2    = "
+</pre><hr /><pre>
+<span class="newmarker">@@ -1074,10 +1082,15 @@</span>
+         logInfo("CUB_COUNT_LG = " + Renderer.CUB_COUNT_LG);
+         logInfo("CUB_DEC_BND  = " + Renderer.CUB_DEC_BND);
+         logInfo("CUB_INC_BND  = " + Renderer.CUB_INC_BND);
+         logInfo("QUAD_DEC_BND = " + Renderer.QUAD_DEC_BND);
+ 
+<span class="new">+        logInfo("INITIAL_EDGES_CAPACITY               = "</span>
+<span class="new">+                + MarlinConst.INITIAL_EDGES_CAPACITY);</span>
+<span class="new">+        logInfo("INITIAL_CROSSING_COUNT               = "</span>
+<span class="new">+                + Renderer.INITIAL_CROSSING_COUNT);</span>
+<span class="new">+</span>
+         logInfo("=========================================================="
+                 + "=====================");
+     }
+ 
+     /**
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinProperties.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Renderer.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

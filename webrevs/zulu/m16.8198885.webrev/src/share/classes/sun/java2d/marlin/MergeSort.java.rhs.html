@@ -1,0 +1,345 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2009, 2018, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 /**
+  29  * MergeSort adapted from (OpenJDK 8) java.util.Array.legacyMergeSort(Object[])
+  30  * to swap two arrays at the same time (x &amp; y)
+  31  * and use external auxiliary storage for temporary arrays
+  32  */
+  33 final class MergeSort {
+  34 
+  35     // insertion sort threshold
+  36     public static final int INSERTION_SORT_THRESHOLD = 14;
+  37 
+  38     /**
+  39      * Modified merge sort:
+  40      * Input arrays are in both auxX/auxY (sorted: 0 to insertionSortIndex)
+  41      *                     and x/y (unsorted: insertionSortIndex to toIndex)
+  42      * Outputs are stored in x/y arrays
+  43      */
+  44     static void mergeSortNoCopy(final int[] x, final int[] y,
+  45                                 final int[] auxX, final int[] auxY,
+  46                                 final int toIndex,
+  47                                 final int insertionSortIndex)
+  48     {
+  49         if ((toIndex &gt; x.length) || (toIndex &gt; y.length)
+  50                 || (toIndex &gt; auxX.length) || (toIndex &gt; auxY.length)) {
+  51             // explicit check to avoid bound checks within hot loops (below):
+  52             throw new ArrayIndexOutOfBoundsException("bad arguments: toIndex="
+  53                                                      + toIndex);
+  54         }
+  55 
+  56         // sort second part only using merge / insertion sort
+  57         // in auxiliary storage (auxX/auxY)
+  58         mergeSort(x, y, x, auxX, y, auxY, insertionSortIndex, toIndex);
+  59 
+  60         // final pass to merge both
+  61         // Merge sorted parts (auxX/auxY) into x/y arrays
+  62         if ((insertionSortIndex == 0)
+  63             || (auxX[insertionSortIndex - 1] &lt;= auxX[insertionSortIndex])) {
+<a name="2" id="anc2"></a>
+  64             // 34 occurences
+  65             // no initial left part or both sublists (auxX, auxY) are sorted:
+  66             // copy back data into (x, y):
+  67             System.arraycopy(auxX, 0, x, 0, toIndex);
+  68             System.arraycopy(auxY, 0, y, 0, toIndex);
+  69             return;
+  70         }
+  71 
+  72         for (int i = 0, p = 0, q = insertionSortIndex; i &lt; toIndex; i++) {
+  73             if ((q &gt;= toIndex) || ((p &lt; insertionSortIndex)
+  74                                    &amp;&amp; (auxX[p] &lt;= auxX[q]))) {
+  75                 x[i] = auxX[p];
+  76                 y[i] = auxY[p];
+  77                 p++;
+  78             } else {
+  79                 x[i] = auxX[q];
+  80                 y[i] = auxY[q];
+  81                 q++;
+  82             }
+  83         }
+  84     }
+  85 
+  86     /**
+  87      * Src is the source array that starts at index 0
+  88      * Dest is the (possibly larger) array destination with a possible offset
+  89      * low is the index in dest to start sorting
+  90      * high is the end index in dest to end sorting
+  91      */
+  92     private static void mergeSort(final int[] refX, final int[] refY,
+  93                                   final int[] srcX, final int[] dstX,
+  94                                   final int[] srcY, final int[] dstY,
+  95                                   final int low, final int high)
+  96     {
+  97         final int length = high - low;
+  98 
+  99         /*
+ 100          * Tuning parameter: list size at or below which insertion sort
+ 101          * will be used in preference to mergesort.
+ 102          */
+ 103         if (length &lt;= INSERTION_SORT_THRESHOLD) {
+ 104             // Insertion sort on smallest arrays
+ 105             dstX[low] = refX[low];
+ 106             dstY[low] = refY[low];
+ 107 
+ 108             for (int i = low + 1, j = low, x, y; i &lt; high; j = i++) {
+ 109                 x = refX[i];
+ 110                 y = refY[i];
+ 111 
+ 112                 while (dstX[j] &gt; x) {
+ 113                     // swap element
+ 114                     dstX[j + 1] = dstX[j];
+ 115                     dstY[j + 1] = dstY[j];
+ 116                     if (j-- == low) {
+ 117                         break;
+ 118                     }
+ 119                 }
+ 120                 dstX[j + 1] = x;
+ 121                 dstY[j + 1] = y;
+ 122             }
+ 123             return;
+ 124         }
+ 125 
+ 126         // Recursively sort halves of dest into src
+ 127 
+ 128         // note: use signed shift (not &gt;&gt;&gt;) for performance
+ 129         // as indices are small enough to exceed Integer.MAX_VALUE
+ 130         final int mid = (low + high) &gt;&gt; 1;
+ 131 
+ 132         mergeSort(refX, refY, dstX, srcX, dstY, srcY, low, mid);
+ 133         mergeSort(refX, refY, dstX, srcX, dstY, srcY, mid, high);
+ 134 
+ 135         // If arrays are inverted ie all(A) &gt; all(B) do swap A and B to dst
+ 136         if (srcX[high - 1] &lt;= srcX[low]) {
+<a name="3" id="anc3"></a>
+ 137             // 1561 occurences
+ 138             final int left = mid - low;
+ 139             final int right = high - mid;
+ 140             final int off = (left != right) ? 1 : 0;
+ 141             // swap parts:
+ 142             System.arraycopy(srcX, low, dstX, mid + off, left);
+ 143             System.arraycopy(srcX, mid, dstX, low, right);
+ 144             System.arraycopy(srcY, low, dstY, mid + off, left);
+ 145             System.arraycopy(srcY, mid, dstY, low, right);
+ 146             return;
+ 147         }
+ 148 
+ 149         // If arrays are already sorted, just copy from src to dest.  This is an
+ 150         // optimization that results in faster sorts for nearly ordered lists.
+ 151         if (srcX[mid - 1] &lt;= srcX[mid]) {
+<a name="4" id="anc4"></a>
+ 152             // 14 occurences
+ 153             System.arraycopy(srcX, low, dstX, low, length);
+ 154             System.arraycopy(srcY, low, dstY, low, length);
+ 155             return;
+ 156         }
+ 157 
+ 158         // Merge sorted halves (now in src) into dest
+ 159         for (int i = low, p = low, q = mid; i &lt; high; i++) {
+ 160             if ((q &gt;= high) || ((p &lt; mid) &amp;&amp; (srcX[p] &lt;= srcX[q]))) {
+ 161                 dstX[i] = srcX[p];
+ 162                 dstY[i] = srcY[p];
+ 163                 p++;
+ 164             } else {
+ 165                 dstX[i] = srcX[q];
+ 166                 dstY[i] = srcY[q];
+ 167                 q++;
+ 168             }
+ 169         }
+ 170     }
+ 171 
+ 172     private MergeSort() {
+ 173     }
+ 174 }
+<a name="5" id="anc5"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="5" type="hidden" /></form></body></html>

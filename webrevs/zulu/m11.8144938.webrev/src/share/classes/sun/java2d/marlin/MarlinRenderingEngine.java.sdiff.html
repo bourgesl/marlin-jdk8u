@@ -1,0 +1,871 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13690">13690</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8144938">8144938</a>: Handle properly coordinate overflow in Marlin Renderer
+Summary: skip point coordinates with NaN/Infinity values
+Reviewed-by: flar, prr</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  34 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  35 import sun.awt.geom.PathConsumer2D;
+  36 import sun.java2d.ReentrantContextProvider;
+  37 import sun.java2d.ReentrantContextProviderCLQ;
+  38 import sun.java2d.ReentrantContextProviderTL;
+  39 import sun.java2d.pipe.AATileGenerator;
+  40 import sun.java2d.pipe.Region;
+  41 import sun.java2d.pipe.RenderingEngine;
+  42 import sun.security.action.GetPropertyAction;
+  43 
+  44 /**
+  45  * Marlin RendererEngine implementation (derived from Pisces)
+  46  */
+  47 public class MarlinRenderingEngine extends RenderingEngine
+  48                                    implements MarlinConst
+  49 {
+  50     private static enum NormMode {ON_WITH_AA, ON_NO_AA, OFF}
+  51 
+  52     private static final float MIN_PEN_SIZE = 1f / NORM_SUBPIXELS;
+  53 
+
+
+
+  54     /**
+  55      * Public constructor
+  56      */
+  57     public MarlinRenderingEngine() {
+  58         super();
+  59         logSettings(MarlinRenderingEngine.class.getName());
+  60     }
+  61 
+  62     /**
+  63      * Create a widened path as specified by the parameters.
+  64      * &lt;p&gt;
+  65      * The specified {@code src} {@link Shape} is widened according
+  66      * to the specified attribute parameters as per the
+  67      * {@link BasicStroke} specification.
+  68      *
+  69      * @param src the source path to be widened
+  70      * @param width the width of the widened path as per {@code BasicStroke}
+  71      * @param caps the end cap decorations as per {@code BasicStroke}
+  72      * @param join the segment join decorations as per {@code BasicStroke}
+  73      * @param miterlimit the miter limit as per {@code BasicStroke}
+
+</pre><hr></hr><pre>
+ 262             double widthsquared = ((EA + EC + hypot)/2.0);
+ 263 
+ 264             widthScale = (float)Math.sqrt(widthsquared);
+ 265         }
+ 266 
+ 267         return (lw / widthScale);
+ 268     }
+ 269 
+ 270     final void strokeTo(final RendererContext rdrCtx,
+ 271                         Shape src,
+ 272                         AffineTransform at,
+ 273                         float width,
+ 274                         NormMode normalize,
+ 275                         int caps,
+ 276                         int join,
+ 277                         float miterlimit,
+ 278                         float dashes[],
+ 279                         float dashphase,
+ 280                         PathConsumer2D pc2d)
+ 281     {
+<span class="changed"> 282         // We use strokerat and outat so that in Stroker and Dasher we can work only</span>
+ 283         // with the pre-transformation coordinates. This will repeat a lot of
+ 284         // computations done in the path iterator, but the alternative is to
+ 285         // work with transformed paths and compute untransformed coordinates
+ 286         // as needed. This would be faster but I do not think the complexity
+ 287         // of working with both untransformed and transformed coordinates in
+ 288         // the same code is worth it.
+ 289         // However, if a path's width is constant after a transformation,
+ 290         // we can skip all this untransforming.
+ 291 
+<span class="changed"> 292         // If normalization is off we save some transformations by not</span>
+<span class="changed"> 293         // transforming the input to pisces. Instead, we apply the</span>
+<span class="changed"> 294         // transformation after the path processing has been done.</span>
+<span class="changed"> 295         // We can't do this if normalization is on, because it isn't a good</span>
+<span class="changed"> 296         // idea to normalize before the transformation is applied.</span>
+ 297         AffineTransform strokerat = null;
+<span class="removed"> 298         AffineTransform outat = null;</span>
+ 299 
+<span class="removed"> 300         PathIterator pi;</span>
+ 301         int dashLen = -1;
+ 302         boolean recycleDashes = false;
+ 303 
+ 304         if (at != null &amp;&amp; !at.isIdentity()) {
+ 305             final double a = at.getScaleX();
+ 306             final double b = at.getShearX();
+ 307             final double c = at.getShearY();
+ 308             final double d = at.getScaleY();
+ 309             final double det = a * d - c * b;
+ 310 
+ 311             if (Math.abs(det) &lt;= (2f * Float.MIN_VALUE)) {
+ 312                 // this rendering engine takes one dimensional curves and turns
+ 313                 // them into 2D shapes by giving them width.
+ 314                 // However, if everything is to be passed through a singular
+ 315                 // transformation, these 2D shapes will be squashed down to 1D
+ 316                 // again so, nothing can be drawn.
+ 317 
+ 318                 // Every path needs an initial moveTo and a pathDone. If these
+ 319                 // are not there this causes a SIGSEGV in libawt.so (at the time
+ 320                 // of writing of this comment (September 16, 2010)). Actually,
+ 321                 // I am not sure if the moveTo is necessary to avoid the SIGSEGV
+ 322                 // but the pathDone is definitely needed.
+ 323                 pc2d.moveTo(0f, 0f);
+ 324                 pc2d.pathDone();
+ 325                 return;
+ 326             }
+ 327 
+ 328             // If the transform is a constant multiple of an orthogonal transformation
+ 329             // then every length is just multiplied by a constant, so we just
+ 330             // need to transform input paths to stroker and tell stroker
+ 331             // the scaled width. This condition is satisfied if
+ 332             // a*b == -c*d &amp;&amp; a*a+c*c == b*b+d*d. In the actual check below, we
+ 333             // leave a bit of room for error.
+ 334             if (nearZero(a*b + c*d) &amp;&amp; nearZero(a*a + c*c - (b*b + d*d))) {
+ 335                 final float scale = (float) Math.sqrt(a*a + c*c);
+
+ 336                 if (dashes != null) {
+ 337                     recycleDashes = true;
+ 338                     dashLen = dashes.length;
+ 339                     final float[] newDashes;
+ 340                     if (dashLen &lt;= INITIAL_ARRAY) {
+ 341                         newDashes = rdrCtx.dasher.dashes_initial;
+ 342                     } else {
+ 343                         if (doStats) {
+ 344                             RendererContext.stats.stat_array_dasher_dasher
+ 345                                 .add(dashLen);
+ 346                         }
+ 347                         newDashes = rdrCtx.getDirtyFloatArray(dashLen);
+ 348                     }
+ 349                     System.arraycopy(dashes, 0, newDashes, 0, dashLen);
+ 350                     dashes = newDashes;
+ 351                     for (int i = 0; i &lt; dashLen; i++) {
+<span class="changed"> 352                         dashes[i] = scale * dashes[i];</span>
+ 353                     }
+<span class="changed"> 354                     dashphase = scale * dashphase;</span>
+ 355                 }
+<span class="changed"> 356                 width = scale * width;</span>
+<span class="changed"> 357                 pi = getNormalizingPathIterator(rdrCtx, normalize,</span>
+<span class="changed"> 358                                                 src.getPathIterator(at));</span>
+ 359 
+<span class="changed"> 360                 // by now strokerat == null &amp;&amp; outat == null. Input paths to</span>
+ 361                 // stroker (and maybe dasher) will have the full transform at
+ 362                 // applied to them and nothing will happen to the output paths.
+ 363             } else {
+<span class="removed"> 364                 if (normalize != NormMode.OFF) {</span>
+ 365                     strokerat = at;
+<span class="removed"> 366                     pi = getNormalizingPathIterator(rdrCtx, normalize,</span>
+<span class="removed"> 367                                                     src.getPathIterator(at));</span>
+ 368 
+<span class="changed"> 369                     // by now strokerat == at &amp;&amp; outat == null. Input paths to</span>
+ 370                     // stroker (and maybe dasher) will have the full transform at
+ 371                     // applied to them, then they will be normalized, and then
+ 372                     // the inverse of *only the non translation part of at* will
+ 373                     // be applied to the normalized paths. This won't cause problems
+ 374                     // in stroker, because, suppose at = T*A, where T is just the
+ 375                     // translation part of at, and A is the rest. T*A has already
+ 376                     // been applied to Stroker/Dasher's input. Then Ainv will be
+ 377                     // applied. Ainv*T*A is not equal to T, but it is a translation,
+ 378                     // which means that none of stroker's assumptions about its
+ 379                     // input will be violated. After all this, A will be applied
+ 380                     // to stroker's output.
+<span class="removed"> 381                 } else {</span>
+<span class="removed"> 382                     outat = at;</span>
+<span class="removed"> 383                     pi = src.getPathIterator(null);</span>
+<span class="removed"> 384                     // outat == at &amp;&amp; strokerat == null. This is because if no</span>
+<span class="removed"> 385                     // normalization is done, we can just apply all our</span>
+<span class="removed"> 386                     // transformations to stroker's output.</span>
+<span class="removed"> 387                 }</span>
+ 388             }
+ 389         } else {
+ 390             // either at is null or it's the identity. In either case
+ 391             // we don't transform the path.
+<span class="changed"> 392             pi = getNormalizingPathIterator(rdrCtx, normalize,</span>
+<span class="changed"> 393                                             src.getPathIterator(null));</span>
+ 394         }
+ 395 
+ 396         if (useSimplifier) {
+ 397             // Use simplifier after stroker before Renderer
+ 398             // to remove collinear segments (notably due to cap square)
+ 399             pc2d = rdrCtx.simplifier.init(pc2d);
+ 400         }
+ 401 
+<span class="removed"> 402         // by now, at least one of outat and strokerat will be null. Unless at is not</span>
+<span class="removed"> 403         // a constant multiple of an orthogonal transformation, they will both be</span>
+<span class="removed"> 404         // null. In other cases, outat == at if normalization is off, and if</span>
+<span class="removed"> 405         // normalization is on, strokerat == at.</span>
+ 406         final TransformingPathConsumer2D transformerPC2D = rdrCtx.transformerPC2D;
+<span class="removed"> 407         pc2d = transformerPC2D.transformConsumer(pc2d, outat);</span>
+ 408         pc2d = transformerPC2D.deltaTransformConsumer(pc2d, strokerat);
+ 409 
+ 410         pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit);
+ 411 
+ 412         if (dashes != null) {
+ 413             if (!recycleDashes) {
+ 414                 dashLen = dashes.length;
+ 415             }
+ 416             pc2d = rdrCtx.dasher.init(pc2d, dashes, dashLen, dashphase,
+ 417                                       recycleDashes);
+ 418         }
+ 419         pc2d = transformerPC2D.inverseDeltaTransformConsumer(pc2d, strokerat);
+
+
+
+
+ 420         pathTo(rdrCtx, pi, pc2d);
+ 421 
+ 422         /*
+ 423          * Pipeline seems to be:
+<span class="changed"> 424          *    shape.getPathIterator</span>
+<span class="changed"> 425          * -&gt; NormalizingPathIterator</span>
+<span class="changed"> 426          * -&gt; inverseDeltaTransformConsumer</span>
+<span class="changed"> 427          * -&gt; Dasher</span>
+ 428          * -&gt; Stroker
+<span class="changed"> 429          * -&gt; deltaTransformConsumer OR transformConsumer</span>
+ 430          *
+<span class="changed"> 431          * -&gt; CollinearSimplifier to remove redundant segments</span>
+ 432          *
+ 433          * -&gt; pc2d = Renderer (bounding box)
+ 434          */
+ 435     }
+ 436 
+ 437     private static boolean nearZero(final double num) {
+ 438         return Math.abs(num) &lt; 2.0 * Math.ulp(num);
+ 439     }
+ 440 
+ 441     PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,
+ 442                                             final NormMode mode,
+ 443                                             final PathIterator src)
+ 444     {
+ 445         switch (mode) {
+ 446             case ON_WITH_AA:
+ 447                 // NormalizingPathIterator NearestPixelCenter:
+ 448                 return rdrCtx.nPCPathIterator.init(src);
+ 449             case ON_NO_AA:
+ 450                 // NearestPixel NormalizingPathIterator:
+ 451                 return rdrCtx.nPQPathIterator.init(src);
+
+</pre><hr></hr><pre>
+ 625         }
+ 626     }
+ 627 
+ 628     private static void pathTo(final RendererContext rdrCtx, final PathIterator pi,
+ 629                                final PathConsumer2D pc2d)
+ 630     {
+ 631         // mark context as DIRTY:
+ 632         rdrCtx.dirty = true;
+ 633 
+ 634         final float[] coords = rdrCtx.float6;
+ 635 
+ 636         pathToLoop(coords, pi, pc2d);
+ 637 
+ 638         // mark context as CLEAN:
+ 639         rdrCtx.dirty = false;
+ 640     }
+ 641 
+ 642     private static void pathToLoop(final float[] coords, final PathIterator pi,
+ 643                                    final PathConsumer2D pc2d)
+ 644     {
+
+
+
+
+
+ 645         for (; !pi.isDone(); pi.next()) {
+ 646             switch (pi.currentSegment(coords)) {
+ 647                 case PathIterator.SEG_MOVETO:
+
+
+
+
+
+
+
+
+ 648                     pc2d.moveTo(coords[0], coords[1]);
+<span class="changed"> 649                     continue;</span>
+
+
+ 650                 case PathIterator.SEG_LINETO:
+
+
+
+
+
+
+
+
+
+
+ 651                     pc2d.lineTo(coords[0], coords[1]);
+<span class="changed"> 652                     continue;</span>
+
+
+
+
+
+ 653                 case PathIterator.SEG_QUADTO:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 654                     pc2d.quadTo(coords[0], coords[1],
+ 655                                 coords[2], coords[3]);
+<span class="changed"> 656                     continue;</span>
+
+
+
+
+
+
+
+
+ 657                 case PathIterator.SEG_CUBICTO:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 658                     pc2d.curveTo(coords[0], coords[1],
+ 659                                  coords[2], coords[3],
+ 660                                  coords[4], coords[5]);
+<span class="changed"> 661                     continue;</span>
+
+
+
+
+
+
+
+
+ 662                 case PathIterator.SEG_CLOSE:
+
+ 663                     pc2d.closePath();
+<span class="changed"> 664                     continue;</span>
+
+
+
+ 665                 default:
+ 666             }
+ 667         }
+ 668         pc2d.pathDone();
+ 669     }
+ 670 
+ 671     /**
+ 672      * Construct an antialiased tile generator for the given shape with
+ 673      * the given rendering attributes and store the bounds of the tile
+ 674      * iteration in the bbox parameter.
+ 675      * The {@code at} parameter specifies a transform that should affect
+ 676      * both the shape and the {@code BasicStroke} attributes.
+ 677      * The {@code clip} parameter specifies the current clip in effect
+ 678      * in device coordinates and can be used to prune the data for the
+ 679      * operation, but the renderer is not required to perform any
+ 680      * clipping.
+ 681      * If the {@code BasicStroke} parameter is null then the shape
+ 682      * should be filled as is, otherwise the attributes of the
+ 683      * {@code BasicStroke} should be used to specify a draw operation.
+ 684      * The {@code thin} parameter indicates whether or not the
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  34 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  35 import sun.awt.geom.PathConsumer2D;
+  36 import sun.java2d.ReentrantContextProvider;
+  37 import sun.java2d.ReentrantContextProviderCLQ;
+  38 import sun.java2d.ReentrantContextProviderTL;
+  39 import sun.java2d.pipe.AATileGenerator;
+  40 import sun.java2d.pipe.Region;
+  41 import sun.java2d.pipe.RenderingEngine;
+  42 import sun.security.action.GetPropertyAction;
+  43 
+  44 /**
+  45  * Marlin RendererEngine implementation (derived from Pisces)
+  46  */
+  47 public class MarlinRenderingEngine extends RenderingEngine
+  48                                    implements MarlinConst
+  49 {
+  50     private static enum NormMode {ON_WITH_AA, ON_NO_AA, OFF}
+  51 
+  52     private static final float MIN_PEN_SIZE = 1f / NORM_SUBPIXELS;
+  53 
+<span class="new">  54     static final float UPPER_BND = Float.MAX_VALUE / 2.0f;</span>
+<span class="new">  55     static final float LOWER_BND = -UPPER_BND;</span>
+<span class="new">  56 </span>
+  57     /**
+  58      * Public constructor
+  59      */
+  60     public MarlinRenderingEngine() {
+  61         super();
+  62         logSettings(MarlinRenderingEngine.class.getName());
+  63     }
+  64 
+  65     /**
+  66      * Create a widened path as specified by the parameters.
+  67      * &lt;p&gt;
+  68      * The specified {@code src} {@link Shape} is widened according
+  69      * to the specified attribute parameters as per the
+  70      * {@link BasicStroke} specification.
+  71      *
+  72      * @param src the source path to be widened
+  73      * @param width the width of the widened path as per {@code BasicStroke}
+  74      * @param caps the end cap decorations as per {@code BasicStroke}
+  75      * @param join the segment join decorations as per {@code BasicStroke}
+  76      * @param miterlimit the miter limit as per {@code BasicStroke}
+
+</pre><hr></hr><pre>
+ 265             double widthsquared = ((EA + EC + hypot)/2.0);
+ 266 
+ 267             widthScale = (float)Math.sqrt(widthsquared);
+ 268         }
+ 269 
+ 270         return (lw / widthScale);
+ 271     }
+ 272 
+ 273     final void strokeTo(final RendererContext rdrCtx,
+ 274                         Shape src,
+ 275                         AffineTransform at,
+ 276                         float width,
+ 277                         NormMode normalize,
+ 278                         int caps,
+ 279                         int join,
+ 280                         float miterlimit,
+ 281                         float dashes[],
+ 282                         float dashphase,
+ 283                         PathConsumer2D pc2d)
+ 284     {
+<span class="changed"> 285         // We use strokerat so that in Stroker and Dasher we can work only</span>
+ 286         // with the pre-transformation coordinates. This will repeat a lot of
+ 287         // computations done in the path iterator, but the alternative is to
+ 288         // work with transformed paths and compute untransformed coordinates
+ 289         // as needed. This would be faster but I do not think the complexity
+ 290         // of working with both untransformed and transformed coordinates in
+ 291         // the same code is worth it.
+ 292         // However, if a path's width is constant after a transformation,
+ 293         // we can skip all this untransforming.
+ 294 
+<span class="changed"> 295         // As pathTo() will check transformed coordinates for invalid values</span>
+<span class="changed"> 296         // (NaN / Infinity) to ignore such points, it is necessary to apply the</span>
+<span class="changed"> 297         // transformation before the path processing.</span>
+
+
+ 298         AffineTransform strokerat = null;
+
+ 299 
+
+ 300         int dashLen = -1;
+ 301         boolean recycleDashes = false;
+ 302 
+ 303         if (at != null &amp;&amp; !at.isIdentity()) {
+ 304             final double a = at.getScaleX();
+ 305             final double b = at.getShearX();
+ 306             final double c = at.getShearY();
+ 307             final double d = at.getScaleY();
+ 308             final double det = a * d - c * b;
+ 309 
+ 310             if (Math.abs(det) &lt;= (2f * Float.MIN_VALUE)) {
+ 311                 // this rendering engine takes one dimensional curves and turns
+ 312                 // them into 2D shapes by giving them width.
+ 313                 // However, if everything is to be passed through a singular
+ 314                 // transformation, these 2D shapes will be squashed down to 1D
+ 315                 // again so, nothing can be drawn.
+ 316 
+ 317                 // Every path needs an initial moveTo and a pathDone. If these
+ 318                 // are not there this causes a SIGSEGV in libawt.so (at the time
+ 319                 // of writing of this comment (September 16, 2010)). Actually,
+ 320                 // I am not sure if the moveTo is necessary to avoid the SIGSEGV
+ 321                 // but the pathDone is definitely needed.
+ 322                 pc2d.moveTo(0f, 0f);
+ 323                 pc2d.pathDone();
+ 324                 return;
+ 325             }
+ 326 
+ 327             // If the transform is a constant multiple of an orthogonal transformation
+ 328             // then every length is just multiplied by a constant, so we just
+ 329             // need to transform input paths to stroker and tell stroker
+ 330             // the scaled width. This condition is satisfied if
+ 331             // a*b == -c*d &amp;&amp; a*a+c*c == b*b+d*d. In the actual check below, we
+ 332             // leave a bit of room for error.
+ 333             if (nearZero(a*b + c*d) &amp;&amp; nearZero(a*a + c*c - (b*b + d*d))) {
+ 334                 final float scale = (float) Math.sqrt(a*a + c*c);
+<span class="new"> 335 </span>
+ 336                 if (dashes != null) {
+ 337                     recycleDashes = true;
+ 338                     dashLen = dashes.length;
+ 339                     final float[] newDashes;
+ 340                     if (dashLen &lt;= INITIAL_ARRAY) {
+ 341                         newDashes = rdrCtx.dasher.dashes_initial;
+ 342                     } else {
+ 343                         if (doStats) {
+ 344                             RendererContext.stats.stat_array_dasher_dasher
+ 345                                 .add(dashLen);
+ 346                         }
+ 347                         newDashes = rdrCtx.getDirtyFloatArray(dashLen);
+ 348                     }
+ 349                     System.arraycopy(dashes, 0, newDashes, 0, dashLen);
+ 350                     dashes = newDashes;
+ 351                     for (int i = 0; i &lt; dashLen; i++) {
+<span class="changed"> 352                         dashes[i] *= scale;</span>
+ 353                     }
+<span class="changed"> 354                     dashphase *= scale;</span>
+ 355                 }
+<span class="changed"> 356                 width *= scale;</span>
+
+
+ 357 
+<span class="changed"> 358                 // by now strokerat == null. Input paths to</span>
+ 359                 // stroker (and maybe dasher) will have the full transform at
+ 360                 // applied to them and nothing will happen to the output paths.
+ 361             } else {
+
+ 362                 strokerat = at;
+
+
+ 363 
+<span class="changed"> 364                 // by now strokerat == at. Input paths to</span>
+ 365                 // stroker (and maybe dasher) will have the full transform at
+ 366                 // applied to them, then they will be normalized, and then
+ 367                 // the inverse of *only the non translation part of at* will
+ 368                 // be applied to the normalized paths. This won't cause problems
+ 369                 // in stroker, because, suppose at = T*A, where T is just the
+ 370                 // translation part of at, and A is the rest. T*A has already
+ 371                 // been applied to Stroker/Dasher's input. Then Ainv will be
+ 372                 // applied. Ainv*T*A is not equal to T, but it is a translation,
+ 373                 // which means that none of stroker's assumptions about its
+ 374                 // input will be violated. After all this, A will be applied
+ 375                 // to stroker's output.
+
+
+
+
+
+
+
+ 376             }
+ 377         } else {
+ 378             // either at is null or it's the identity. In either case
+ 379             // we don't transform the path.
+<span class="changed"> 380             at = null;</span>
+
+ 381         }
+ 382 
+ 383         if (useSimplifier) {
+ 384             // Use simplifier after stroker before Renderer
+ 385             // to remove collinear segments (notably due to cap square)
+ 386             pc2d = rdrCtx.simplifier.init(pc2d);
+ 387         }
+ 388 
+
+
+
+
+ 389         final TransformingPathConsumer2D transformerPC2D = rdrCtx.transformerPC2D;
+
+ 390         pc2d = transformerPC2D.deltaTransformConsumer(pc2d, strokerat);
+ 391 
+ 392         pc2d = rdrCtx.stroker.init(pc2d, width, caps, join, miterlimit);
+ 393 
+ 394         if (dashes != null) {
+ 395             if (!recycleDashes) {
+ 396                 dashLen = dashes.length;
+ 397             }
+ 398             pc2d = rdrCtx.dasher.init(pc2d, dashes, dashLen, dashphase,
+ 399                                       recycleDashes);
+ 400         }
+ 401         pc2d = transformerPC2D.inverseDeltaTransformConsumer(pc2d, strokerat);
+<span class="new"> 402 </span>
+<span class="new"> 403         final PathIterator pi = getNormalizingPathIterator(rdrCtx, normalize,</span>
+<span class="new"> 404                                     src.getPathIterator(at));</span>
+<span class="new"> 405 </span>
+ 406         pathTo(rdrCtx, pi, pc2d);
+ 407 
+ 408         /*
+ 409          * Pipeline seems to be:
+<span class="changed"> 410          * shape.getPathIterator(at)</span>
+<span class="changed"> 411          * -&gt; (NormalizingPathIterator)</span>
+<span class="changed"> 412          * -&gt; (inverseDeltaTransformConsumer)</span>
+<span class="changed"> 413          * -&gt; (Dasher)</span>
+ 414          * -&gt; Stroker
+<span class="changed"> 415          * -&gt; (deltaTransformConsumer)</span>
+ 416          *
+<span class="changed"> 417          * -&gt; (CollinearSimplifier) to remove redundant segments</span>
+ 418          *
+ 419          * -&gt; pc2d = Renderer (bounding box)
+ 420          */
+ 421     }
+ 422 
+ 423     private static boolean nearZero(final double num) {
+ 424         return Math.abs(num) &lt; 2.0 * Math.ulp(num);
+ 425     }
+ 426 
+ 427     PathIterator getNormalizingPathIterator(final RendererContext rdrCtx,
+ 428                                             final NormMode mode,
+ 429                                             final PathIterator src)
+ 430     {
+ 431         switch (mode) {
+ 432             case ON_WITH_AA:
+ 433                 // NormalizingPathIterator NearestPixelCenter:
+ 434                 return rdrCtx.nPCPathIterator.init(src);
+ 435             case ON_NO_AA:
+ 436                 // NearestPixel NormalizingPathIterator:
+ 437                 return rdrCtx.nPQPathIterator.init(src);
+
+</pre><hr></hr><pre>
+ 611         }
+ 612     }
+ 613 
+ 614     private static void pathTo(final RendererContext rdrCtx, final PathIterator pi,
+ 615                                final PathConsumer2D pc2d)
+ 616     {
+ 617         // mark context as DIRTY:
+ 618         rdrCtx.dirty = true;
+ 619 
+ 620         final float[] coords = rdrCtx.float6;
+ 621 
+ 622         pathToLoop(coords, pi, pc2d);
+ 623 
+ 624         // mark context as CLEAN:
+ 625         rdrCtx.dirty = false;
+ 626     }
+ 627 
+ 628     private static void pathToLoop(final float[] coords, final PathIterator pi,
+ 629                                    final PathConsumer2D pc2d)
+ 630     {
+<span class="new"> 631         // ported from DuctusRenderingEngine.feedConsumer() but simplified:</span>
+<span class="new"> 632         // - removed skip flag = !subpathStarted</span>
+<span class="new"> 633         // - removed pathClosed (ie subpathStarted not set to false)</span>
+<span class="new"> 634         boolean subpathStarted = false;</span>
+<span class="new"> 635 </span>
+ 636         for (; !pi.isDone(); pi.next()) {
+ 637             switch (pi.currentSegment(coords)) {
+ 638             case PathIterator.SEG_MOVETO:
+<span class="new"> 639                 /* Checking SEG_MOVETO coordinates if they are out of the</span>
+<span class="new"> 640                  * [LOWER_BND, UPPER_BND] range. This check also handles NaN</span>
+<span class="new"> 641                  * and Infinity values. Skipping next path segment in case of</span>
+<span class="new"> 642                  * invalid data.</span>
+<span class="new"> 643                  */</span>
+<span class="new"> 644                 if (coords[0] &lt; UPPER_BND &amp;&amp; coords[0] &gt; LOWER_BND &amp;&amp;</span>
+<span class="new"> 645                     coords[1] &lt; UPPER_BND &amp;&amp; coords[1] &gt; LOWER_BND)</span>
+<span class="new"> 646                 {</span>
+ 647                     pc2d.moveTo(coords[0], coords[1]);
+<span class="changed"> 648                     subpathStarted = true;</span>
+<span class="changed"> 649                 }</span>
+<span class="changed"> 650                 break;</span>
+ 651             case PathIterator.SEG_LINETO:
+<span class="new"> 652                 /* Checking SEG_LINETO coordinates if they are out of the</span>
+<span class="new"> 653                  * [LOWER_BND, UPPER_BND] range. This check also handles NaN</span>
+<span class="new"> 654                  * and Infinity values. Ignoring current path segment in case</span>
+<span class="new"> 655                  * of invalid data. If segment is skipped its endpoint</span>
+<span class="new"> 656                  * (if valid) is used to begin new subpath.</span>
+<span class="new"> 657                  */</span>
+<span class="new"> 658                 if (coords[0] &lt; UPPER_BND &amp;&amp; coords[0] &gt; LOWER_BND &amp;&amp;</span>
+<span class="new"> 659                     coords[1] &lt; UPPER_BND &amp;&amp; coords[1] &gt; LOWER_BND)</span>
+<span class="new"> 660                 {</span>
+<span class="new"> 661                     if (subpathStarted) {</span>
+ 662                         pc2d.lineTo(coords[0], coords[1]);
+<span class="changed"> 663                     } else {</span>
+<span class="changed"> 664                         pc2d.moveTo(coords[0], coords[1]);</span>
+<span class="changed"> 665                         subpathStarted = true;</span>
+<span class="changed"> 666                     }</span>
+<span class="changed"> 667                 }</span>
+<span class="changed"> 668                 break;</span>
+ 669             case PathIterator.SEG_QUADTO:
+<span class="new"> 670                 // Quadratic curves take two points</span>
+<span class="new"> 671                 /* Checking SEG_QUADTO coordinates if they are out of the</span>
+<span class="new"> 672                  * [LOWER_BND, UPPER_BND] range. This check also handles NaN</span>
+<span class="new"> 673                  * and Infinity values. Ignoring current path segment in case</span>
+<span class="new"> 674                  * of invalid endpoints's data. Equivalent to the SEG_LINETO</span>
+<span class="new"> 675                  * if endpoint coordinates are valid but there are invalid data</span>
+<span class="new"> 676                  * among other coordinates</span>
+<span class="new"> 677                  */</span>
+<span class="new"> 678                 if (coords[2] &lt; UPPER_BND &amp;&amp; coords[2] &gt; LOWER_BND &amp;&amp;</span>
+<span class="new"> 679                     coords[3] &lt; UPPER_BND &amp;&amp; coords[3] &gt; LOWER_BND)</span>
+<span class="new"> 680                 {</span>
+<span class="new"> 681                     if (subpathStarted) {</span>
+<span class="new"> 682                         if (coords[0] &lt; UPPER_BND &amp;&amp; coords[0] &gt; LOWER_BND &amp;&amp;</span>
+<span class="new"> 683                             coords[1] &lt; UPPER_BND &amp;&amp; coords[1] &gt; LOWER_BND)</span>
+<span class="new"> 684                         {</span>
+ 685                             pc2d.quadTo(coords[0], coords[1],
+ 686                                         coords[2], coords[3]);
+<span class="changed"> 687                         } else {</span>
+<span class="changed"> 688                             pc2d.lineTo(coords[2], coords[3]);</span>
+<span class="changed"> 689                         }</span>
+<span class="changed"> 690                     } else {</span>
+<span class="changed"> 691                         pc2d.moveTo(coords[2], coords[3]);</span>
+<span class="changed"> 692                         subpathStarted = true;</span>
+<span class="changed"> 693                     }</span>
+<span class="changed"> 694                 }</span>
+<span class="changed"> 695                 break;</span>
+ 696             case PathIterator.SEG_CUBICTO:
+<span class="new"> 697                 // Cubic curves take three points</span>
+<span class="new"> 698                 /* Checking SEG_CUBICTO coordinates if they are out of the</span>
+<span class="new"> 699                  * [LOWER_BND, UPPER_BND] range. This check also handles NaN</span>
+<span class="new"> 700                  * and Infinity values. Ignoring current path segment in case</span>
+<span class="new"> 701                  * of invalid endpoints's data. Equivalent to the SEG_LINETO</span>
+<span class="new"> 702                  * if endpoint coordinates are valid but there are invalid data</span>
+<span class="new"> 703                  * among other coordinates</span>
+<span class="new"> 704                  */</span>
+<span class="new"> 705                 if (coords[4] &lt; UPPER_BND &amp;&amp; coords[4] &gt; LOWER_BND &amp;&amp;</span>
+<span class="new"> 706                     coords[5] &lt; UPPER_BND &amp;&amp; coords[5] &gt; LOWER_BND)</span>
+<span class="new"> 707                 {</span>
+<span class="new"> 708                     if (subpathStarted) {</span>
+<span class="new"> 709                         if (coords[0] &lt; UPPER_BND &amp;&amp; coords[0] &gt; LOWER_BND &amp;&amp;</span>
+<span class="new"> 710                             coords[1] &lt; UPPER_BND &amp;&amp; coords[1] &gt; LOWER_BND &amp;&amp;</span>
+<span class="new"> 711                             coords[2] &lt; UPPER_BND &amp;&amp; coords[2] &gt; LOWER_BND &amp;&amp;</span>
+<span class="new"> 712                             coords[3] &lt; UPPER_BND &amp;&amp; coords[3] &gt; LOWER_BND)</span>
+<span class="new"> 713                         {</span>
+ 714                             pc2d.curveTo(coords[0], coords[1],
+ 715                                          coords[2], coords[3],
+ 716                                          coords[4], coords[5]);
+<span class="changed"> 717                         } else {</span>
+<span class="changed"> 718                             pc2d.lineTo(coords[4], coords[5]);</span>
+<span class="changed"> 719                         }</span>
+<span class="changed"> 720                     } else {</span>
+<span class="changed"> 721                         pc2d.moveTo(coords[4], coords[5]);</span>
+<span class="changed"> 722                         subpathStarted = true;</span>
+<span class="changed"> 723                     }</span>
+<span class="changed"> 724                 }</span>
+<span class="changed"> 725                 break;</span>
+ 726             case PathIterator.SEG_CLOSE:
+<span class="new"> 727                 if (subpathStarted) {</span>
+ 728                     pc2d.closePath();
+<span class="changed"> 729                     // do not set subpathStarted to false</span>
+<span class="changed"> 730                     // in case of missing moveTo() after close()</span>
+<span class="changed"> 731                 }</span>
+<span class="changed"> 732                 break;</span>
+ 733             default:
+ 734             }
+ 735         }
+ 736         pc2d.pathDone();
+ 737     }
+ 738 
+ 739     /**
+ 740      * Construct an antialiased tile generator for the given shape with
+ 741      * the given rendering attributes and store the bounds of the tile
+ 742      * iteration in the bbox parameter.
+ 743      * The {@code at} parameter specifies a transform that should affect
+ 744      * both the shape and the {@code BasicStroke} attributes.
+ 745      * The {@code clip} parameter specifies the current clip in effect
+ 746      * in device coordinates and can be used to prune the data for the
+ 747      * operation, but the renderer is not required to perform any
+ 748      * clipping.
+ 749      * If the {@code BasicStroke} parameter is null then the shape
+ 750      * should be filled as is, otherwise the attributes of the
+ 751      * {@code BasicStroke} should be used to specify a draw operation.
+ 752      * The {@code thin} parameter indicates whether or not the
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center>&lt prev <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

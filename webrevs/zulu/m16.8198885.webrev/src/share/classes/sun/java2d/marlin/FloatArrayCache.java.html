@@ -1,0 +1,352 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New src/share/classes/sun/java2d/marlin/FloatArrayCache.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2015, 2018, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import static sun.java2d.marlin.ArrayCacheConst.ARRAY_SIZES;
+  29 import static sun.java2d.marlin.ArrayCacheConst.BUCKETS;
+  30 import static sun.java2d.marlin.ArrayCacheConst.MAX_ARRAY_SIZE;
+  31 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  32 import static sun.java2d.marlin.MarlinUtils.logException;
+  33 
+  34 import java.lang.ref.WeakReference;
+  35 import java.util.Arrays;
+  36 
+  37 import sun.java2d.marlin.ArrayCacheConst.BucketStats;
+  38 import sun.java2d.marlin.ArrayCacheConst.CacheStats;
+  39 
+  40 /*
+  41  * Note that the [BYTE/INT/FLOAT/DOUBLE]ArrayCache files are nearly identical except
+  42  * for a few type and name differences. Typically, the [BYTE]ArrayCache.java file
+  43  * is edited manually and then [INT/FLOAT/DOUBLE]ArrayCache.java
+  44  * files are generated with the following command lines:
+  45  */
+  46 // % sed -e 's/(b\yte)[ ]*//g' -e 's/b\yte/int/g' -e 's/B\yte/Int/g' &lt; B\yteArrayCache.java &gt; IntArrayCache.java
+  47 // % sed -e 's/(b\yte)[ ]*0/0.0f/g' -e 's/(b\yte)[ ]*/(float) /g' -e 's/b\yte/float/g' -e 's/B\yte/Float/g' &lt; B\yteArrayCache.java &gt; FloatArrayCache.java
+  48 // % sed -e 's/(b\yte)[ ]*0/0.0d/g' -e 's/(b\yte)[ ]*/(double) /g' -e 's/b\yte/double/g' -e 's/B\yte/Double/g' &lt; B\yteArrayCache.java &gt; DoubleArrayCache.java
+  49 
+  50 final class FloatArrayCache implements MarlinConst {
+  51 
+  52     final boolean clean;
+  53     private final int bucketCapacity;
+  54     private WeakReference&lt;Bucket[]&gt; refBuckets = null;
+  55     final CacheStats stats;
+  56 
+  57     FloatArrayCache(final boolean clean, final int bucketCapacity) {
+  58         this.clean = clean;
+  59         this.bucketCapacity = bucketCapacity;
+  60         this.stats = (DO_STATS) ?
+  61             new CacheStats(getLogPrefix(clean) + "FloatArrayCache") : null;
+  62     }
+  63 
+  64     Bucket getCacheBucket(final int length) {
+  65         final int bucket = ArrayCacheConst.getBucket(length);
+  66         return getBuckets()[bucket];
+  67     }
+  68 
+  69     private Bucket[] getBuckets() {
+  70         // resolve reference:
+  71         Bucket[] buckets = (refBuckets != null) ? refBuckets.get() : null;
+  72 
+  73         // create a new buckets ?
+  74         if (buckets == null) {
+  75             buckets = new Bucket[BUCKETS];
+  76 
+  77             for (int i = 0; i &lt; BUCKETS; i++) {
+  78                 buckets[i] = new Bucket(clean, ARRAY_SIZES[i], bucketCapacity,
+  79                         (DO_STATS) ? stats.bucketStats[i] : null);
+  80             }
+  81 
+  82             // update weak reference:
+  83             refBuckets = new WeakReference&lt;Bucket[]&gt;(buckets);
+  84         }
+  85         return buckets;
+  86     }
+  87 
+  88     Reference createRef(final int initialSize) {
+  89         return new Reference(this, initialSize);
+  90     }
+  91 
+  92     static final class Reference {
+  93 
+  94         // initial array reference (direct access)
+  95         final float[] initial;
+  96         private final boolean clean;
+  97         private final FloatArrayCache cache;
+  98 
+  99         Reference(final FloatArrayCache cache, final int initialSize) {
+ 100             this.cache = cache;
+ 101             this.clean = cache.clean;
+ 102             this.initial = createArray(initialSize);
+ 103             if (DO_STATS) {
+ 104                 cache.stats.totalInitial += initialSize;
+ 105             }
+ 106         }
+ 107 
+ 108         float[] getArray(final int length) {
+ 109             if (length &lt;= MAX_ARRAY_SIZE) {
+ 110                 return cache.getCacheBucket(length).getArray();
+ 111             }
+ 112             if (DO_STATS) {
+ 113                 cache.stats.oversize++;
+ 114             }
+ 115             if (DO_LOG_OVERSIZE) {
+ 116                 logInfo(getLogPrefix(clean) + "FloatArrayCache: "
+ 117                         + "getArray[oversize]: length=\t" + length);
+ 118             }
+ 119             return createArray(length);
+ 120         }
+ 121 
+ 122         float[] widenArray(final float[] array, final int usedSize,
+ 123                           final int needSize)
+ 124         {
+ 125             final int length = array.length;
+ 126             if (DO_CHECKS &amp;&amp; length &gt;= needSize) {
+ 127                 return array;
+ 128             }
+ 129             if (DO_STATS) {
+ 130                 cache.stats.resize++;
+ 131             }
+ 132 
+ 133             // maybe change bucket:
+ 134             // ensure getNewSize() &gt; newSize:
+ 135             final float[] res = getArray(ArrayCacheConst.getNewSize(usedSize, needSize));
+ 136 
+ 137             // use wrapper to ensure proper copy:
+ 138             System.arraycopy(array, 0, res, 0, usedSize); // copy only used elements
+ 139 
+ 140             // maybe return current array:
+ 141             putArray(array, 0, usedSize); // ensure array is cleared
+ 142 
+ 143             if (DO_LOG_WIDEN_ARRAY) {
+ 144                 logInfo(getLogPrefix(clean) + "FloatArrayCache: "
+ 145                         + "widenArray[" + res.length
+ 146                         + "]: usedSize=\t" + usedSize + "\tlength=\t" + length
+ 147                         + "\tneeded length=\t" + needSize);
+ 148             }
+ 149             return res;
+ 150         }
+ 151 
+ 152         float[] putArray(final float[] array)
+ 153         {
+ 154             // dirty array helper:
+ 155             return putArray(array, 0, array.length);
+ 156         }
+ 157 
+ 158         float[] putArray(final float[] array, final int fromIndex,
+ 159                         final int toIndex)
+ 160         {
+ 161             if (array.length &lt;= MAX_ARRAY_SIZE) {
+ 162                 if ((clean || DO_CLEAN_DIRTY) &amp;&amp; (toIndex != 0)) {
+ 163                     // clean-up array of dirty part[fromIndex; toIndex[
+ 164                     fill(array, fromIndex, toIndex, 0.0f);
+ 165                 }
+ 166                 // ensure to never store initial arrays in cache:
+ 167                 if (array != initial) {
+ 168                     cache.getCacheBucket(array.length).putArray(array);
+ 169                 }
+ 170             }
+ 171             return initial;
+ 172         }
+ 173     }
+ 174 
+ 175     static final class Bucket {
+ 176 
+ 177         private int tail = 0;
+ 178         private final int arraySize;
+ 179         private final boolean clean;
+ 180         private final float[][] arrays;
+ 181         private final BucketStats stats;
+ 182 
+ 183         Bucket(final boolean clean, final int arraySize,
+ 184                final int capacity, final BucketStats stats)
+ 185         {
+ 186             this.arraySize = arraySize;
+ 187             this.clean = clean;
+ 188             this.stats = stats;
+ 189             this.arrays = new float[capacity][];
+ 190         }
+ 191 
+ 192         float[] getArray() {
+ 193             if (DO_STATS) {
+ 194                 stats.getOp++;
+ 195             }
+ 196             // use cache:
+ 197             if (tail != 0) {
+ 198                 final float[] array = arrays[--tail];
+ 199                 arrays[tail] = null;
+ 200                 return array;
+ 201             }
+ 202             if (DO_STATS) {
+ 203                 stats.createOp++;
+ 204             }
+ 205             return createArray(arraySize);
+ 206         }
+ 207 
+ 208         void putArray(final float[] array)
+ 209         {
+ 210             if (DO_CHECKS &amp;&amp; (array.length != arraySize)) {
+ 211                 logInfo(getLogPrefix(clean) + "FloatArrayCache: "
+ 212                         + "bad length = " + array.length);
+ 213                 return;
+ 214             }
+ 215             if (DO_STATS) {
+ 216                 stats.returnOp++;
+ 217             }
+ 218             // fill cache:
+ 219             if (arrays.length &gt; tail) {
+ 220                 arrays[tail++] = array;
+ 221 
+ 222                 if (DO_STATS) {
+ 223                     stats.updateMaxSize(tail);
+ 224                 }
+ 225             } else if (DO_CHECKS) {
+ 226                 logInfo(getLogPrefix(clean) + "FloatArrayCache: "
+ 227                         + "array capacity exceeded !");
+ 228             }
+ 229         }
+ 230     }
+ 231 
+ 232     static float[] createArray(final int length) {
+ 233         return new float[length];
+ 234     }
+ 235 
+ 236     static void fill(final float[] array, final int fromIndex,
+ 237                      final int toIndex, final float value)
+ 238     {
+ 239         // clear array data:
+ 240         Arrays.fill(array, fromIndex, toIndex, value);
+ 241         if (DO_CHECKS) {
+ 242             check(array, fromIndex, toIndex, value);
+ 243         }
+ 244     }
+ 245 
+ 246     static void check(final float[] array, final int fromIndex,
+ 247                       final int toIndex, final float value)
+ 248     {
+ 249         if (DO_CHECKS) {
+ 250             // check zero on full array:
+ 251             for (int i = 0; i &lt; array.length; i++) {
+ 252                 if (array[i] != value) {
+ 253                     logException("Invalid value at: " + i + " = " + array[i]
+ 254                             + " from: " + fromIndex + " to: " + toIndex + "\n"
+ 255                             + Arrays.toString(array), new Throwable());
+ 256 
+ 257                     // ensure array is correctly filled:
+ 258                     Arrays.fill(array, value);
+ 259 
+ 260                     return;
+ 261                 }
+ 262             }
+ 263         }
+ 264     }
+ 265 
+ 266     static String getLogPrefix(final boolean clean) {
+ 267         return (clean) ? "Clean" : "Dirty";
+ 268     }
+ 269 }
+</pre></body></html>

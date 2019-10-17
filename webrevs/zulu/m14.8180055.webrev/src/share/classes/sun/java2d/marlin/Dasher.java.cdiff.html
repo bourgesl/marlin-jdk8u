@@ -1,0 +1,842 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Cdiff src/share/classes/sun/java2d/marlin/Dasher.java</title>
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Curve.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/FloatArrayCache.java.cdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Dasher.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13693">13693</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8180055">8180055</a>: Upgrade the Marlin renderer in Java2D
+Summary: added the double-precision variant + MarlinFX backports + Improved MarlinTileGenerator + higher precision of the cubic / quadratic curve
+Reviewed-by: flar, pnarayanan</pre>
+        <pre>
+<hr /><span class="oldmarker">*** 1,7 ****</span>
+  /*
+<span class="changed">!  * Copyright (c) 2007, 2016, Oracle and/or its affiliates. All rights reserved.</span>
+   * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   *
+   * This code is free software; you can redistribute it and/or modify it
+   * under the terms of the GNU General Public License version 2 only, as
+   * published by the Free Software Foundation.  Oracle designates this
+<span class="newmarker">--- 1,7 ----</span>
+  /*
+<span class="changed">!  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   *
+   * This code is free software; you can redistribute it and/or modify it
+   * under the terms of the GNU General Public License version 2 only, as
+   * published by the Free Software Foundation.  Oracle designates this
+<hr /><span class="oldmarker">*** 37,51 ****</span>
+   * &lt;p&gt; Issues: in J2Se, a zero length dash segment as drawn as a very
+   * short dash, whereas Pisces does not draw anything.  The PostScript
+   * semantics are unclear.
+   *
+   */
+<span class="changed">! final class Dasher implements sun.awt.geom.PathConsumer2D, MarlinConst {</span>
+  
+      static final int REC_LIMIT = 4;
+      static final float ERR = 0.01f;
+<span class="changed">!     static final float MIN_T_INC = 1f / (1 &lt;&lt; REC_LIMIT);</span>
+  
+      private PathConsumer2D out;
+      private float[] dash;
+      private int dashLen;
+      private float startPhase;
+<span class="newmarker">--- 37,56 ----</span>
+   * &lt;p&gt; Issues: in J2Se, a zero length dash segment as drawn as a very
+   * short dash, whereas Pisces does not draw anything.  The PostScript
+   * semantics are unclear.
+   *
+   */
+<span class="changed">! final class Dasher implements PathConsumer2D, MarlinConst {</span>
+  
+      static final int REC_LIMIT = 4;
+      static final float ERR = 0.01f;
+<span class="changed">!     static final float MIN_T_INC = 1.0f / (1 &lt;&lt; REC_LIMIT);</span>
+<span class="changed">! </span>
+<span class="changed">!     // More than 24 bits of mantissa means we can no longer accurately</span>
+<span class="changed">!     // measure the number of times cycled through the dash array so we</span>
+<span class="changed">!     // punt and override the phase to just be 0 past that point.</span>
+<span class="changed">!     static final float MAX_CYCLES = 16000000.0f;</span>
+  
+      private PathConsumer2D out;
+      private float[] dash;
+      private int dashLen;
+      private float startPhase;
+<hr /><span class="oldmarker">*** 104,133 ****</span>
+       * @return this instance
+       */
+      Dasher init(final PathConsumer2D out, float[] dash, int dashLen,
+                  float phase, boolean recycleDashes)
+      {
+<span class="removed">-         if (phase &lt; 0f) {</span>
+<span class="removed">-             throw new IllegalArgumentException("phase &lt; 0 !");</span>
+<span class="removed">-         }</span>
+          this.out = out;
+  
+          // Normalize so 0 &lt;= phase &lt; dash[0]
+<span class="changed">!         int idx = 0;</span>
+          dashOn = true;
+          float d;
+<span class="changed">!         while (phase &gt;= (d = dash[idx])) {</span>
+              phase -= d;
+<span class="changed">!             idx = (idx + 1) % dashLen;</span>
+              dashOn = !dashOn;
+          }
+  
+          this.dash = dash;
+          this.dashLen = dashLen;
+          this.startPhase = this.phase = phase;
+          this.startDashOn = dashOn;
+<span class="changed">!         this.startIdx = idx;</span>
+          this.starting = true;
+          needsMoveTo = false;
+          firstSegidx = 0;
+  
+          this.recycleDashes = recycleDashes;
+<span class="newmarker">--- 109,168 ----</span>
+       * @return this instance
+       */
+      Dasher init(final PathConsumer2D out, float[] dash, int dashLen,
+                  float phase, boolean recycleDashes)
+      {
+          this.out = out;
+  
+          // Normalize so 0 &lt;= phase &lt; dash[0]
+<span class="changed">!         int sidx = 0;</span>
+          dashOn = true;
+<span class="new">+         float sum = 0.0f;</span>
+<span class="new">+         for (float d : dash) {</span>
+<span class="new">+             sum += d;</span>
+<span class="new">+         }</span>
+<span class="new">+         float cycles = phase / sum;</span>
+<span class="new">+         if (phase &lt; 0.0f) {</span>
+<span class="new">+             if (-cycles &gt;= MAX_CYCLES) {</span>
+<span class="new">+                 phase = 0.0f;</span>
+<span class="new">+             } else {</span>
+<span class="new">+                 int fullcycles = FloatMath.floor_int(-cycles);</span>
+<span class="new">+                 if ((fullcycles &amp; dash.length &amp; 1) != 0) {</span>
+<span class="new">+                     dashOn = !dashOn;</span>
+<span class="new">+                 }</span>
+<span class="new">+                 phase += fullcycles * sum;</span>
+<span class="new">+                 while (phase &lt; 0.0f) {</span>
+<span class="new">+                     if (--sidx &lt; 0) {</span>
+<span class="new">+                         sidx = dash.length - 1;</span>
+<span class="new">+                     }</span>
+<span class="new">+                     phase += dash[sidx];</span>
+<span class="new">+                     dashOn = !dashOn;</span>
+<span class="new">+                 }</span>
+<span class="new">+             }</span>
+<span class="new">+         } else if (phase &gt; 0) {</span>
+<span class="new">+             if (cycles &gt;= MAX_CYCLES) {</span>
+<span class="new">+                 phase = 0.0f;</span>
+<span class="new">+             } else {</span>
+<span class="new">+                 int fullcycles = FloatMath.floor_int(cycles);</span>
+<span class="new">+                 if ((fullcycles &amp; dash.length &amp; 1) != 0) {</span>
+<span class="new">+                     dashOn = !dashOn;</span>
+<span class="new">+                 }</span>
+<span class="new">+                 phase -= fullcycles * sum;</span>
+                  float d;
+<span class="changed">!                 while (phase &gt;= (d = dash[sidx])) {</span>
+                      phase -= d;
+<span class="changed">!                     sidx = (sidx + 1) % dash.length;</span>
+                      dashOn = !dashOn;
+                  }
+<span class="new">+             }</span>
+<span class="new">+         }</span>
+  
+          this.dash = dash;
+          this.dashLen = dashLen;
+          this.startPhase = this.phase = phase;
+          this.startDashOn = dashOn;
+<span class="changed">!         this.startIdx = sidx;</span>
+          this.starting = true;
+          needsMoveTo = false;
+          firstSegidx = 0;
+  
+          this.recycleDashes = recycleDashes;
+<hr /><span class="oldmarker">*** 140,158 ****</span>
+       * clean up before reusing this instance
+       */
+      void dispose() {
+          if (DO_CLEAN_DIRTY) {
+              // Force zero-fill dirty arrays:
+<span class="changed">!             Arrays.fill(curCurvepts, 0f);</span>
+          }
+          // Return arrays:
+          if (recycleDashes) {
+              dash = dashes_ref.putArray(dash);
+          }
+          firstSegmentsBuffer = firstSegmentsBuffer_ref.putArray(firstSegmentsBuffer);
+      }
+  
+      @Override
+      public void moveTo(float x0, float y0) {
+          if (firstSegidx &gt; 0) {
+              out.moveTo(sx, sy);
+              emitFirstSegments();
+<span class="newmarker">--- 175,208 ----</span>
+       * clean up before reusing this instance
+       */
+      void dispose() {
+          if (DO_CLEAN_DIRTY) {
+              // Force zero-fill dirty arrays:
+<span class="changed">!             Arrays.fill(curCurvepts, 0.0f);</span>
+          }
+          // Return arrays:
+          if (recycleDashes) {
+              dash = dashes_ref.putArray(dash);
+          }
+          firstSegmentsBuffer = firstSegmentsBuffer_ref.putArray(firstSegmentsBuffer);
+      }
+  
+<span class="new">+     float[] copyDashArray(final float[] dashes) {</span>
+<span class="new">+         final int len = dashes.length;</span>
+<span class="new">+         final float[] newDashes;</span>
+<span class="new">+         if (len &lt;= MarlinConst.INITIAL_ARRAY) {</span>
+<span class="new">+             newDashes = dashes_ref.initial;</span>
+<span class="new">+         } else {</span>
+<span class="new">+             if (DO_STATS) {</span>
+<span class="new">+                 rdrCtx.stats.stat_array_dasher_dasher.add(len);</span>
+<span class="new">+             }</span>
+<span class="new">+             newDashes = dashes_ref.getArray(len);</span>
+<span class="new">+         }</span>
+<span class="new">+         System.arraycopy(dashes, 0, newDashes, 0, len);</span>
+<span class="new">+         return newDashes;</span>
+<span class="new">+     }</span>
+<span class="new">+ </span>
+      @Override
+      public void moveTo(float x0, float y0) {
+          if (firstSegidx &gt; 0) {
+              out.moveTo(sx, sy);
+              emitFirstSegments();
+<hr /><span class="oldmarker">*** 200,216 ****</span>
+      // buffer below.
+      private float[] firstSegmentsBuffer; // dynamic array
+      private int firstSegidx;
+  
+      // precondition: pts must be in relative coordinates (relative to x0,y0)
+<span class="removed">-     // fullCurve is true iff the curve in pts has not been split.</span>
+      private void goTo(float[] pts, int off, final int type) {
+          float x = pts[off + type - 4];
+          float y = pts[off + type - 3];
+          if (dashOn) {
+              if (starting) {
+<span class="changed">!                 int len = type - 2 + 1;</span>
+                  int segIdx = firstSegidx;
+                  float[] buf = firstSegmentsBuffer;
+                  if (segIdx + len  &gt; buf.length) {
+                      if (DO_STATS) {
+                          rdrCtx.stats.stat_array_dasher_firstSegmentsBuffer
+<span class="newmarker">--- 250,265 ----</span>
+      // buffer below.
+      private float[] firstSegmentsBuffer; // dynamic array
+      private int firstSegidx;
+  
+      // precondition: pts must be in relative coordinates (relative to x0,y0)
+      private void goTo(float[] pts, int off, final int type) {
+          float x = pts[off + type - 4];
+          float y = pts[off + type - 3];
+          if (dashOn) {
+              if (starting) {
+<span class="changed">!                 int len = type - 1; // - 2 + 1</span>
+                  int segIdx = firstSegidx;
+                  float[] buf = firstSegmentsBuffer;
+                  if (segIdx + len  &gt; buf.length) {
+                      if (DO_STATS) {
+                          rdrCtx.stats.stat_array_dasher_firstSegmentsBuffer
+<hr /><span class="oldmarker">*** 245,255 ****</span>
+      public void lineTo(float x1, float y1) {
+          float dx = x1 - x0;
+          float dy = y1 - y0;
+  
+          float len = dx*dx + dy*dy;
+<span class="changed">!         if (len == 0f) {</span>
+              return;
+          }
+          len = (float) Math.sqrt(len);
+  
+          // The scaling factors needed to get the dx and dy of the
+<span class="newmarker">--- 294,304 ----</span>
+      public void lineTo(float x1, float y1) {
+          float dx = x1 - x0;
+          float dy = y1 - y0;
+  
+          float len = dx*dx + dy*dy;
+<span class="changed">!         if (len == 0.0f) {</span>
+              return;
+          }
+          len = (float) Math.sqrt(len);
+  
+          // The scaling factors needed to get the dx and dy of the
+<hr /><span class="oldmarker">*** 273,293 ****</span>
+  
+                  // Advance phase within current dash segment
+                  phase += len;
+                  // TODO: compare float values using epsilon:
+                  if (len == leftInThisDashSegment) {
+<span class="changed">!                     phase = 0f;</span>
+                      idx = (idx + 1) % dashLen;
+                      dashOn = !dashOn;
+                  }
+                  return;
+              }
+  
+              dashdx = _dash[idx] * cx;
+              dashdy = _dash[idx] * cy;
+  
+<span class="changed">!             if (phase == 0f) {</span>
+                  _curCurvepts[0] = x0 + dashdx;
+                  _curCurvepts[1] = y0 + dashdy;
+              } else {
+                  p = leftInThisDashSegment / _dash[idx];
+                  _curCurvepts[0] = x0 + p * dashdx;
+<span class="newmarker">--- 322,342 ----</span>
+  
+                  // Advance phase within current dash segment
+                  phase += len;
+                  // TODO: compare float values using epsilon:
+                  if (len == leftInThisDashSegment) {
+<span class="changed">!                     phase = 0.0f;</span>
+                      idx = (idx + 1) % dashLen;
+                      dashOn = !dashOn;
+                  }
+                  return;
+              }
+  
+              dashdx = _dash[idx] * cx;
+              dashdy = _dash[idx] * cy;
+  
+<span class="changed">!             if (phase == 0.0f) {</span>
+                  _curCurvepts[0] = x0 + dashdx;
+                  _curCurvepts[1] = y0 + dashdy;
+              } else {
+                  p = leftInThisDashSegment / _dash[idx];
+                  _curCurvepts[0] = x0 + p * dashdx;
+<hr /><span class="oldmarker">*** 298,308 ****</span>
+  
+              len -= leftInThisDashSegment;
+              // Advance to next dash segment
+              idx = (idx + 1) % dashLen;
+              dashOn = !dashOn;
+<span class="changed">!             phase = 0f;</span>
+          }
+      }
+  
+      // shared instance in Dasher
+      private final LengthIterator li = new LengthIterator();
+<span class="newmarker">--- 347,357 ----</span>
+  
+              len -= leftInThisDashSegment;
+              // Advance to next dash segment
+              idx = (idx + 1) % dashLen;
+              dashOn = !dashOn;
+<span class="changed">!             phase = 0.0f;</span>
+          }
+      }
+  
+      // shared instance in Dasher
+      private final LengthIterator li = new LengthIterator();
+<hr /><span class="oldmarker">*** 315,348 ****</span>
+          }
+          li.initializeIterationOnCurve(curCurvepts, type);
+  
+          // initially the current curve is at curCurvepts[0...type]
+          int curCurveoff = 0;
+<span class="changed">!         float lastSplitT = 0f;</span>
+          float t;
+          float leftInThisDashSegment = dash[idx] - phase;
+  
+<span class="changed">!         while ((t = li.next(leftInThisDashSegment)) &lt; 1f) {</span>
+<span class="changed">!             if (t != 0f) {</span>
+<span class="changed">!                 Helpers.subdivideAt((t - lastSplitT) / (1f - lastSplitT),</span>
+                                      curCurvepts, curCurveoff,
+                                      curCurvepts, 0,
+                                      curCurvepts, type, type);
+                  lastSplitT = t;
+                  goTo(curCurvepts, 2, type);
+                  curCurveoff = type;
+              }
+              // Advance to next dash segment
+              idx = (idx + 1) % dashLen;
+              dashOn = !dashOn;
+<span class="changed">!             phase = 0f;</span>
+              leftInThisDashSegment = dash[idx];
+          }
+          goTo(curCurvepts, curCurveoff+2, type);
+          phase += li.lastSegLen();
+          if (phase &gt;= dash[idx]) {
+<span class="changed">!             phase = 0f;</span>
+              idx = (idx + 1) % dashLen;
+              dashOn = !dashOn;
+          }
+          // reset LengthIterator:
+          li.reset();
+<span class="newmarker">--- 364,397 ----</span>
+          }
+          li.initializeIterationOnCurve(curCurvepts, type);
+  
+          // initially the current curve is at curCurvepts[0...type]
+          int curCurveoff = 0;
+<span class="changed">!         float lastSplitT = 0.0f;</span>
+          float t;
+          float leftInThisDashSegment = dash[idx] - phase;
+  
+<span class="changed">!         while ((t = li.next(leftInThisDashSegment)) &lt; 1.0f) {</span>
+<span class="changed">!             if (t != 0.0f) {</span>
+<span class="changed">!                 Helpers.subdivideAt((t - lastSplitT) / (1.0f - lastSplitT),</span>
+                                      curCurvepts, curCurveoff,
+                                      curCurvepts, 0,
+                                      curCurvepts, type, type);
+                  lastSplitT = t;
+                  goTo(curCurvepts, 2, type);
+                  curCurveoff = type;
+              }
+              // Advance to next dash segment
+              idx = (idx + 1) % dashLen;
+              dashOn = !dashOn;
+<span class="changed">!             phase = 0.0f;</span>
+              leftInThisDashSegment = dash[idx];
+          }
+          goTo(curCurvepts, curCurveoff+2, type);
+          phase += li.lastSegLen();
+          if (phase &gt;= dash[idx]) {
+<span class="changed">!             phase = 0.0f;</span>
+              idx = (idx + 1) % dashLen;
+              dashOn = !dashOn;
+          }
+          // reset LengthIterator:
+          li.reset();
+<hr /><span class="oldmarker">*** 393,403 ****</span>
+          private int recLevel;
+          private boolean done;
+  
+          // the lengths of the lines of the control polygon. Only its first
+          // curveType/2 - 1 elements are valid. This is an optimization. See
+<span class="changed">!         // next(float) for more detail.</span>
+          private final float[] curLeafCtrlPolyLengths = new float[3];
+  
+          LengthIterator() {
+              this.recCurveStack = new float[REC_LIMIT + 1][8];
+              this.sides = new Side[REC_LIMIT];
+<span class="newmarker">--- 442,452 ----</span>
+          private int recLevel;
+          private boolean done;
+  
+          // the lengths of the lines of the control polygon. Only its first
+          // curveType/2 - 1 elements are valid. This is an optimization. See
+<span class="changed">!         // next() for more detail.</span>
+          private final float[] curLeafCtrlPolyLengths = new float[3];
+  
+          LengthIterator() {
+              this.recCurveStack = new float[REC_LIMIT + 1][8];
+              this.sides = new Side[REC_LIMIT];
+<hr /><span class="oldmarker">*** 418,457 ****</span>
+              // keep data dirty
+              // as it appears not useful to reset data:
+              if (DO_CLEAN_DIRTY) {
+                  final int recLimit = recCurveStack.length - 1;
+                  for (int i = recLimit; i &gt;= 0; i--) {
+<span class="changed">!                     Arrays.fill(recCurveStack[i], 0f);</span>
+                  }
+                  Arrays.fill(sides, Side.LEFT);
+<span class="changed">!                 Arrays.fill(curLeafCtrlPolyLengths, 0f);</span>
+<span class="changed">!                 Arrays.fill(nextRoots, 0f);</span>
+<span class="changed">!                 Arrays.fill(flatLeafCoefCache, 0f);</span>
+<span class="changed">!                 flatLeafCoefCache[2] = -1f;</span>
+              }
+          }
+  
+          void initializeIterationOnCurve(float[] pts, int type) {
+              // optimize arraycopy (8 values faster than 6 = type):
+              System.arraycopy(pts, 0, recCurveStack[0], 0, 8);
+              this.curveType = type;
+              this.recLevel = 0;
+<span class="changed">!             this.lastT = 0f;</span>
+<span class="changed">!             this.lenAtLastT = 0f;</span>
+<span class="changed">!             this.nextT = 0f;</span>
+<span class="changed">!             this.lenAtNextT = 0f;</span>
+              goLeft(); // initializes nextT and lenAtNextT properly
+<span class="changed">!             this.lenAtLastSplit = 0f;</span>
+              if (recLevel &gt; 0) {
+                  this.sides[0] = Side.LEFT;
+                  this.done = false;
+              } else {
+                  // the root of the tree is a leaf so we're done.
+                  this.sides[0] = Side.RIGHT;
+                  this.done = true;
+              }
+<span class="changed">!             this.lastSegLen = 0f;</span>
+          }
+  
+          // 0 == false, 1 == true, -1 == invalid cached value.
+          private int cachedHaveLowAcceleration = -1;
+  
+<span class="newmarker">--- 467,506 ----</span>
+              // keep data dirty
+              // as it appears not useful to reset data:
+              if (DO_CLEAN_DIRTY) {
+                  final int recLimit = recCurveStack.length - 1;
+                  for (int i = recLimit; i &gt;= 0; i--) {
+<span class="changed">!                     Arrays.fill(recCurveStack[i], 0.0f);</span>
+                  }
+                  Arrays.fill(sides, Side.LEFT);
+<span class="changed">!                 Arrays.fill(curLeafCtrlPolyLengths, 0.0f);</span>
+<span class="changed">!                 Arrays.fill(nextRoots, 0.0f);</span>
+<span class="changed">!                 Arrays.fill(flatLeafCoefCache, 0.0f);</span>
+<span class="changed">!                 flatLeafCoefCache[2] = -1.0f;</span>
+              }
+          }
+  
+          void initializeIterationOnCurve(float[] pts, int type) {
+              // optimize arraycopy (8 values faster than 6 = type):
+              System.arraycopy(pts, 0, recCurveStack[0], 0, 8);
+              this.curveType = type;
+              this.recLevel = 0;
+<span class="changed">!             this.lastT = 0.0f;</span>
+<span class="changed">!             this.lenAtLastT = 0.0f;</span>
+<span class="changed">!             this.nextT = 0.0f;</span>
+<span class="changed">!             this.lenAtNextT = 0.0f;</span>
+              goLeft(); // initializes nextT and lenAtNextT properly
+<span class="changed">!             this.lenAtLastSplit = 0.0f;</span>
+              if (recLevel &gt; 0) {
+                  this.sides[0] = Side.LEFT;
+                  this.done = false;
+              } else {
+                  // the root of the tree is a leaf so we're done.
+                  this.sides[0] = Side.RIGHT;
+                  this.done = true;
+              }
+<span class="changed">!             this.lastSegLen = 0.0f;</span>
+          }
+  
+          // 0 == false, 1 == true, -1 == invalid cached value.
+          private int cachedHaveLowAcceleration = -1;
+  
+<hr /><span class="oldmarker">*** 460,470 ****</span>
+                  final float len1 = curLeafCtrlPolyLengths[0];
+                  final float len2 = curLeafCtrlPolyLengths[1];
+                  // the test below is equivalent to !within(len1/len2, 1, err).
+                  // It is using a multiplication instead of a division, so it
+                  // should be a bit faster.
+<span class="changed">!                 if (!Helpers.within(len1, len2, err*len2)) {</span>
+                      cachedHaveLowAcceleration = 0;
+                      return false;
+                  }
+                  if (curveType == 8) {
+                      final float len3 = curLeafCtrlPolyLengths[2];
+<span class="newmarker">--- 509,519 ----</span>
+                  final float len1 = curLeafCtrlPolyLengths[0];
+                  final float len2 = curLeafCtrlPolyLengths[1];
+                  // the test below is equivalent to !within(len1/len2, 1, err).
+                  // It is using a multiplication instead of a division, so it
+                  // should be a bit faster.
+<span class="changed">!                 if (!Helpers.within(len1, len2, err * len2)) {</span>
+                      cachedHaveLowAcceleration = 0;
+                      return false;
+                  }
+                  if (curveType == 8) {
+                      final float len3 = curLeafCtrlPolyLengths[2];
+<hr /><span class="oldmarker">*** 491,511 ****</span>
+  
+          // caches the coefficients of the current leaf in its flattened
+          // form (see inside next() for what that means). The cache is
+          // invalid when it's third element is negative, since in any
+          // valid flattened curve, this would be &gt;= 0.
+<span class="changed">!         private final float[] flatLeafCoefCache = new float[]{0f, 0f, -1f, 0f};</span>
+  
+          // returns the t value where the remaining curve should be split in
+          // order for the left subdivided curve to have length len. If len
+          // is &gt;= than the length of the uniterated curve, it returns 1.
+          float next(final float len) {
+              final float targetLength = lenAtLastSplit + len;
+              while (lenAtNextT &lt; targetLength) {
+                  if (done) {
+                      lastSegLen = lenAtNextT - lenAtLastSplit;
+<span class="changed">!                     return 1f;</span>
+                  }
+                  goToNextLeaf();
+              }
+              lenAtLastSplit = targetLength;
+              final float leaflen = lenAtNextT - lenAtLastT;
+<span class="newmarker">--- 540,560 ----</span>
+  
+          // caches the coefficients of the current leaf in its flattened
+          // form (see inside next() for what that means). The cache is
+          // invalid when it's third element is negative, since in any
+          // valid flattened curve, this would be &gt;= 0.
+<span class="changed">!         private final float[] flatLeafCoefCache = new float[]{0.0f, 0.0f, -1.0f, 0.0f};</span>
+  
+          // returns the t value where the remaining curve should be split in
+          // order for the left subdivided curve to have length len. If len
+          // is &gt;= than the length of the uniterated curve, it returns 1.
+          float next(final float len) {
+              final float targetLength = lenAtLastSplit + len;
+              while (lenAtNextT &lt; targetLength) {
+                  if (done) {
+                      lastSegLen = lenAtNextT - lenAtLastSplit;
+<span class="changed">!                     return 1.0f;</span>
+                  }
+                  goToNextLeaf();
+              }
+              lenAtLastSplit = targetLength;
+              final float leaflen = lenAtNextT - lenAtLastT;
+<hr /><span class="oldmarker">*** 518,540 ****</span>
+                  // left with a, b, c which define a 1D Bezier curve. We then
+                  // solve this to get the parameter of the original leaf that
+                  // gives us the desired length.
+                  final float[] _flatLeafCoefCache = flatLeafCoefCache;
+  
+<span class="changed">!                 if (_flatLeafCoefCache[2] &lt; 0) {</span>
+<span class="changed">!                     float x = 0f + curLeafCtrlPolyLengths[0],</span>
+                            y = x  + curLeafCtrlPolyLengths[1];
+                      if (curveType == 8) {
+                          float z = y + curLeafCtrlPolyLengths[2];
+<span class="changed">!                         _flatLeafCoefCache[0] = 3f * (x - y) + z;</span>
+<span class="changed">!                         _flatLeafCoefCache[1] = 3f * (y - 2f * x);</span>
+<span class="changed">!                         _flatLeafCoefCache[2] = 3f * x;</span>
+                          _flatLeafCoefCache[3] = -z;
+                      } else if (curveType == 6) {
+<span class="changed">!                         _flatLeafCoefCache[0] = 0f;</span>
+<span class="changed">!                         _flatLeafCoefCache[1] = y - 2f * x;</span>
+<span class="changed">!                         _flatLeafCoefCache[2] = 2f * x;</span>
+                          _flatLeafCoefCache[3] = -y;
+                      }
+                  }
+                  float a = _flatLeafCoefCache[0];
+                  float b = _flatLeafCoefCache[1];
+<span class="newmarker">--- 567,589 ----</span>
+                  // left with a, b, c which define a 1D Bezier curve. We then
+                  // solve this to get the parameter of the original leaf that
+                  // gives us the desired length.
+                  final float[] _flatLeafCoefCache = flatLeafCoefCache;
+  
+<span class="changed">!                 if (_flatLeafCoefCache[2] &lt; 0.0f) {</span>
+<span class="changed">!                     float x =     curLeafCtrlPolyLengths[0],</span>
+                            y = x + curLeafCtrlPolyLengths[1];
+                      if (curveType == 8) {
+                          float z = y + curLeafCtrlPolyLengths[2];
+<span class="changed">!                         _flatLeafCoefCache[0] = 3.0f * (x - y) + z;</span>
+<span class="changed">!                         _flatLeafCoefCache[1] = 3.0f * (y - 2.0f * x);</span>
+<span class="changed">!                         _flatLeafCoefCache[2] = 3.0f * x;</span>
+                          _flatLeafCoefCache[3] = -z;
+                      } else if (curveType == 6) {
+<span class="changed">!                         _flatLeafCoefCache[0] = 0.0f;</span>
+<span class="changed">!                         _flatLeafCoefCache[1] = y - 2.0f * x;</span>
+<span class="changed">!                         _flatLeafCoefCache[2] = 2.0f * x;</span>
+                          _flatLeafCoefCache[3] = -y;
+                      }
+                  }
+                  float a = _flatLeafCoefCache[0];
+                  float b = _flatLeafCoefCache[1];
+<hr /><span class="oldmarker">*** 542,561 ****</span>
+                  float d = t * _flatLeafCoefCache[3];
+  
+                  // we use cubicRootsInAB here, because we want only roots in 0, 1,
+                  // and our quadratic root finder doesn't filter, so it's just a
+                  // matter of convenience.
+<span class="changed">!                 int n = Helpers.cubicRootsInAB(a, b, c, d, nextRoots, 0, 0, 1);</span>
+                  if (n == 1 &amp;&amp; !Float.isNaN(nextRoots[0])) {
+                      t = nextRoots[0];
+                  }
+              }
+              // t is relative to the current leaf, so we must make it a valid parameter
+              // of the original curve.
+              t = t * (nextT - lastT) + lastT;
+<span class="changed">!             if (t &gt;= 1f) {</span>
+<span class="changed">!                 t = 1f;</span>
+                  done = true;
+              }
+              // even if done = true, if we're here, that means targetLength
+              // is equal to, or very, very close to the total length of the
+              // curve, so lastSegLen won't be too high. In cases where len
+<span class="newmarker">--- 591,610 ----</span>
+                  float d = t * _flatLeafCoefCache[3];
+  
+                  // we use cubicRootsInAB here, because we want only roots in 0, 1,
+                  // and our quadratic root finder doesn't filter, so it's just a
+                  // matter of convenience.
+<span class="changed">!                 int n = Helpers.cubicRootsInAB(a, b, c, d, nextRoots, 0, 0.0f, 1.0f);</span>
+                  if (n == 1 &amp;&amp; !Float.isNaN(nextRoots[0])) {
+                      t = nextRoots[0];
+                  }
+              }
+              // t is relative to the current leaf, so we must make it a valid parameter
+              // of the original curve.
+              t = t * (nextT - lastT) + lastT;
+<span class="changed">!             if (t &gt;= 1.0f) {</span>
+<span class="changed">!                 t = 1.0f;</span>
+                  done = true;
+              }
+              // even if done = true, if we're here, that means targetLength
+              // is equal to, or very, very close to the total length of the
+              // curve, so lastSegLen won't be too high. In cases where len
+<hr /><span class="oldmarker">*** 598,614 ****</span>
+          }
+  
+          // go to the leftmost node from the current node. Return its length.
+          private void goLeft() {
+              float len = onLeaf();
+<span class="changed">!             if (len &gt;= 0f) {</span>
+                  lastT = nextT;
+                  lenAtLastT = lenAtNextT;
+                  nextT += (1 &lt;&lt; (REC_LIMIT - recLevel)) * MIN_T_INC;
+                  lenAtNextT += len;
+                  // invalidate caches
+<span class="changed">!                 flatLeafCoefCache[2] = -1f;</span>
+                  cachedHaveLowAcceleration = -1;
+              } else {
+                  Helpers.subdivide(recCurveStack[recLevel], 0,
+                                    recCurveStack[recLevel+1], 0,
+                                    recCurveStack[recLevel], 0, curveType);
+<span class="newmarker">--- 647,663 ----</span>
+          }
+  
+          // go to the leftmost node from the current node. Return its length.
+          private void goLeft() {
+              float len = onLeaf();
+<span class="changed">!             if (len &gt;= 0.0f) {</span>
+                  lastT = nextT;
+                  lenAtLastT = lenAtNextT;
+                  nextT += (1 &lt;&lt; (REC_LIMIT - recLevel)) * MIN_T_INC;
+                  lenAtNextT += len;
+                  // invalidate caches
+<span class="changed">!                 flatLeafCoefCache[2] = -1.0f;</span>
+                  cachedHaveLowAcceleration = -1;
+              } else {
+                  Helpers.subdivide(recCurveStack[recLevel], 0,
+                                    recCurveStack[recLevel+1], 0,
+                                    recCurveStack[recLevel], 0, curveType);
+<hr /><span class="oldmarker">*** 620,630 ****</span>
+  
+          // this is a bit of a hack. It returns -1 if we're not on a leaf, and
+          // the length of the leaf if we are on a leaf.
+          private float onLeaf() {
+              float[] curve = recCurveStack[recLevel];
+<span class="changed">!             float polyLen = 0f;</span>
+  
+              float x0 = curve[0], y0 = curve[1];
+              for (int i = 2; i &lt; curveType; i += 2) {
+                  final float x1 = curve[i], y1 = curve[i+1];
+                  final float len = Helpers.linelen(x0, y0, x1, y1);
+<span class="newmarker">--- 669,679 ----</span>
+  
+          // this is a bit of a hack. It returns -1 if we're not on a leaf, and
+          // the length of the leaf if we are on a leaf.
+          private float onLeaf() {
+              float[] curve = recCurveStack[recLevel];
+<span class="changed">!             float polyLen = 0.0f;</span>
+  
+              float x0 = curve[0], y0 = curve[1];
+              for (int i = 2; i &lt; curveType; i += 2) {
+                  final float x1 = curve[i], y1 = curve[i+1];
+                  final float len = Helpers.linelen(x0, y0, x1, y1);
+<hr /><span class="oldmarker">*** 636,648 ****</span>
+  
+              final float lineLen = Helpers.linelen(curve[0], curve[1],
+                                                    curve[curveType-2],
+                                                    curve[curveType-1]);
+              if ((polyLen - lineLen) &lt; ERR || recLevel == REC_LIMIT) {
+<span class="changed">!                 return (polyLen + lineLen) / 2f;</span>
+              }
+<span class="changed">!             return -1f;</span>
+          }
+      }
+  
+      @Override
+      public void curveTo(float x1, float y1,
+<span class="newmarker">--- 685,697 ----</span>
+  
+              final float lineLen = Helpers.linelen(curve[0], curve[1],
+                                                    curve[curveType-2],
+                                                    curve[curveType-1]);
+              if ((polyLen - lineLen) &lt; ERR || recLevel == REC_LIMIT) {
+<span class="changed">!                 return (polyLen + lineLen) / 2.0f;</span>
+              }
+<span class="changed">!             return -1.0f;</span>
+          }
+      }
+  
+      @Override
+      public void curveTo(float x1, float y1,
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Curve.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/FloatArrayCache.java.cdiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

@@ -1,0 +1,1704 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13694">13694</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8191814">8191814</a>: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
+Summary: upgrade to Marlin 0.8.2 providing efficient path clipping (Stroker and Filler)
+Reviewed-by: prr, serb</pre><hr></hr>
+<pre>
+   1 /*
+   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.util.Arrays;
+<a name="1" id="anc1"></a>
+  29 
+  30 // TODO: some of the arithmetic here is too verbose and prone to hard to
+  31 // debug typos. We should consider making a small Point/Vector class that
+  32 // has methods like plus(Point), minus(Point), dot(Point), cross(Point)and such
+  33 final class DStroker implements DPathConsumer2D, MarlinConst {
+  34 
+  35     private static final int MOVE_TO = 0;
+  36     private static final int DRAWING_OP_TO = 1; // ie. curve, line, or quad
+  37     private static final int CLOSE = 2;
+  38 
+<a name="2" id="anc2"></a><span class="removed">  39     /**</span>
+<span class="removed">  40      * Constant value for join style.</span>
+<span class="removed">  41      */</span>
+<span class="removed">  42     public static final int JOIN_MITER = 0;</span>
+<span class="removed">  43 </span>
+<span class="removed">  44     /**</span>
+<span class="removed">  45      * Constant value for join style.</span>
+<span class="removed">  46      */</span>
+<span class="removed">  47     public static final int JOIN_ROUND = 1;</span>
+<span class="removed">  48 </span>
+<span class="removed">  49     /**</span>
+<span class="removed">  50      * Constant value for join style.</span>
+<span class="removed">  51      */</span>
+<span class="removed">  52     public static final int JOIN_BEVEL = 2;</span>
+<span class="removed">  53 </span>
+<span class="removed">  54     /**</span>
+<span class="removed">  55      * Constant value for end cap style.</span>
+<span class="removed">  56      */</span>
+<span class="removed">  57     public static final int CAP_BUTT = 0;</span>
+<span class="removed">  58 </span>
+<span class="removed">  59     /**</span>
+<span class="removed">  60      * Constant value for end cap style.</span>
+<span class="removed">  61      */</span>
+<span class="removed">  62     public static final int CAP_ROUND = 1;</span>
+<span class="removed">  63 </span>
+<span class="removed">  64     /**</span>
+<span class="removed">  65      * Constant value for end cap style.</span>
+<span class="removed">  66      */</span>
+<span class="removed">  67     public static final int CAP_SQUARE = 2;</span>
+<span class="removed">  68 </span>
+  69     // pisces used to use fixed point arithmetic with 16 decimal digits. I
+  70     // didn't want to change the values of the constant below when I converted
+  71     // it to floating point, so that's why the divisions by 2^16 are there.
+  72     private static final double ROUND_JOIN_THRESHOLD = 1000.0d/65536.0d;
+  73 
+<a name="3" id="anc3"></a><span class="changed">  74     private static final double C = 0.5522847498307933d;</span>
+
+
+
+
+  75 
+  76     private static final int MAX_N_CURVES = 11;
+  77 
+  78     private DPathConsumer2D out;
+  79 
+  80     private int capStyle;
+  81     private int joinStyle;
+  82 
+  83     private double lineWidth2;
+  84     private double invHalfLineWidth2Sq;
+  85 
+  86     private final double[] offset0 = new double[2];
+  87     private final double[] offset1 = new double[2];
+  88     private final double[] offset2 = new double[2];
+  89     private final double[] miter = new double[2];
+  90     private double miterLimitSq;
+  91 
+  92     private int prev;
+  93 
+  94     // The starting point of the path, and the slope there.
+  95     private double sx0, sy0, sdx, sdy;
+  96     // the current point and the slope there.
+  97     private double cx0, cy0, cdx, cdy; // c stands for current
+  98     // vectors that when added to (sx0,sy0) and (cx0,cy0) respectively yield the
+  99     // first and last points on the left parallel path. Since this path is
+ 100     // parallel, it's slope at any point is parallel to the slope of the
+ 101     // original path (thought they may have different directions), so these
+ 102     // could be computed from sdx,sdy and cdx,cdy (and vice versa), but that
+ 103     // would be error prone and hard to read, so we keep these anyway.
+ 104     private double smx, smy, cmx, cmy;
+ 105 
+ 106     private final PolyStack reverse;
+ 107 
+ 108     // This is where the curve to be processed is put. We give it
+ 109     // enough room to store all curves.
+ 110     private final double[] middle = new double[MAX_N_CURVES * 6 + 2];
+ 111     private final double[] lp = new double[8];
+ 112     private final double[] rp = new double[8];
+ 113     private final double[] subdivTs = new double[MAX_N_CURVES - 1];
+ 114 
+ 115     // per-thread renderer context
+ 116     final DRendererContext rdrCtx;
+ 117 
+ 118     // dirty curve
+ 119     final DCurve curve;
+ 120 
+<a name="4" id="anc4"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 121     /**
+ 122      * Constructs a &lt;code&gt;DStroker&lt;/code&gt;.
+ 123      * @param rdrCtx per-thread renderer context
+ 124      */
+ 125     DStroker(final DRendererContext rdrCtx) {
+ 126         this.rdrCtx = rdrCtx;
+ 127 
+<a name="5" id="anc5"></a><span class="changed"> 128         this.reverse = new PolyStack(rdrCtx);</span>
+
+
+
+
+
+
+
+
+ 129         this.curve = rdrCtx.curve;
+ 130     }
+ 131 
+ 132     /**
+ 133      * Inits the &lt;code&gt;DStroker&lt;/code&gt;.
+ 134      *
+ 135      * @param pc2d an output &lt;code&gt;DPathConsumer2D&lt;/code&gt;.
+ 136      * @param lineWidth the desired line width in pixels
+ 137      * @param capStyle the desired end cap style, one of
+ 138      * &lt;code&gt;CAP_BUTT&lt;/code&gt;, &lt;code&gt;CAP_ROUND&lt;/code&gt; or
+ 139      * &lt;code&gt;CAP_SQUARE&lt;/code&gt;.
+ 140      * @param joinStyle the desired line join style, one of
+ 141      * &lt;code&gt;JOIN_MITER&lt;/code&gt;, &lt;code&gt;JOIN_ROUND&lt;/code&gt; or
+ 142      * &lt;code&gt;JOIN_BEVEL&lt;/code&gt;.
+ 143      * @param miterLimit the desired miter limit
+<a name="6" id="anc6"></a>
+ 144      * @return this instance
+ 145      */
+<a name="7" id="anc7"></a><span class="changed"> 146     DStroker init(DPathConsumer2D pc2d,</span>
+<span class="changed"> 147               double lineWidth,</span>
+<span class="changed"> 148               int capStyle,</span>
+<span class="changed"> 149               int joinStyle,</span>
+<span class="changed"> 150               double miterLimit)</span>
+
+ 151     {
+ 152         this.out = pc2d;
+ 153 
+ 154         this.lineWidth2 = lineWidth / 2.0d;
+ 155         this.invHalfLineWidth2Sq = 1.0d / (2.0d * lineWidth2 * lineWidth2);
+ 156         this.capStyle = capStyle;
+ 157         this.joinStyle = joinStyle;
+ 158 
+<a name="8" id="anc8"></a><span class="changed"> 159         double limit = miterLimit * lineWidth2;</span>
+ 160         this.miterLimitSq = limit * limit;
+ 161 
+ 162         this.prev = CLOSE;
+ 163 
+ 164         rdrCtx.stroking = 1;
+ 165 
+<a name="9" id="anc9"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 166         return this; // fluent API
+ 167     }
+ 168 
+ 169     /**
+ 170      * Disposes this stroker:
+ 171      * clean up before reusing this instance
+ 172      */
+ 173     void dispose() {
+ 174         reverse.dispose();
+ 175 
+<a name="10" id="anc10"></a>
+
+
+ 176         if (DO_CLEAN_DIRTY) {
+ 177             // Force zero-fill dirty arrays:
+ 178             Arrays.fill(offset0, 0.0d);
+ 179             Arrays.fill(offset1, 0.0d);
+ 180             Arrays.fill(offset2, 0.0d);
+ 181             Arrays.fill(miter, 0.0d);
+ 182             Arrays.fill(middle, 0.0d);
+ 183             Arrays.fill(lp, 0.0d);
+ 184             Arrays.fill(rp, 0.0d);
+ 185             Arrays.fill(subdivTs, 0.0d);
+ 186         }
+ 187     }
+ 188 
+ 189     private static void computeOffset(final double lx, final double ly,
+ 190                                       final double w, final double[] m)
+ 191     {
+ 192         double len = lx*lx + ly*ly;
+ 193         if (len == 0.0d) {
+ 194             m[0] = 0.0d;
+ 195             m[1] = 0.0d;
+ 196         } else {
+ 197             len = Math.sqrt(len);
+ 198             m[0] =  (ly * w) / len;
+ 199             m[1] = -(lx * w) / len;
+ 200         }
+ 201     }
+ 202 
+ 203     // Returns true if the vectors (dx1, dy1) and (dx2, dy2) are
+ 204     // clockwise (if dx1,dy1 needs to be rotated clockwise to close
+ 205     // the smallest angle between it and dx2,dy2).
+ 206     // This is equivalent to detecting whether a point q is on the right side
+ 207     // of a line passing through points p1, p2 where p2 = p1+(dx1,dy1) and
+ 208     // q = p2+(dx2,dy2), which is the same as saying p1, p2, q are in a
+ 209     // clockwise order.
+ 210     // NOTE: "clockwise" here assumes coordinates with 0,0 at the bottom left.
+ 211     private static boolean isCW(final double dx1, final double dy1,
+ 212                                 final double dx2, final double dy2)
+ 213     {
+ 214         return dx1 * dy2 &lt;= dy1 * dx2;
+ 215     }
+ 216 
+ 217     private void drawRoundJoin(double x, double y,
+ 218                                double omx, double omy, double mx, double my,
+ 219                                boolean rev,
+ 220                                double threshold)
+ 221     {
+ 222         if ((omx == 0.0d &amp;&amp; omy == 0.0d) || (mx == 0.0d &amp;&amp; my == 0.0d)) {
+ 223             return;
+ 224         }
+ 225 
+ 226         double domx = omx - mx;
+ 227         double domy = omy - my;
+ 228         double len = domx*domx + domy*domy;
+ 229         if (len &lt; threshold) {
+ 230             return;
+ 231         }
+ 232 
+ 233         if (rev) {
+ 234             omx = -omx;
+ 235             omy = -omy;
+ 236             mx  = -mx;
+ 237             my  = -my;
+ 238         }
+ 239         drawRoundJoin(x, y, omx, omy, mx, my, rev);
+ 240     }
+ 241 
+ 242     private void drawRoundJoin(double cx, double cy,
+ 243                                double omx, double omy,
+ 244                                double mx, double my,
+ 245                                boolean rev)
+ 246     {
+ 247         // The sign of the dot product of mx,my and omx,omy is equal to the
+ 248         // the sign of the cosine of ext
+ 249         // (ext is the angle between omx,omy and mx,my).
+ 250         final double cosext = omx * mx + omy * my;
+ 251         // If it is &gt;=0, we know that abs(ext) is &lt;= 90 degrees, so we only
+ 252         // need 1 curve to approximate the circle section that joins omx,omy
+ 253         // and mx,my.
+ 254         final int numCurves = (cosext &gt;= 0.0d) ? 1 : 2;
+ 255 
+ 256         switch (numCurves) {
+ 257         case 1:
+ 258             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+ 259             break;
+ 260         case 2:
+ 261             // we need to split the arc into 2 arcs spanning the same angle.
+ 262             // The point we want will be one of the 2 intersections of the
+ 263             // perpendicular bisector of the chord (omx,omy)-&gt;(mx,my) and the
+ 264             // circle. We could find this by scaling the vector
+ 265             // (omx+mx, omy+my)/2 so that it has length=lineWidth2 (and thus lies
+ 266             // on the circle), but that can have numerical problems when the angle
+ 267             // between omx,omy and mx,my is close to 180 degrees. So we compute a
+ 268             // normal of (omx,omy)-(mx,my). This will be the direction of the
+ 269             // perpendicular bisector. To get one of the intersections, we just scale
+ 270             // this vector that its length is lineWidth2 (this works because the
+ 271             // perpendicular bisector goes through the origin). This scaling doesn't
+ 272             // have numerical problems because we know that lineWidth2 divided by
+ 273             // this normal's length is at least 0.5 and at most sqrt(2)/2 (because
+ 274             // we know the angle of the arc is &gt; 90 degrees).
+ 275             double nx = my - omy, ny = omx - mx;
+ 276             double nlen = Math.sqrt(nx*nx + ny*ny);
+ 277             double scale = lineWidth2/nlen;
+ 278             double mmx = nx * scale, mmy = ny * scale;
+ 279 
+ 280             // if (isCW(omx, omy, mx, my) != isCW(mmx, mmy, mx, my)) then we've
+ 281             // computed the wrong intersection so we get the other one.
+ 282             // The test above is equivalent to if (rev).
+ 283             if (rev) {
+ 284                 mmx = -mmx;
+ 285                 mmy = -mmy;
+ 286             }
+ 287             drawBezApproxForArc(cx, cy, omx, omy, mmx, mmy, rev);
+ 288             drawBezApproxForArc(cx, cy, mmx, mmy, mx, my, rev);
+ 289             break;
+ 290         default:
+ 291         }
+ 292     }
+ 293 
+ 294     // the input arc defined by omx,omy and mx,my must span &lt;= 90 degrees.
+ 295     private void drawBezApproxForArc(final double cx, final double cy,
+ 296                                      final double omx, final double omy,
+ 297                                      final double mx, final double my,
+ 298                                      boolean rev)
+ 299     {
+ 300         final double cosext2 = (omx * mx + omy * my) * invHalfLineWidth2Sq;
+ 301 
+ 302         // check round off errors producing cos(ext) &gt; 1 and a NaN below
+ 303         // cos(ext) == 1 implies colinear segments and an empty join anyway
+ 304         if (cosext2 &gt;= 0.5d) {
+ 305             // just return to avoid generating a flat curve:
+ 306             return;
+ 307         }
+ 308 
+ 309         // cv is the length of P1-P0 and P2-P3 divided by the radius of the arc
+ 310         // (so, cv assumes the arc has radius 1). P0, P1, P2, P3 are the points that
+ 311         // define the bezier curve we're computing.
+ 312         // It is computed using the constraints that P1-P0 and P3-P2 are parallel
+ 313         // to the arc tangents at the endpoints, and that |P1-P0|=|P3-P2|.
+ 314         double cv = ((4.0d / 3.0d) * Math.sqrt(0.5d - cosext2) /
+ 315                             (1.0d + Math.sqrt(cosext2 + 0.5d)));
+ 316         // if clockwise, we need to negate cv.
+ 317         if (rev) { // rev is equivalent to isCW(omx, omy, mx, my)
+ 318             cv = -cv;
+ 319         }
+ 320         final double x1 = cx + omx;
+ 321         final double y1 = cy + omy;
+ 322         final double x2 = x1 - cv * omy;
+ 323         final double y2 = y1 + cv * omx;
+ 324 
+ 325         final double x4 = cx + mx;
+ 326         final double y4 = cy + my;
+ 327         final double x3 = x4 + cv * my;
+ 328         final double y3 = y4 - cv * mx;
+ 329 
+ 330         emitCurveTo(x1, y1, x2, y2, x3, y3, x4, y4, rev);
+ 331     }
+ 332 
+ 333     private void drawRoundCap(double cx, double cy, double mx, double my) {
+ 334         final double Cmx = C * mx;
+ 335         final double Cmy = C * my;
+ 336         emitCurveTo(cx + mx - Cmy, cy + my + Cmx,
+ 337                     cx - my + Cmx, cy + mx + Cmy,
+ 338                     cx - my,       cy + mx);
+ 339         emitCurveTo(cx - my - Cmx, cy + mx - Cmy,
+ 340                     cx - mx - Cmy, cy - my + Cmx,
+ 341                     cx - mx,       cy - my);
+ 342     }
+ 343 
+ 344     // Return the intersection point of the lines (x0, y0) -&gt; (x1, y1)
+ 345     // and (x0p, y0p) -&gt; (x1p, y1p) in m[off] and m[off+1]
+ 346     private static void computeMiter(final double x0, final double y0,
+ 347                                      final double x1, final double y1,
+ 348                                      final double x0p, final double y0p,
+ 349                                      final double x1p, final double y1p,
+ 350                                      final double[] m, int off)
+ 351     {
+ 352         double x10 = x1 - x0;
+ 353         double y10 = y1 - y0;
+ 354         double x10p = x1p - x0p;
+ 355         double y10p = y1p - y0p;
+ 356 
+ 357         // if this is 0, the lines are parallel. If they go in the
+ 358         // same direction, there is no intersection so m[off] and
+ 359         // m[off+1] will contain infinity, so no miter will be drawn.
+ 360         // If they go in the same direction that means that the start of the
+ 361         // current segment and the end of the previous segment have the same
+ 362         // tangent, in which case this method won't even be involved in
+ 363         // miter drawing because it won't be called by drawMiter (because
+ 364         // (mx == omx &amp;&amp; my == omy) will be true, and drawMiter will return
+ 365         // immediately).
+ 366         double den = x10*y10p - x10p*y10;
+ 367         double t = x10p*(y0-y0p) - y10p*(x0-x0p);
+ 368         t /= den;
+ 369         m[off++] = x0 + t*x10;
+ 370         m[off]   = y0 + t*y10;
+ 371     }
+ 372 
+ 373     // Return the intersection point of the lines (x0, y0) -&gt; (x1, y1)
+ 374     // and (x0p, y0p) -&gt; (x1p, y1p) in m[off] and m[off+1]
+ 375     private static void safeComputeMiter(final double x0, final double y0,
+ 376                                          final double x1, final double y1,
+ 377                                          final double x0p, final double y0p,
+ 378                                          final double x1p, final double y1p,
+ 379                                          final double[] m, int off)
+ 380     {
+ 381         double x10 = x1 - x0;
+ 382         double y10 = y1 - y0;
+ 383         double x10p = x1p - x0p;
+ 384         double y10p = y1p - y0p;
+ 385 
+ 386         // if this is 0, the lines are parallel. If they go in the
+ 387         // same direction, there is no intersection so m[off] and
+ 388         // m[off+1] will contain infinity, so no miter will be drawn.
+ 389         // If they go in the same direction that means that the start of the
+ 390         // current segment and the end of the previous segment have the same
+ 391         // tangent, in which case this method won't even be involved in
+ 392         // miter drawing because it won't be called by drawMiter (because
+ 393         // (mx == omx &amp;&amp; my == omy) will be true, and drawMiter will return
+ 394         // immediately).
+ 395         double den = x10*y10p - x10p*y10;
+ 396         if (den == 0.0d) {
+ 397             m[off++] = (x0 + x0p) / 2.0d;
+ 398             m[off]   = (y0 + y0p) / 2.0d;
+ 399             return;
+ 400         }
+ 401         double t = x10p*(y0-y0p) - y10p*(x0-x0p);
+ 402         t /= den;
+ 403         m[off++] = x0 + t*x10;
+ 404         m[off] = y0 + t*y10;
+ 405     }
+ 406 
+ 407     private void drawMiter(final double pdx, final double pdy,
+ 408                            final double x0, final double y0,
+ 409                            final double dx, final double dy,
+ 410                            double omx, double omy, double mx, double my,
+ 411                            boolean rev)
+ 412     {
+ 413         if ((mx == omx &amp;&amp; my == omy) ||
+ 414             (pdx == 0.0d &amp;&amp; pdy == 0.0d) ||
+ 415             (dx == 0.0d &amp;&amp; dy == 0.0d))
+ 416         {
+ 417             return;
+ 418         }
+ 419 
+ 420         if (rev) {
+ 421             omx = -omx;
+ 422             omy = -omy;
+ 423             mx  = -mx;
+ 424             my  = -my;
+ 425         }
+ 426 
+ 427         computeMiter((x0 - pdx) + omx, (y0 - pdy) + omy, x0 + omx, y0 + omy,
+ 428                      (dx + x0) + mx, (dy + y0) + my, x0 + mx, y0 + my,
+ 429                      miter, 0);
+ 430 
+ 431         final double miterX = miter[0];
+ 432         final double miterY = miter[1];
+ 433         double lenSq = (miterX-x0)*(miterX-x0) + (miterY-y0)*(miterY-y0);
+ 434 
+ 435         // If the lines are parallel, lenSq will be either NaN or +inf
+ 436         // (actually, I'm not sure if the latter is possible. The important
+ 437         // thing is that -inf is not possible, because lenSq is a square).
+ 438         // For both of those values, the comparison below will fail and
+ 439         // no miter will be drawn, which is correct.
+ 440         if (lenSq &lt; miterLimitSq) {
+ 441             emitLineTo(miterX, miterY, rev);
+ 442         }
+ 443     }
+ 444 
+ 445     @Override
+<a name="11" id="anc11"></a><span class="changed"> 446     public void moveTo(double x0, double y0) {</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 447         if (prev == DRAWING_OP_TO) {
+<a name="12" id="anc12"></a><span class="changed"> 448             finish();</span>
+ 449         }
+<a name="13" id="anc13"></a><span class="removed"> 450         this.sx0 = this.cx0 = x0;</span>
+<span class="removed"> 451         this.sy0 = this.cy0 = y0;</span>
+<span class="removed"> 452         this.cdx = this.sdx = 1.0d;</span>
+<span class="removed"> 453         this.cdy = this.sdy = 0.0d;</span>
+ 454         this.prev = MOVE_TO;
+<a name="14" id="anc14"></a>
+
+
+
+
+ 455     }
+ 456 
+ 457     @Override
+<a name="15" id="anc15"></a><span class="changed"> 458     public void lineTo(double x1, double y1) {</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 459         double dx = x1 - cx0;
+ 460         double dy = y1 - cy0;
+ 461         if (dx == 0.0d &amp;&amp; dy == 0.0d) {
+ 462             dx = 1.0d;
+ 463         }
+ 464         computeOffset(dx, dy, lineWidth2, offset0);
+ 465         final double mx = offset0[0];
+ 466         final double my = offset0[1];
+ 467 
+<a name="16" id="anc16"></a><span class="changed"> 468         drawJoin(cdx, cdy, cx0, cy0, dx, dy, cmx, cmy, mx, my);</span>
+ 469 
+ 470         emitLineTo(cx0 + mx, cy0 + my);
+ 471         emitLineTo( x1 + mx,  y1 + my);
+ 472 
+ 473         emitLineToRev(cx0 - mx, cy0 - my);
+ 474         emitLineToRev( x1 - mx,  y1 - my);
+ 475 
+<a name="17" id="anc17"></a><span class="changed"> 476         this.cmx = mx;</span>
+<span class="changed"> 477         this.cmy = my;</span>
+<span class="changed"> 478         this.cdx = dx;</span>
+<span class="changed"> 479         this.cdy = dy;</span>
+ 480         this.cx0 = x1;
+ 481         this.cy0 = y1;
+<a name="18" id="anc18"></a><span class="changed"> 482         this.prev = DRAWING_OP_TO;</span>
+
+
+
+ 483     }
+ 484 
+ 485     @Override
+ 486     public void closePath() {
+<a name="19" id="anc19"></a><span class="changed"> 487         if (prev != DRAWING_OP_TO) {</span>
+
+ 488             if (prev == CLOSE) {
+ 489                 return;
+ 490             }
+ 491             emitMoveTo(cx0, cy0 - lineWidth2);
+<a name="20" id="anc20"></a><span class="changed"> 492             this.cmx = this.smx = 0.0d;</span>
+<span class="changed"> 493             this.cmy = this.smy = -lineWidth2;</span>
+<span class="changed"> 494             this.cdx = this.sdx = 1.0d;</span>
+<span class="changed"> 495             this.cdy = this.sdy = 0.0d;</span>
+<span class="changed"> 496             finish();</span>
+
+
+
+
+
+
+
+ 497             return;
+ 498         }
+ 499 
+<a name="21" id="anc21"></a>
+
+ 500         if (cx0 != sx0 || cy0 != sy0) {
+<a name="22" id="anc22"></a><span class="changed"> 501             lineTo(sx0, sy0);</span>
+ 502         }
+ 503 
+<a name="23" id="anc23"></a><span class="changed"> 504         drawJoin(cdx, cdy, cx0, cy0, sdx, sdy, cmx, cmy, smx, smy);</span>
+ 505 
+ 506         emitLineTo(sx0 + smx, sy0 + smy);
+ 507 
+<a name="24" id="anc24"></a>
+
+
+ 508         emitMoveTo(sx0 - smx, sy0 - smy);
+<a name="25" id="anc25"></a>
+
+
+ 509         emitReverse();
+ 510 
+ 511         this.prev = CLOSE;
+<a name="26" id="anc26"></a>
+
+
+
+
+ 512         emitClose();
+ 513     }
+<a name="27" id="anc27"></a>
+ 514 
+ 515     private void emitReverse() {
+ 516         reverse.popAll(out);
+ 517     }
+ 518 
+ 519     @Override
+ 520     public void pathDone() {
+ 521         if (prev == DRAWING_OP_TO) {
+<a name="28" id="anc28"></a><span class="changed"> 522             finish();</span>
+ 523         }
+ 524 
+ 525         out.pathDone();
+ 526 
+ 527         // this shouldn't matter since this object won't be used
+ 528         // after the call to this method.
+ 529         this.prev = CLOSE;
+ 530 
+ 531         // Dispose this instance:
+ 532         dispose();
+ 533     }
+ 534 
+<a name="29" id="anc29"></a><span class="changed"> 535     private void finish() {</span>
+
+
+
+
+
+
+
+ 536         if (capStyle == CAP_ROUND) {
+ 537             drawRoundCap(cx0, cy0, cmx, cmy);
+ 538         } else if (capStyle == CAP_SQUARE) {
+ 539             emitLineTo(cx0 - cmy + cmx, cy0 + cmx + cmy);
+ 540             emitLineTo(cx0 - cmy - cmx, cy0 + cmx - cmy);
+ 541         }
+<a name="30" id="anc30"></a><span class="changed"> 542 </span>
+ 543         emitReverse();
+ 544 
+<a name="31" id="anc31"></a>
+
+
+
+
+ 545         if (capStyle == CAP_ROUND) {
+ 546             drawRoundCap(sx0, sy0, -smx, -smy);
+ 547         } else if (capStyle == CAP_SQUARE) {
+ 548             emitLineTo(sx0 + smy - smx, sy0 - smx - smy);
+ 549             emitLineTo(sx0 + smy + smx, sy0 - smx + smy);
+ 550         }
+<a name="32" id="anc32"></a><span class="changed"> 551 </span>
+
+
+
+
+ 552         emitClose();
+ 553     }
+ 554 
+ 555     private void emitMoveTo(final double x0, final double y0) {
+ 556         out.moveTo(x0, y0);
+ 557     }
+ 558 
+ 559     private void emitLineTo(final double x1, final double y1) {
+ 560         out.lineTo(x1, y1);
+ 561     }
+ 562 
+ 563     private void emitLineToRev(final double x1, final double y1) {
+ 564         reverse.pushLine(x1, y1);
+ 565     }
+ 566 
+ 567     private void emitLineTo(final double x1, final double y1,
+ 568                             final boolean rev)
+ 569     {
+ 570         if (rev) {
+ 571             emitLineToRev(x1, y1);
+ 572         } else {
+ 573             emitLineTo(x1, y1);
+ 574         }
+ 575     }
+ 576 
+ 577     private void emitQuadTo(final double x1, final double y1,
+ 578                             final double x2, final double y2)
+ 579     {
+ 580         out.quadTo(x1, y1, x2, y2);
+ 581     }
+ 582 
+ 583     private void emitQuadToRev(final double x0, final double y0,
+ 584                                final double x1, final double y1)
+ 585     {
+ 586         reverse.pushQuad(x0, y0, x1, y1);
+ 587     }
+ 588 
+ 589     private void emitCurveTo(final double x1, final double y1,
+ 590                              final double x2, final double y2,
+ 591                              final double x3, final double y3)
+ 592     {
+ 593         out.curveTo(x1, y1, x2, y2, x3, y3);
+ 594     }
+ 595 
+ 596     private void emitCurveToRev(final double x0, final double y0,
+ 597                                 final double x1, final double y1,
+ 598                                 final double x2, final double y2)
+ 599     {
+ 600         reverse.pushCubic(x0, y0, x1, y1, x2, y2);
+ 601     }
+ 602 
+ 603     private void emitCurveTo(final double x0, final double y0,
+ 604                              final double x1, final double y1,
+ 605                              final double x2, final double y2,
+ 606                              final double x3, final double y3, final boolean rev)
+ 607     {
+ 608         if (rev) {
+ 609             reverse.pushCubic(x0, y0, x1, y1, x2, y2);
+ 610         } else {
+ 611             out.curveTo(x1, y1, x2, y2, x3, y3);
+ 612         }
+ 613     }
+ 614 
+ 615     private void emitClose() {
+ 616         out.closePath();
+ 617     }
+ 618 
+ 619     private void drawJoin(double pdx, double pdy,
+ 620                           double x0, double y0,
+ 621                           double dx, double dy,
+ 622                           double omx, double omy,
+<a name="33" id="anc33"></a><span class="changed"> 623                           double mx, double my)</span>
+
+ 624     {
+ 625         if (prev != DRAWING_OP_TO) {
+ 626             emitMoveTo(x0 + mx, y0 + my);
+<a name="34" id="anc34"></a>
+ 627             this.sdx = dx;
+ 628             this.sdy = dy;
+ 629             this.smx = mx;
+ 630             this.smy = my;
+<a name="35" id="anc35"></a>
+ 631         } else {
+<a name="36" id="anc36"></a><span class="changed"> 632             boolean cw = isCW(pdx, pdy, dx, dy);</span>
+
+ 633             if (joinStyle == JOIN_MITER) {
+ 634                 drawMiter(pdx, pdy, x0, y0, dx, dy, omx, omy, mx, my, cw);
+ 635             } else if (joinStyle == JOIN_ROUND) {
+ 636                 drawRoundJoin(x0, y0,
+ 637                               omx, omy,
+ 638                               mx, my, cw,
+ 639                               ROUND_JOIN_THRESHOLD);
+ 640             }
+<a name="37" id="anc37"></a>
+ 641             emitLineTo(x0, y0, !cw);
+ 642         }
+ 643         prev = DRAWING_OP_TO;
+ 644     }
+ 645 
+ 646     private static boolean within(final double x1, final double y1,
+ 647                                   final double x2, final double y2,
+ 648                                   final double ERR)
+ 649     {
+ 650         assert ERR &gt; 0 : "";
+ 651         // compare taxicab distance. ERR will always be small, so using
+ 652         // true distance won't give much benefit
+ 653         return (DHelpers.within(x1, x2, ERR) &amp;&amp;  // we want to avoid calling Math.abs
+ 654                 DHelpers.within(y1, y2, ERR)); // this is just as good.
+ 655     }
+ 656 
+ 657     private void getLineOffsets(double x1, double y1,
+ 658                                 double x2, double y2,
+ 659                                 double[] left, double[] right) {
+ 660         computeOffset(x2 - x1, y2 - y1, lineWidth2, offset0);
+ 661         final double mx = offset0[0];
+ 662         final double my = offset0[1];
+ 663         left[0] = x1 + mx;
+ 664         left[1] = y1 + my;
+ 665         left[2] = x2 + mx;
+ 666         left[3] = y2 + my;
+ 667         right[0] = x1 - mx;
+ 668         right[1] = y1 - my;
+ 669         right[2] = x2 - mx;
+ 670         right[3] = y2 - my;
+ 671     }
+ 672 
+ 673     private int computeOffsetCubic(double[] pts, final int off,
+ 674                                    double[] leftOff, double[] rightOff)
+ 675     {
+ 676         // if p1=p2 or p3=p4 it means that the derivative at the endpoint
+ 677         // vanishes, which creates problems with computeOffset. Usually
+ 678         // this happens when this stroker object is trying to widen
+ 679         // a curve with a cusp. What happens is that curveTo splits
+ 680         // the input curve at the cusp, and passes it to this function.
+ 681         // because of inaccuracies in the splitting, we consider points
+ 682         // equal if they're very close to each other.
+ 683         final double x1 = pts[off + 0], y1 = pts[off + 1];
+ 684         final double x2 = pts[off + 2], y2 = pts[off + 3];
+ 685         final double x3 = pts[off + 4], y3 = pts[off + 5];
+ 686         final double x4 = pts[off + 6], y4 = pts[off + 7];
+ 687 
+ 688         double dx4 = x4 - x3;
+ 689         double dy4 = y4 - y3;
+ 690         double dx1 = x2 - x1;
+ 691         double dy1 = y2 - y1;
+ 692 
+ 693         // if p1 == p2 &amp;&amp; p3 == p4: draw line from p1-&gt;p4, unless p1 == p4,
+ 694         // in which case ignore if p1 == p2
+ 695         final boolean p1eqp2 = within(x1, y1, x2, y2, 6.0d * Math.ulp(y2));
+ 696         final boolean p3eqp4 = within(x3, y3, x4, y4, 6.0d * Math.ulp(y4));
+ 697         if (p1eqp2 &amp;&amp; p3eqp4) {
+ 698             getLineOffsets(x1, y1, x4, y4, leftOff, rightOff);
+ 699             return 4;
+ 700         } else if (p1eqp2) {
+ 701             dx1 = x3 - x1;
+ 702             dy1 = y3 - y1;
+ 703         } else if (p3eqp4) {
+ 704             dx4 = x4 - x2;
+ 705             dy4 = y4 - y2;
+ 706         }
+ 707 
+ 708         // if p2-p1 and p4-p3 are parallel, that must mean this curve is a line
+ 709         double dotsq = (dx1 * dx4 + dy1 * dy4);
+ 710         dotsq *= dotsq;
+ 711         double l1sq = dx1 * dx1 + dy1 * dy1, l4sq = dx4 * dx4 + dy4 * dy4;
+ 712         if (DHelpers.within(dotsq, l1sq * l4sq, 4.0d * Math.ulp(dotsq))) {
+ 713             getLineOffsets(x1, y1, x4, y4, leftOff, rightOff);
+ 714             return 4;
+ 715         }
+ 716 
+ 717 //      What we're trying to do in this function is to approximate an ideal
+ 718 //      offset curve (call it I) of the input curve B using a bezier curve Bp.
+ 719 //      The constraints I use to get the equations are:
+ 720 //
+ 721 //      1. The computed curve Bp should go through I(0) and I(1). These are
+ 722 //      x1p, y1p, x4p, y4p, which are p1p and p4p. We still need to find
+ 723 //      4 variables: the x and y components of p2p and p3p (i.e. x2p, y2p, x3p, y3p).
+ 724 //
+ 725 //      2. Bp should have slope equal in absolute value to I at the endpoints. So,
+ 726 //      (by the way, the operator || in the comments below means "aligned with".
+ 727 //      It is defined on vectors, so when we say I'(0) || Bp'(0) we mean that
+ 728 //      vectors I'(0) and Bp'(0) are aligned, which is the same as saying
+ 729 //      that the tangent lines of I and Bp at 0 are parallel. Mathematically
+ 730 //      this means (I'(t) || Bp'(t)) &lt;==&gt; (I'(t) = c * Bp'(t)) where c is some
+ 731 //      nonzero constant.)
+ 732 //      I'(0) || Bp'(0) and I'(1) || Bp'(1). Obviously, I'(0) || B'(0) and
+ 733 //      I'(1) || B'(1); therefore, Bp'(0) || B'(0) and Bp'(1) || B'(1).
+ 734 //      We know that Bp'(0) || (p2p-p1p) and Bp'(1) || (p4p-p3p) and the same
+ 735 //      is true for any bezier curve; therefore, we get the equations
+ 736 //          (1) p2p = c1 * (p2-p1) + p1p
+ 737 //          (2) p3p = c2 * (p4-p3) + p4p
+ 738 //      We know p1p, p4p, p2, p1, p3, and p4; therefore, this reduces the number
+ 739 //      of unknowns from 4 to 2 (i.e. just c1 and c2).
+ 740 //      To eliminate these 2 unknowns we use the following constraint:
+ 741 //
+ 742 //      3. Bp(0.5) == I(0.5). Bp(0.5)=(x,y) and I(0.5)=(xi,yi), and I should note
+ 743 //      that I(0.5) is *the only* reason for computing dxm,dym. This gives us
+ 744 //          (3) Bp(0.5) = (p1p + 3 * (p2p + p3p) + p4p)/8, which is equivalent to
+ 745 //          (4) p2p + p3p = (Bp(0.5)*8 - p1p - p4p) / 3
+ 746 //      We can substitute (1) and (2) from above into (4) and we get:
+ 747 //          (5) c1*(p2-p1) + c2*(p4-p3) = (Bp(0.5)*8 - p1p - p4p)/3 - p1p - p4p
+ 748 //      which is equivalent to
+ 749 //          (6) c1*(p2-p1) + c2*(p4-p3) = (4/3) * (Bp(0.5) * 2 - p1p - p4p)
+ 750 //
+ 751 //      The right side of this is a 2D vector, and we know I(0.5), which gives us
+ 752 //      Bp(0.5), which gives us the value of the right side.
+ 753 //      The left side is just a matrix vector multiplication in disguise. It is
+ 754 //
+ 755 //      [x2-x1, x4-x3][c1]
+ 756 //      [y2-y1, y4-y3][c2]
+ 757 //      which, is equal to
+ 758 //      [dx1, dx4][c1]
+ 759 //      [dy1, dy4][c2]
+ 760 //      At this point we are left with a simple linear system and we solve it by
+ 761 //      getting the inverse of the matrix above. Then we use [c1,c2] to compute
+ 762 //      p2p and p3p.
+ 763 
+ 764         double x = (x1 + 3.0d * (x2 + x3) + x4) / 8.0d;
+ 765         double y = (y1 + 3.0d * (y2 + y3) + y4) / 8.0d;
+ 766         // (dxm,dym) is some tangent of B at t=0.5. This means it's equal to
+ 767         // c*B'(0.5) for some constant c.
+ 768         double dxm = x3 + x4 - x1 - x2, dym = y3 + y4 - y1 - y2;
+ 769 
+ 770         // this computes the offsets at t=0, 0.5, 1, using the property that
+ 771         // for any bezier curve the vectors p2-p1 and p4-p3 are parallel to
+ 772         // the (dx/dt, dy/dt) vectors at the endpoints.
+ 773         computeOffset(dx1, dy1, lineWidth2, offset0);
+ 774         computeOffset(dxm, dym, lineWidth2, offset1);
+ 775         computeOffset(dx4, dy4, lineWidth2, offset2);
+ 776         double x1p = x1 + offset0[0]; // start
+ 777         double y1p = y1 + offset0[1]; // point
+ 778         double xi  = x  + offset1[0]; // interpolation
+ 779         double yi  = y  + offset1[1]; // point
+ 780         double x4p = x4 + offset2[0]; // end
+ 781         double y4p = y4 + offset2[1]; // point
+ 782 
+ 783         double invdet43 = 4.0d / (3.0d * (dx1 * dy4 - dy1 * dx4));
+ 784 
+ 785         double two_pi_m_p1_m_p4x = 2.0d * xi - x1p - x4p;
+ 786         double two_pi_m_p1_m_p4y = 2.0d * yi - y1p - y4p;
+ 787         double c1 = invdet43 * (dy4 * two_pi_m_p1_m_p4x - dx4 * two_pi_m_p1_m_p4y);
+ 788         double c2 = invdet43 * (dx1 * two_pi_m_p1_m_p4y - dy1 * two_pi_m_p1_m_p4x);
+ 789 
+ 790         double x2p, y2p, x3p, y3p;
+ 791         x2p = x1p + c1*dx1;
+ 792         y2p = y1p + c1*dy1;
+ 793         x3p = x4p + c2*dx4;
+ 794         y3p = y4p + c2*dy4;
+ 795 
+ 796         leftOff[0] = x1p; leftOff[1] = y1p;
+ 797         leftOff[2] = x2p; leftOff[3] = y2p;
+ 798         leftOff[4] = x3p; leftOff[5] = y3p;
+ 799         leftOff[6] = x4p; leftOff[7] = y4p;
+ 800 
+ 801         x1p = x1 - offset0[0]; y1p = y1 - offset0[1];
+ 802         xi = xi - 2.0d * offset1[0]; yi = yi - 2.0d * offset1[1];
+ 803         x4p = x4 - offset2[0]; y4p = y4 - offset2[1];
+ 804 
+ 805         two_pi_m_p1_m_p4x = 2.0d * xi - x1p - x4p;
+ 806         two_pi_m_p1_m_p4y = 2.0d * yi - y1p - y4p;
+ 807         c1 = invdet43 * (dy4 * two_pi_m_p1_m_p4x - dx4 * two_pi_m_p1_m_p4y);
+ 808         c2 = invdet43 * (dx1 * two_pi_m_p1_m_p4y - dy1 * two_pi_m_p1_m_p4x);
+ 809 
+ 810         x2p = x1p + c1*dx1;
+ 811         y2p = y1p + c1*dy1;
+ 812         x3p = x4p + c2*dx4;
+ 813         y3p = y4p + c2*dy4;
+ 814 
+ 815         rightOff[0] = x1p; rightOff[1] = y1p;
+ 816         rightOff[2] = x2p; rightOff[3] = y2p;
+ 817         rightOff[4] = x3p; rightOff[5] = y3p;
+ 818         rightOff[6] = x4p; rightOff[7] = y4p;
+ 819         return 8;
+ 820     }
+ 821 
+ 822     // compute offset curves using bezier spline through t=0.5 (i.e.
+ 823     // ComputedCurve(0.5) == IdealParallelCurve(0.5))
+ 824     // return the kind of curve in the right and left arrays.
+ 825     private int computeOffsetQuad(double[] pts, final int off,
+ 826                                   double[] leftOff, double[] rightOff)
+ 827     {
+ 828         final double x1 = pts[off + 0], y1 = pts[off + 1];
+ 829         final double x2 = pts[off + 2], y2 = pts[off + 3];
+ 830         final double x3 = pts[off + 4], y3 = pts[off + 5];
+ 831 
+ 832         final double dx3 = x3 - x2;
+ 833         final double dy3 = y3 - y2;
+ 834         final double dx1 = x2 - x1;
+ 835         final double dy1 = y2 - y1;
+ 836 
+ 837         // if p1=p2 or p3=p4 it means that the derivative at the endpoint
+ 838         // vanishes, which creates problems with computeOffset. Usually
+ 839         // this happens when this stroker object is trying to widen
+ 840         // a curve with a cusp. What happens is that curveTo splits
+ 841         // the input curve at the cusp, and passes it to this function.
+ 842         // because of inaccuracies in the splitting, we consider points
+ 843         // equal if they're very close to each other.
+ 844 
+ 845         // if p1 == p2 &amp;&amp; p3 == p4: draw line from p1-&gt;p4, unless p1 == p4,
+ 846         // in which case ignore.
+ 847         final boolean p1eqp2 = within(x1, y1, x2, y2, 6.0d * Math.ulp(y2));
+ 848         final boolean p2eqp3 = within(x2, y2, x3, y3, 6.0d * Math.ulp(y3));
+ 849         if (p1eqp2 || p2eqp3) {
+ 850             getLineOffsets(x1, y1, x3, y3, leftOff, rightOff);
+ 851             return 4;
+ 852         }
+ 853 
+ 854         // if p2-p1 and p4-p3 are parallel, that must mean this curve is a line
+ 855         double dotsq = (dx1 * dx3 + dy1 * dy3);
+ 856         dotsq *= dotsq;
+ 857         double l1sq = dx1 * dx1 + dy1 * dy1, l3sq = dx3 * dx3 + dy3 * dy3;
+ 858         if (DHelpers.within(dotsq, l1sq * l3sq, 4.0d * Math.ulp(dotsq))) {
+ 859             getLineOffsets(x1, y1, x3, y3, leftOff, rightOff);
+ 860             return 4;
+ 861         }
+ 862 
+ 863         // this computes the offsets at t=0, 0.5, 1, using the property that
+ 864         // for any bezier curve the vectors p2-p1 and p4-p3 are parallel to
+ 865         // the (dx/dt, dy/dt) vectors at the endpoints.
+ 866         computeOffset(dx1, dy1, lineWidth2, offset0);
+ 867         computeOffset(dx3, dy3, lineWidth2, offset1);
+ 868 
+ 869         double x1p = x1 + offset0[0]; // start
+ 870         double y1p = y1 + offset0[1]; // point
+ 871         double x3p = x3 + offset1[0]; // end
+ 872         double y3p = y3 + offset1[1]; // point
+ 873         safeComputeMiter(x1p, y1p, x1p+dx1, y1p+dy1, x3p, y3p, x3p-dx3, y3p-dy3, leftOff, 2);
+ 874         leftOff[0] = x1p; leftOff[1] = y1p;
+ 875         leftOff[4] = x3p; leftOff[5] = y3p;
+ 876 
+ 877         x1p = x1 - offset0[0]; y1p = y1 - offset0[1];
+ 878         x3p = x3 - offset1[0]; y3p = y3 - offset1[1];
+ 879         safeComputeMiter(x1p, y1p, x1p+dx1, y1p+dy1, x3p, y3p, x3p-dx3, y3p-dy3, rightOff, 2);
+ 880         rightOff[0] = x1p; rightOff[1] = y1p;
+ 881         rightOff[4] = x3p; rightOff[5] = y3p;
+ 882         return 6;
+ 883     }
+ 884 
+ 885     // finds values of t where the curve in pts should be subdivided in order
+ 886     // to get good offset curves a distance of w away from the middle curve.
+ 887     // Stores the points in ts, and returns how many of them there were.
+ 888     private static int findSubdivPoints(final DCurve c, double[] pts, double[] ts,
+ 889                                         final int type, final double w)
+ 890     {
+ 891         final double x12 = pts[2] - pts[0];
+ 892         final double y12 = pts[3] - pts[1];
+ 893         // if the curve is already parallel to either axis we gain nothing
+ 894         // from rotating it.
+ 895         if (y12 != 0.0d &amp;&amp; x12 != 0.0d) {
+ 896             // we rotate it so that the first vector in the control polygon is
+ 897             // parallel to the x-axis. This will ensure that rotated quarter
+ 898             // circles won't be subdivided.
+ 899             final double hypot = Math.sqrt(x12 * x12 + y12 * y12);
+ 900             final double cos = x12 / hypot;
+ 901             final double sin = y12 / hypot;
+ 902             final double x1 = cos * pts[0] + sin * pts[1];
+ 903             final double y1 = cos * pts[1] - sin * pts[0];
+ 904             final double x2 = cos * pts[2] + sin * pts[3];
+ 905             final double y2 = cos * pts[3] - sin * pts[2];
+ 906             final double x3 = cos * pts[4] + sin * pts[5];
+ 907             final double y3 = cos * pts[5] - sin * pts[4];
+ 908 
+ 909             switch(type) {
+ 910             case 8:
+ 911                 final double x4 = cos * pts[6] + sin * pts[7];
+ 912                 final double y4 = cos * pts[7] - sin * pts[6];
+ 913                 c.set(x1, y1, x2, y2, x3, y3, x4, y4);
+ 914                 break;
+ 915             case 6:
+ 916                 c.set(x1, y1, x2, y2, x3, y3);
+ 917                 break;
+ 918             default:
+ 919             }
+ 920         } else {
+ 921             c.set(pts, type);
+ 922         }
+ 923 
+ 924         int ret = 0;
+ 925         // we subdivide at values of t such that the remaining rotated
+ 926         // curves are monotonic in x and y.
+ 927         ret += c.dxRoots(ts, ret);
+ 928         ret += c.dyRoots(ts, ret);
+ 929         // subdivide at inflection points.
+ 930         if (type == 8) {
+ 931             // quadratic curves can't have inflection points
+ 932             ret += c.infPoints(ts, ret);
+ 933         }
+ 934 
+ 935         // now we must subdivide at points where one of the offset curves will have
+ 936         // a cusp. This happens at ts where the radius of curvature is equal to w.
+ 937         ret += c.rootsOfROCMinusW(ts, ret, w, 0.0001d);
+ 938 
+ 939         ret = DHelpers.filterOutNotInAB(ts, 0, ret, 0.0001d, 0.9999d);
+ 940         DHelpers.isort(ts, 0, ret);
+ 941         return ret;
+ 942     }
+ 943 
+<a name="38" id="anc38"></a><span class="changed"> 944     @Override public void curveTo(double x1, double y1,</span>
+<span class="changed"> 945                                   double x2, double y2,</span>
+<span class="changed"> 946                                   double x3, double y3)</span>
+
+ 947     {
+<a name="39" id="anc39"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 948         final double[] mid = middle;
+ 949 
+ 950         mid[0] = cx0; mid[1] = cy0;
+ 951         mid[2] = x1;  mid[3] = y1;
+ 952         mid[4] = x2;  mid[5] = y2;
+ 953         mid[6] = x3;  mid[7] = y3;
+ 954 
+ 955         // need these so we can update the state at the end of this method
+<a name="40" id="anc40"></a><span class="changed"> 956         final double xf = mid[6], yf = mid[7];</span>
+ 957         double dxs = mid[2] - mid[0];
+ 958         double dys = mid[3] - mid[1];
+ 959         double dxf = mid[6] - mid[4];
+ 960         double dyf = mid[7] - mid[5];
+ 961 
+ 962         boolean p1eqp2 = (dxs == 0.0d &amp;&amp; dys == 0.0d);
+ 963         boolean p3eqp4 = (dxf == 0.0d &amp;&amp; dyf == 0.0d);
+ 964         if (p1eqp2) {
+ 965             dxs = mid[4] - mid[0];
+ 966             dys = mid[5] - mid[1];
+ 967             if (dxs == 0.0d &amp;&amp; dys == 0.0d) {
+ 968                 dxs = mid[6] - mid[0];
+ 969                 dys = mid[7] - mid[1];
+ 970             }
+ 971         }
+ 972         if (p3eqp4) {
+ 973             dxf = mid[6] - mid[2];
+ 974             dyf = mid[7] - mid[3];
+ 975             if (dxf == 0.0d &amp;&amp; dyf == 0.0d) {
+ 976                 dxf = mid[6] - mid[0];
+ 977                 dyf = mid[7] - mid[1];
+ 978             }
+ 979         }
+ 980         if (dxs == 0.0d &amp;&amp; dys == 0.0d) {
+ 981             // this happens if the "curve" is just a point
+<a name="41" id="anc41"></a>
+
+
+
+ 982             lineTo(mid[0], mid[1]);
+ 983             return;
+ 984         }
+ 985 
+ 986         // if these vectors are too small, normalize them, to avoid future
+ 987         // precision problems.
+ 988         if (Math.abs(dxs) &lt; 0.1d &amp;&amp; Math.abs(dys) &lt; 0.1d) {
+ 989             double len = Math.sqrt(dxs*dxs + dys*dys);
+ 990             dxs /= len;
+ 991             dys /= len;
+ 992         }
+ 993         if (Math.abs(dxf) &lt; 0.1d &amp;&amp; Math.abs(dyf) &lt; 0.1d) {
+ 994             double len = Math.sqrt(dxf*dxf + dyf*dyf);
+ 995             dxf /= len;
+ 996             dyf /= len;
+ 997         }
+ 998 
+ 999         computeOffset(dxs, dys, lineWidth2, offset0);
+<a name="42" id="anc42"></a><span class="changed">1000         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1]);</span>
+1001 
+1002         final int nSplits = findSubdivPoints(curve, mid, subdivTs, 8, lineWidth2);
+1003 
+1004         double prevT = 0.0d;
+1005         for (int i = 0, off = 0; i &lt; nSplits; i++, off += 6) {
+1006             final double t = subdivTs[i];
+1007             DHelpers.subdivideCubicAt((t - prevT) / (1.0d - prevT),
+1008                                      mid, off, mid, off, mid, off + 6);
+1009             prevT = t;
+1010         }
+1011 
+1012         final double[] l = lp;
+1013         final double[] r = rp;
+1014 
+1015         int kind = 0;
+1016         for (int i = 0, off = 0; i &lt;= nSplits; i++, off += 6) {
+1017             kind = computeOffsetCubic(mid, off, l, r);
+1018 
+1019             emitLineTo(l[0], l[1]);
+1020 
+1021             switch(kind) {
+1022             case 8:
+1023                 emitCurveTo(l[2], l[3], l[4], l[5], l[6], l[7]);
+1024                 emitCurveToRev(r[0], r[1], r[2], r[3], r[4], r[5]);
+1025                 break;
+1026             case 4:
+1027                 emitLineTo(l[2], l[3]);
+1028                 emitLineToRev(r[0], r[1]);
+1029                 break;
+1030             default:
+1031             }
+1032             emitLineToRev(r[kind - 2], r[kind - 1]);
+1033         }
+1034 
+<a name="43" id="anc43"></a><span class="changed">1035         this.cmx = (l[kind - 2] - r[kind - 2]) / 2.0d;</span>
+<span class="changed">1036         this.cmy = (l[kind - 1] - r[kind - 1]) / 2.0d;</span>
+<span class="changed">1037         this.cdx = dxf;</span>
+<span class="changed">1038         this.cdy = dyf;</span>
+1039         this.cx0 = xf;
+1040         this.cy0 = yf;
+<a name="44" id="anc44"></a><span class="changed">1041         this.prev = DRAWING_OP_TO;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1042     }
+1043 
+<a name="45" id="anc45"></a><span class="removed">1044     @Override public void quadTo(double x1, double y1, double x2, double y2) {</span>
+1045         final double[] mid = middle;
+1046 
+1047         mid[0] = cx0; mid[1] = cy0;
+1048         mid[2] = x1;  mid[3] = y1;
+1049         mid[4] = x2;  mid[5] = y2;
+1050 
+1051         // need these so we can update the state at the end of this method
+<a name="46" id="anc46"></a><span class="changed">1052         final double xf = mid[4], yf = mid[5];</span>
+1053         double dxs = mid[2] - mid[0];
+1054         double dys = mid[3] - mid[1];
+1055         double dxf = mid[4] - mid[2];
+1056         double dyf = mid[5] - mid[3];
+1057         if ((dxs == 0.0d &amp;&amp; dys == 0.0d) || (dxf == 0.0d &amp;&amp; dyf == 0.0d)) {
+1058             dxs = dxf = mid[4] - mid[0];
+1059             dys = dyf = mid[5] - mid[1];
+1060         }
+1061         if (dxs == 0.0d &amp;&amp; dys == 0.0d) {
+1062             // this happens if the "curve" is just a point
+<a name="47" id="anc47"></a>
+
+
+
+1063             lineTo(mid[0], mid[1]);
+1064             return;
+1065         }
+1066         // if these vectors are too small, normalize them, to avoid future
+1067         // precision problems.
+1068         if (Math.abs(dxs) &lt; 0.1d &amp;&amp; Math.abs(dys) &lt; 0.1d) {
+1069             double len = Math.sqrt(dxs*dxs + dys*dys);
+1070             dxs /= len;
+1071             dys /= len;
+1072         }
+1073         if (Math.abs(dxf) &lt; 0.1d &amp;&amp; Math.abs(dyf) &lt; 0.1d) {
+1074             double len = Math.sqrt(dxf*dxf + dyf*dyf);
+1075             dxf /= len;
+1076             dyf /= len;
+1077         }
+1078 
+1079         computeOffset(dxs, dys, lineWidth2, offset0);
+<a name="48" id="anc48"></a><span class="changed">1080         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1]);</span>
+1081 
+1082         int nSplits = findSubdivPoints(curve, mid, subdivTs, 6, lineWidth2);
+1083 
+1084         double prevt = 0.0d;
+1085         for (int i = 0, off = 0; i &lt; nSplits; i++, off += 4) {
+1086             final double t = subdivTs[i];
+1087             DHelpers.subdivideQuadAt((t - prevt) / (1.0d - prevt),
+1088                                     mid, off, mid, off, mid, off + 4);
+1089             prevt = t;
+1090         }
+1091 
+1092         final double[] l = lp;
+1093         final double[] r = rp;
+1094 
+1095         int kind = 0;
+1096         for (int i = 0, off = 0; i &lt;= nSplits; i++, off += 4) {
+1097             kind = computeOffsetQuad(mid, off, l, r);
+1098 
+1099             emitLineTo(l[0], l[1]);
+1100 
+1101             switch(kind) {
+1102             case 6:
+1103                 emitQuadTo(l[2], l[3], l[4], l[5]);
+1104                 emitQuadToRev(r[0], r[1], r[2], r[3]);
+1105                 break;
+1106             case 4:
+1107                 emitLineTo(l[2], l[3]);
+1108                 emitLineToRev(r[0], r[1]);
+1109                 break;
+1110             default:
+1111             }
+1112             emitLineToRev(r[kind - 2], r[kind - 1]);
+1113         }
+1114 
+<a name="49" id="anc49"></a><span class="changed">1115         this.cmx = (l[kind - 2] - r[kind - 2]) / 2.0d;</span>
+<span class="changed">1116         this.cmy = (l[kind - 1] - r[kind - 1]) / 2.0d;</span>
+<span class="changed">1117         this.cdx = dxf;</span>
+<span class="changed">1118         this.cdy = dyf;</span>
+1119         this.cx0 = xf;
+1120         this.cy0 = yf;
+<a name="50" id="anc50"></a><span class="changed">1121         this.prev = DRAWING_OP_TO;</span>
+
+
+
+1122     }
+1123 
+1124     @Override public long getNativeConsumer() {
+1125         throw new InternalError("Stroker doesn't use a native consumer");
+1126     }
+<a name="51" id="anc51"></a><span class="removed">1127 </span>
+<span class="removed">1128     // a stack of polynomial curves where each curve shares endpoints with</span>
+<span class="removed">1129     // adjacent ones.</span>
+<span class="removed">1130     static final class PolyStack {</span>
+<span class="removed">1131         private static final byte TYPE_LINETO  = (byte) 0;</span>
+<span class="removed">1132         private static final byte TYPE_QUADTO  = (byte) 1;</span>
+<span class="removed">1133         private static final byte TYPE_CUBICTO = (byte) 2;</span>
+<span class="removed">1134 </span>
+<span class="removed">1135         // curves capacity = edges count (8192) = edges x 2 (coords)</span>
+<span class="removed">1136         private static final int INITIAL_CURVES_COUNT = INITIAL_EDGES_COUNT &lt;&lt; 1;</span>
+<span class="removed">1137 </span>
+<span class="removed">1138         // types capacity = edges count (4096)</span>
+<span class="removed">1139         private static final int INITIAL_TYPES_COUNT = INITIAL_EDGES_COUNT;</span>
+<span class="removed">1140 </span>
+<span class="removed">1141         double[] curves;</span>
+<span class="removed">1142         int end;</span>
+<span class="removed">1143         byte[] curveTypes;</span>
+<span class="removed">1144         int numCurves;</span>
+<span class="removed">1145 </span>
+<span class="removed">1146         // per-thread renderer context</span>
+<span class="removed">1147         final DRendererContext rdrCtx;</span>
+<span class="removed">1148 </span>
+<span class="removed">1149         // curves ref (dirty)</span>
+<span class="removed">1150         final DoubleArrayCache.Reference curves_ref;</span>
+<span class="removed">1151         // curveTypes ref (dirty)</span>
+<span class="removed">1152         final ByteArrayCache.Reference curveTypes_ref;</span>
+<span class="removed">1153 </span>
+<span class="removed">1154         // used marks (stats only)</span>
+<span class="removed">1155         int curveTypesUseMark;</span>
+<span class="removed">1156         int curvesUseMark;</span>
+<span class="removed">1157 </span>
+<span class="removed">1158         /**</span>
+<span class="removed">1159          * Constructor</span>
+<span class="removed">1160          * @param rdrCtx per-thread renderer context</span>
+<span class="removed">1161          */</span>
+<span class="removed">1162         PolyStack(final DRendererContext rdrCtx) {</span>
+<span class="removed">1163             this.rdrCtx = rdrCtx;</span>
+<span class="removed">1164 </span>
+<span class="removed">1165             curves_ref = rdrCtx.newDirtyDoubleArrayRef(INITIAL_CURVES_COUNT); // 32K</span>
+<span class="removed">1166             curves     = curves_ref.initial;</span>
+<span class="removed">1167 </span>
+<span class="removed">1168             curveTypes_ref = rdrCtx.newDirtyByteArrayRef(INITIAL_TYPES_COUNT); // 4K</span>
+<span class="removed">1169             curveTypes     = curveTypes_ref.initial;</span>
+<span class="removed">1170             numCurves = 0;</span>
+<span class="removed">1171             end = 0;</span>
+<span class="removed">1172 </span>
+<span class="removed">1173             if (DO_STATS) {</span>
+<span class="removed">1174                 curveTypesUseMark = 0;</span>
+<span class="removed">1175                 curvesUseMark = 0;</span>
+<span class="removed">1176             }</span>
+<span class="removed">1177         }</span>
+<span class="removed">1178 </span>
+<span class="removed">1179         /**</span>
+<span class="removed">1180          * Disposes this PolyStack:</span>
+<span class="removed">1181          * clean up before reusing this instance</span>
+<span class="removed">1182          */</span>
+<span class="removed">1183         void dispose() {</span>
+<span class="removed">1184             end = 0;</span>
+<span class="removed">1185             numCurves = 0;</span>
+<span class="removed">1186 </span>
+<span class="removed">1187             if (DO_STATS) {</span>
+<span class="removed">1188                 rdrCtx.stats.stat_rdr_poly_stack_types.add(curveTypesUseMark);</span>
+<span class="removed">1189                 rdrCtx.stats.stat_rdr_poly_stack_curves.add(curvesUseMark);</span>
+<span class="removed">1190                 rdrCtx.stats.hist_rdr_poly_stack_curves.add(curvesUseMark);</span>
+<span class="removed">1191 </span>
+<span class="removed">1192                 // reset marks</span>
+<span class="removed">1193                 curveTypesUseMark = 0;</span>
+<span class="removed">1194                 curvesUseMark = 0;</span>
+<span class="removed">1195             }</span>
+<span class="removed">1196 </span>
+<span class="removed">1197             // Return arrays:</span>
+<span class="removed">1198             // curves and curveTypes are kept dirty</span>
+<span class="removed">1199             curves     = curves_ref.putArray(curves);</span>
+<span class="removed">1200             curveTypes = curveTypes_ref.putArray(curveTypes);</span>
+<span class="removed">1201         }</span>
+<span class="removed">1202 </span>
+<span class="removed">1203         private void ensureSpace(final int n) {</span>
+<span class="removed">1204             // use substraction to avoid integer overflow:</span>
+<span class="removed">1205             if (curves.length - end &lt; n) {</span>
+<span class="removed">1206                 if (DO_STATS) {</span>
+<span class="removed">1207                     rdrCtx.stats.stat_array_stroker_polystack_curves</span>
+<span class="removed">1208                         .add(end + n);</span>
+<span class="removed">1209                 }</span>
+<span class="removed">1210                 curves = curves_ref.widenArray(curves, end, end + n);</span>
+<span class="removed">1211             }</span>
+<span class="removed">1212             if (curveTypes.length &lt;= numCurves) {</span>
+<span class="removed">1213                 if (DO_STATS) {</span>
+<span class="removed">1214                     rdrCtx.stats.stat_array_stroker_polystack_curveTypes</span>
+<span class="removed">1215                         .add(numCurves + 1);</span>
+<span class="removed">1216                 }</span>
+<span class="removed">1217                 curveTypes = curveTypes_ref.widenArray(curveTypes,</span>
+<span class="removed">1218                                                        numCurves,</span>
+<span class="removed">1219                                                        numCurves + 1);</span>
+<span class="removed">1220             }</span>
+<span class="removed">1221         }</span>
+<span class="removed">1222 </span>
+<span class="removed">1223         void pushCubic(double x0, double y0,</span>
+<span class="removed">1224                        double x1, double y1,</span>
+<span class="removed">1225                        double x2, double y2)</span>
+<span class="removed">1226         {</span>
+<span class="removed">1227             ensureSpace(6);</span>
+<span class="removed">1228             curveTypes[numCurves++] = TYPE_CUBICTO;</span>
+<span class="removed">1229             // we reverse the coordinate order to make popping easier</span>
+<span class="removed">1230             final double[] _curves = curves;</span>
+<span class="removed">1231             int e = end;</span>
+<span class="removed">1232             _curves[e++] = x2;    _curves[e++] = y2;</span>
+<span class="removed">1233             _curves[e++] = x1;    _curves[e++] = y1;</span>
+<span class="removed">1234             _curves[e++] = x0;    _curves[e++] = y0;</span>
+<span class="removed">1235             end = e;</span>
+<span class="removed">1236         }</span>
+<span class="removed">1237 </span>
+<span class="removed">1238         void pushQuad(double x0, double y0,</span>
+<span class="removed">1239                       double x1, double y1)</span>
+<span class="removed">1240         {</span>
+<span class="removed">1241             ensureSpace(4);</span>
+<span class="removed">1242             curveTypes[numCurves++] = TYPE_QUADTO;</span>
+<span class="removed">1243             final double[] _curves = curves;</span>
+<span class="removed">1244             int e = end;</span>
+<span class="removed">1245             _curves[e++] = x1;    _curves[e++] = y1;</span>
+<span class="removed">1246             _curves[e++] = x0;    _curves[e++] = y0;</span>
+<span class="removed">1247             end = e;</span>
+<span class="removed">1248         }</span>
+<span class="removed">1249 </span>
+<span class="removed">1250         void pushLine(double x, double y) {</span>
+<span class="removed">1251             ensureSpace(2);</span>
+<span class="removed">1252             curveTypes[numCurves++] = TYPE_LINETO;</span>
+<span class="removed">1253             curves[end++] = x;    curves[end++] = y;</span>
+<span class="removed">1254         }</span>
+<span class="removed">1255 </span>
+<span class="removed">1256         void popAll(DPathConsumer2D io) {</span>
+<span class="removed">1257             if (DO_STATS) {</span>
+<span class="removed">1258                 // update used marks:</span>
+<span class="removed">1259                 if (numCurves &gt; curveTypesUseMark) {</span>
+<span class="removed">1260                     curveTypesUseMark = numCurves;</span>
+<span class="removed">1261                 }</span>
+<span class="removed">1262                 if (end &gt; curvesUseMark) {</span>
+<span class="removed">1263                     curvesUseMark = end;</span>
+<span class="removed">1264                 }</span>
+<span class="removed">1265             }</span>
+<span class="removed">1266             final byte[]  _curveTypes = curveTypes;</span>
+<span class="removed">1267             final double[] _curves = curves;</span>
+<span class="removed">1268             int nc = numCurves;</span>
+<span class="removed">1269             int e  = end;</span>
+<span class="removed">1270 </span>
+<span class="removed">1271             while (nc != 0) {</span>
+<span class="removed">1272                 switch(_curveTypes[--nc]) {</span>
+<span class="removed">1273                 case TYPE_LINETO:</span>
+<span class="removed">1274                     e -= 2;</span>
+<span class="removed">1275                     io.lineTo(_curves[e], _curves[e+1]);</span>
+<span class="removed">1276                     continue;</span>
+<span class="removed">1277                 case TYPE_QUADTO:</span>
+<span class="removed">1278                     e -= 4;</span>
+<span class="removed">1279                     io.quadTo(_curves[e+0], _curves[e+1],</span>
+<span class="removed">1280                               _curves[e+2], _curves[e+3]);</span>
+<span class="removed">1281                     continue;</span>
+<span class="removed">1282                 case TYPE_CUBICTO:</span>
+<span class="removed">1283                     e -= 6;</span>
+<span class="removed">1284                     io.curveTo(_curves[e+0], _curves[e+1],</span>
+<span class="removed">1285                                _curves[e+2], _curves[e+3],</span>
+<span class="removed">1286                                _curves[e+4], _curves[e+5]);</span>
+<span class="removed">1287                     continue;</span>
+<span class="removed">1288                 default:</span>
+<span class="removed">1289                 }</span>
+<span class="removed">1290             }</span>
+<span class="removed">1291             numCurves = 0;</span>
+<span class="removed">1292             end = 0;</span>
+<span class="removed">1293         }</span>
+<span class="removed">1294 </span>
+<span class="removed">1295         @Override</span>
+<span class="removed">1296         public String toString() {</span>
+<span class="removed">1297             String ret = "";</span>
+<span class="removed">1298             int nc = numCurves;</span>
+<span class="removed">1299             int last = end;</span>
+<span class="removed">1300             int len;</span>
+<span class="removed">1301             while (nc != 0) {</span>
+<span class="removed">1302                 switch(curveTypes[--nc]) {</span>
+<span class="removed">1303                 case TYPE_LINETO:</span>
+<span class="removed">1304                     len = 2;</span>
+<span class="removed">1305                     ret += "line: ";</span>
+<span class="removed">1306                     break;</span>
+<span class="removed">1307                 case TYPE_QUADTO:</span>
+<span class="removed">1308                     len = 4;</span>
+<span class="removed">1309                     ret += "quad: ";</span>
+<span class="removed">1310                     break;</span>
+<span class="removed">1311                 case TYPE_CUBICTO:</span>
+<span class="removed">1312                     len = 6;</span>
+<span class="removed">1313                     ret += "cubic: ";</span>
+<span class="removed">1314                     break;</span>
+<span class="removed">1315                 default:</span>
+<span class="removed">1316                     len = 0;</span>
+<span class="removed">1317                 }</span>
+<span class="removed">1318                 last -= len;</span>
+<span class="removed">1319                 ret += Arrays.toString(Arrays.copyOfRange(curves, last, last+len))</span>
+<span class="removed">1320                                        + "\n";</span>
+<span class="removed">1321             }</span>
+<span class="removed">1322             return ret;</span>
+<span class="removed">1323         }</span>
+<span class="removed">1324     }</span>
+1325 }
+<a name="52" id="anc52"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="52" type="hidden" /></form></body></html>

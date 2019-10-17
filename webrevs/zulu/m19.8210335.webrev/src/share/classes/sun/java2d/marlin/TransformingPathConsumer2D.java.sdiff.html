@@ -1,0 +1,959 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Version.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13698">13698</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8210335">8210335</a>: Clipping problems with complex affine transforms: negative scaling factors or small scaling factors
+Summary: fixed clipping rectangle to take into account the inverse transform (scale/shear)
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 103     }
+ 104 
+ 105     PathConsumer2D deltaTransformConsumer(PathConsumer2D out,
+ 106                                           AffineTransform at)
+ 107     {
+ 108         if (at == null) {
+ 109             return out;
+ 110         }
+ 111         final float mxx = (float) at.getScaleX();
+ 112         final float mxy = (float) at.getShearX();
+ 113         final float myx = (float) at.getShearY();
+ 114         final float myy = (float) at.getScaleY();
+ 115 
+ 116         if (mxy == 0.0f &amp;&amp; myx == 0.0f) {
+ 117             if (mxx == 1.0f &amp;&amp; myy == 1.0f) {
+ 118                 return out;
+ 119             } else {
+ 120                 // Scale only
+ 121                 if (rdrCtx.doClip) {
+ 122                     // adjust clip rectangle (ymin, ymax, xmin, xmax):
+<span class="changed"> 123                     adjustClipScale(rdrCtx.clipRect, mxx, myy);</span>
+
+ 124                 }
+ 125                 return dt_DeltaScaleFilter.init(out, mxx, myy);
+ 126             }
+ 127         } else {
+ 128             if (rdrCtx.doClip) {
+ 129                 // adjust clip rectangle (ymin, ymax, xmin, xmax):
+<span class="changed"> 130                 adjustClipInverseDelta(rdrCtx.clipRect, mxx, mxy, myx, myy);</span>
+
+ 131             }
+ 132             return dt_DeltaTransformFilter.init(out, mxx, mxy, myx, myy);
+ 133         }
+ 134     }
+ 135 
+<span class="changed"> 136     private static void adjustClipOffset(final float[] clipRect) {</span>
+<span class="changed"> 137         clipRect[0] += Renderer.RDR_OFFSET_Y;</span>
+<span class="changed"> 138         clipRect[1] += Renderer.RDR_OFFSET_Y;</span>
+<span class="changed"> 139         clipRect[2] += Renderer.RDR_OFFSET_X;</span>
+<span class="changed"> 140         clipRect[3] += Renderer.RDR_OFFSET_X;</span>
+<span class="changed"> 141     }</span>
+<span class="changed"> 142 </span>
+<span class="changed"> 143     private static void adjustClipScale(final float[] clipRect,</span>
+ 144                                         final float mxx, final float myy)
+ 145     {
+<span class="removed"> 146         adjustClipOffset(clipRect);</span>
+<span class="removed"> 147 </span>
+ 148         // Adjust the clipping rectangle (iv_DeltaScaleFilter):
+<span class="changed"> 149         clipRect[0] /= myy;</span>
+<span class="changed"> 150         clipRect[1] /= myy;</span>
+<span class="changed"> 151         clipRect[2] /= mxx;</span>
+<span class="changed"> 152         clipRect[3] /= mxx;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 153     }
+ 154 
+<span class="changed"> 155     private static void adjustClipInverseDelta(final float[] clipRect,</span>
+ 156                                                final float mxx, final float mxy,
+ 157                                                final float myx, final float myy)
+ 158     {
+<span class="removed"> 159         adjustClipOffset(clipRect);</span>
+<span class="removed"> 160 </span>
+ 161         // Adjust the clipping rectangle (iv_DeltaTransformFilter):
+ 162         final float det = mxx * myy - mxy * myx;
+ 163         final float imxx =  myy / det;
+ 164         final float imxy = -mxy / det;
+ 165         final float imyx = -myx / det;
+ 166         final float imyy =  mxx / det;
+ 167 
+ 168         float xmin, xmax, ymin, ymax;
+ 169         float x, y;
+ 170         // xmin, ymin:
+ 171         x = clipRect[2] * imxx + clipRect[0] * imxy;
+ 172         y = clipRect[2] * imyx + clipRect[0] * imyy;
+ 173 
+ 174         xmin = xmax = x;
+ 175         ymin = ymax = y;
+ 176 
+ 177         // xmax, ymin:
+ 178         x = clipRect[3] * imxx + clipRect[0] * imxy;
+ 179         y = clipRect[3] * imyx + clipRect[0] * imyy;
+ 180 
+
+</pre><hr></hr><pre>
+ 182         if (y &lt; ymin) { ymin = y; } else if (y &gt; ymax) { ymax = y; }
+ 183 
+ 184         // xmin, ymax:
+ 185         x = clipRect[2] * imxx + clipRect[1] * imxy;
+ 186         y = clipRect[2] * imyx + clipRect[1] * imyy;
+ 187 
+ 188         if (x &lt; xmin) { xmin = x; } else if (x &gt; xmax) { xmax = x; }
+ 189         if (y &lt; ymin) { ymin = y; } else if (y &gt; ymax) { ymax = y; }
+ 190 
+ 191         // xmax, ymax:
+ 192         x = clipRect[3] * imxx + clipRect[1] * imxy;
+ 193         y = clipRect[3] * imyx + clipRect[1] * imyy;
+ 194 
+ 195         if (x &lt; xmin) { xmin = x; } else if (x &gt; xmax) { xmax = x; }
+ 196         if (y &lt; ymin) { ymin = y; } else if (y &gt; ymax) { ymax = y; }
+ 197 
+ 198         clipRect[0] = ymin;
+ 199         clipRect[1] = ymax;
+ 200         clipRect[2] = xmin;
+ 201         clipRect[3] = xmax;
+
+
+
+
+
+
+
+
+
+
+ 202     }
+ 203 
+ 204     PathConsumer2D inverseDeltaTransformConsumer(PathConsumer2D out,
+ 205                                                  AffineTransform at)
+ 206     {
+ 207         if (at == null) {
+ 208             return out;
+ 209         }
+ 210         float mxx = (float) at.getScaleX();
+ 211         float mxy = (float) at.getShearX();
+ 212         float myx = (float) at.getShearY();
+ 213         float myy = (float) at.getScaleY();
+ 214 
+ 215         if (mxy == 0.0f &amp;&amp; myx == 0.0f) {
+ 216             if (mxx == 1.0f &amp;&amp; myy == 1.0f) {
+ 217                 return out;
+ 218             } else {
+<span class="changed"> 219                 return iv_DeltaScaleFilter.init(out, 1.0f/mxx, 1.0f/myy);</span>
+ 220             }
+ 221         } else {
+ 222             final float det = mxx * myy - mxy * myx;
+ 223             return iv_DeltaTransformFilter.init(out,
+ 224                                                 myy / det,
+ 225                                                -mxy / det,
+ 226                                                -myx / det,
+ 227                                                 mxx / det);
+ 228         }
+ 229     }
+ 230 
+ 231     static final class DeltaScaleFilter implements PathConsumer2D {
+ 232         private PathConsumer2D out;
+ 233         private float sx, sy;
+ 234 
+ 235         DeltaScaleFilter() {}
+ 236 
+ 237         DeltaScaleFilter init(PathConsumer2D out,
+ 238                               float mxx, float myy)
+ 239         {
+
+</pre><hr></hr><pre>
+ 516         private float cox0, coy0;
+ 517 
+ 518         private boolean subdivide = MarlinConst.DO_CLIP_SUBDIVIDER;
+ 519         private final CurveClipSplitter curveSplitter;
+ 520 
+ 521         PathClipFilter(final RendererContext rdrCtx) {
+ 522             this.clipRect = rdrCtx.clipRect;
+ 523             this.curveSplitter = rdrCtx.curveClipSplitter;
+ 524 
+ 525             this.stack = (rdrCtx.stats != null) ?
+ 526                 new IndexStack(rdrCtx,
+ 527                         rdrCtx.stats.stat_pcf_idxstack_indices,
+ 528                         rdrCtx.stats.hist_pcf_idxstack_indices,
+ 529                         rdrCtx.stats.stat_array_pcf_idxstack_indices)
+ 530                 : new IndexStack(rdrCtx);
+ 531         }
+ 532 
+ 533         PathClipFilter init(final PathConsumer2D out) {
+ 534             this.out = out;
+ 535 
+<span class="removed"> 536             // Adjust the clipping rectangle with the renderer offsets</span>
+<span class="removed"> 537             final float rdrOffX = Renderer.RDR_OFFSET_X;</span>
+<span class="removed"> 538             final float rdrOffY = Renderer.RDR_OFFSET_Y;</span>
+<span class="removed"> 539 </span>
+<span class="removed"> 540             // add a small rounding error:</span>
+<span class="removed"> 541             final float margin = 1e-3f;</span>
+<span class="removed"> 542 </span>
+<span class="removed"> 543             final float[] _clipRect = this.clipRect;</span>
+<span class="removed"> 544             _clipRect[0] -= margin - rdrOffY;</span>
+<span class="removed"> 545             _clipRect[1] += margin + rdrOffY;</span>
+<span class="removed"> 546             _clipRect[2] -= margin - rdrOffX;</span>
+<span class="removed"> 547             _clipRect[3] += margin + rdrOffX;</span>
+<span class="removed"> 548 </span>
+ 549             if (MarlinConst.DO_CLIP_SUBDIVIDER) {
+ 550                 // adjust padded clip rectangle:
+ 551                 curveSplitter.init();
+ 552             }
+ 553 
+ 554             this.init_corners = true;
+ 555             this.gOutCode = MarlinConst.OUTCODE_MASK_T_B_L_R;
+ 556 
+ 557             return this; // fluent API
+ 558         }
+ 559 
+ 560         /**
+ 561          * Disposes this instance:
+ 562          * clean up before reusing this instance
+ 563          */
+ 564         void dispose() {
+ 565             stack.dispose();
+ 566         }
+ 567 
+ 568         private void finishPath() {
+
+</pre><hr></hr><pre>
+ 851             out.quadTo(x1, y1, xe, ye);
+ 852             this.cx0 = xe;
+ 853             this.cy0 = ye;
+ 854         }
+ 855 
+ 856         @Override
+ 857         public long getNativeConsumer() {
+ 858             throw new InternalError("Not using a native peer");
+ 859         }
+ 860     }
+ 861 
+ 862     static final class CurveClipSplitter {
+ 863 
+ 864         static final float LEN_TH = MarlinProperties.getSubdividerMinLength();
+ 865         static final boolean DO_CHECK_LENGTH = (LEN_TH &gt; 0.0f);
+ 866 
+ 867         private static final boolean TRACE = false;
+ 868 
+ 869         private static final int MAX_N_CURVES = 3 * 4;
+ 870 
+
+
+
+
+
+ 871         // clip rectangle (ymin, ymax, xmin, xmax):
+ 872         final float[] clipRect;
+ 873 
+ 874         // clip rectangle (ymin, ymax, xmin, xmax) including padding:
+ 875         final float[] clipRectPad = new float[4];
+ 876         private boolean init_clipRectPad = false;
+ 877 
+ 878         // This is where the curve to be processed is put. We give it
+ 879         // enough room to store all curves.
+ 880         final float[] middle = new float[MAX_N_CURVES * 8 + 2];
+ 881         // t values at subdivision points
+ 882         private final float[] subdivTs = new float[MAX_N_CURVES];
+ 883 
+ 884         // dirty curve
+ 885         private final Curve curve;
+ 886 
+ 887         CurveClipSplitter(final RendererContext rdrCtx) {
+
+ 888             this.clipRect = rdrCtx.clipRect;
+ 889             this.curve = rdrCtx.curve;
+ 890         }
+ 891 
+ 892         void init() {
+ 893             this.init_clipRectPad = true;
+
+
+
+
+
+
+
+
+
+
+ 894         }
+ 895 
+ 896         private void initPaddedClip() {
+ 897             // bounds as half-open intervals: minX &lt;= x &lt; maxX and minY &lt;= y &lt; maxY
+ 898             // adjust padded clip rectangle (ymin, ymax, xmin, xmax):
+ 899             // add a rounding error (curve subdivision ~ 0.1px):
+ 900             final float[] _clipRect = clipRect;
+ 901             final float[] _clipRectPad = clipRectPad;
+ 902 
+ 903             _clipRectPad[0] = _clipRect[0] - CLIP_RECT_PADDING;
+ 904             _clipRectPad[1] = _clipRect[1] + CLIP_RECT_PADDING;
+ 905             _clipRectPad[2] = _clipRect[2] - CLIP_RECT_PADDING;
+ 906             _clipRectPad[3] = _clipRect[3] + CLIP_RECT_PADDING;
+ 907 
+ 908             if (TRACE) {
+ 909                 MarlinUtils.logInfo("clip: X [" + _clipRectPad[2] + " .. " + _clipRectPad[3] +"] "
+<span class="changed"> 910                                         + "Y ["+ _clipRectPad[0] + " .. " + _clipRectPad[1] +"]");</span>
+ 911             }
+ 912         }
+ 913 
+ 914         boolean splitLine(final float x0, final float y0,
+ 915                           final float x1, final float y1,
+ 916                           final int outCodeOR,
+ 917                           final PathConsumer2D out)
+ 918         {
+ 919             if (TRACE) {
+ 920                 MarlinUtils.logInfo("divLine P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ")");
+ 921             }
+ 922 
+<span class="changed"> 923             if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastLineLen(x0, y0, x1, y1) &lt;= LEN_TH) {</span>
+ 924                 return false;
+ 925             }
+ 926 
+ 927             final float[] mid = middle;
+ 928             mid[0] = x0;  mid[1] = y0;
+ 929             mid[2] = x1;  mid[3] = y1;
+ 930 
+ 931             return subdivideAtIntersections(4, outCodeOR, out);
+ 932         }
+ 933 
+ 934         boolean splitQuad(final float x0, final float y0,
+ 935                           final float x1, final float y1,
+ 936                           final float x2, final float y2,
+ 937                           final int outCodeOR,
+ 938                           final PathConsumer2D out)
+ 939         {
+ 940             if (TRACE) {
+ 941                 MarlinUtils.logInfo("divQuad P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ")");
+ 942             }
+ 943 
+<span class="changed"> 944             if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastQuadLen(x0, y0, x1, y1, x2, y2) &lt;= LEN_TH) {</span>
+ 945                 return false;
+ 946             }
+ 947 
+ 948             final float[] mid = middle;
+ 949             mid[0] = x0;  mid[1] = y0;
+ 950             mid[2] = x1;  mid[3] = y1;
+ 951             mid[4] = x2;  mid[5] = y2;
+ 952 
+ 953             return subdivideAtIntersections(6, outCodeOR, out);
+ 954         }
+ 955 
+ 956         boolean splitCurve(final float x0, final float y0,
+ 957                            final float x1, final float y1,
+ 958                            final float x2, final float y2,
+ 959                            final float x3, final float y3,
+ 960                            final int outCodeOR,
+ 961                            final PathConsumer2D out)
+ 962         {
+ 963             if (TRACE) {
+ 964                 MarlinUtils.logInfo("divCurve P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ") P3(" + x3 + ", " + y3 + ")");
+ 965             }
+ 966 
+<span class="changed"> 967             if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastCurvelen(x0, y0, x1, y1, x2, y2, x3, y3) &lt;= LEN_TH) {</span>
+ 968                 return false;
+ 969             }
+ 970 
+ 971             final float[] mid = middle;
+ 972             mid[0] = x0;  mid[1] = y0;
+ 973             mid[2] = x1;  mid[3] = y1;
+ 974             mid[4] = x2;  mid[5] = y2;
+ 975             mid[6] = x3;  mid[7] = y3;
+ 976 
+ 977             return subdivideAtIntersections(8, outCodeOR, out);
+ 978         }
+ 979 
+ 980         private boolean subdivideAtIntersections(final int type, final int outCodeOR,
+ 981                                                  final PathConsumer2D out)
+ 982         {
+ 983             final float[] mid = middle;
+ 984             final float[] subTs = subdivTs;
+ 985 
+ 986             if (init_clipRectPad) {
+ 987                 init_clipRectPad = false;
+ 988                 initPaddedClip();
+ 989             }
+ 990 
+ 991             final int nSplits = Helpers.findClipPoints(curve, mid, subTs, type,
+ 992                                                         outCodeOR, clipRectPad);
+ 993 
+ 994             if (TRACE) {
+<span class="changed"> 995                 MarlinUtils.logInfo("nSplits: "+ nSplits);</span>
+<span class="changed"> 996                 MarlinUtils.logInfo("subTs: "+Arrays.toString(Arrays.copyOfRange(subTs, 0, nSplits)));</span>
+ 997             }
+ 998             if (nSplits == 0) {
+ 999                 // only curve support shortcut
+1000                 return false;
+1001             }
+1002             float prevT = 0.0f;
+1003 
+1004             for (int i = 0, off = 0; i &lt; nSplits; i++, off += type) {
+1005                 final float t = subTs[i];
+1006 
+1007                 Helpers.subdivideAt((t - prevT) / (1.0f - prevT),
+1008                                      mid, off, mid, off, type);
+1009                 prevT = t;
+1010             }
+1011 
+1012             for (int i = 0, off = 0; i &lt;= nSplits; i++, off += type) {
+1013                 if (TRACE) {
+<span class="changed">1014                     MarlinUtils.logInfo("Part Curve "+Arrays.toString(Arrays.copyOfRange(mid, off, off + type)));</span>
+1015                 }
+1016                 emitCurrent(type, mid, off, out);
+1017             }
+1018             return true;
+1019         }
+1020 
+1021         static void emitCurrent(final int type, final float[] pts,
+1022                                 final int off, final PathConsumer2D out)
+1023         {
+1024             // if instead of switch (perf + most probable cases first)
+1025             if (type == 8) {
+1026                 out.curveTo(pts[off + 2], pts[off + 3],
+1027                             pts[off + 4], pts[off + 5],
+1028                             pts[off + 6], pts[off + 7]);
+1029             } else if (type == 4) {
+1030                 out.lineTo(pts[off + 2], pts[off + 3]);
+1031             } else {
+1032                 out.quadTo(pts[off + 2], pts[off + 3],
+1033                            pts[off + 4], pts[off + 5]);
+1034             }
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 103     }
+ 104 
+ 105     PathConsumer2D deltaTransformConsumer(PathConsumer2D out,
+ 106                                           AffineTransform at)
+ 107     {
+ 108         if (at == null) {
+ 109             return out;
+ 110         }
+ 111         final float mxx = (float) at.getScaleX();
+ 112         final float mxy = (float) at.getShearX();
+ 113         final float myx = (float) at.getShearY();
+ 114         final float myy = (float) at.getScaleY();
+ 115 
+ 116         if (mxy == 0.0f &amp;&amp; myx == 0.0f) {
+ 117             if (mxx == 1.0f &amp;&amp; myy == 1.0f) {
+ 118                 return out;
+ 119             } else {
+ 120                 // Scale only
+ 121                 if (rdrCtx.doClip) {
+ 122                     // adjust clip rectangle (ymin, ymax, xmin, xmax):
+<span class="changed"> 123                     rdrCtx.clipInvScale = adjustClipScale(rdrCtx.clipRect,</span>
+<span class="changed"> 124                         mxx, myy);</span>
+ 125                 }
+ 126                 return dt_DeltaScaleFilter.init(out, mxx, myy);
+ 127             }
+ 128         } else {
+ 129             if (rdrCtx.doClip) {
+ 130                 // adjust clip rectangle (ymin, ymax, xmin, xmax):
+<span class="changed"> 131                 rdrCtx.clipInvScale = adjustClipInverseDelta(rdrCtx.clipRect,</span>
+<span class="changed"> 132                     mxx, mxy, myx, myy);</span>
+ 133             }
+ 134             return dt_DeltaTransformFilter.init(out, mxx, mxy, myx, myy);
+ 135         }
+ 136     }
+ 137 
+<span class="changed"> 138     private static float adjustClipScale(final float[] clipRect,</span>
+
+
+
+
+
+
+
+ 139                                          final float mxx, final float myy)
+ 140     {
+
+
+ 141         // Adjust the clipping rectangle (iv_DeltaScaleFilter):
+<span class="changed"> 142         final float scaleY = 1.0f / myy;</span>
+<span class="changed"> 143         clipRect[0] *= scaleY;</span>
+<span class="changed"> 144         clipRect[1] *= scaleY;</span>
+<span class="changed"> 145 </span>
+<span class="changed"> 146         if (clipRect[1] &lt; clipRect[0]) {</span>
+<span class="changed"> 147             float tmp = clipRect[0];</span>
+<span class="changed"> 148             clipRect[0] = clipRect[1];</span>
+<span class="changed"> 149             clipRect[1] = tmp;</span>
+<span class="changed"> 150         }</span>
+<span class="changed"> 151 </span>
+<span class="changed"> 152         final float scaleX = 1.0f / mxx;</span>
+<span class="changed"> 153         clipRect[2] *= scaleX;</span>
+<span class="changed"> 154         clipRect[3] *= scaleX;</span>
+<span class="changed"> 155 </span>
+<span class="changed"> 156         if (clipRect[3] &lt; clipRect[2]) {</span>
+<span class="changed"> 157             float tmp = clipRect[2];</span>
+<span class="changed"> 158             clipRect[2] = clipRect[3];</span>
+<span class="changed"> 159             clipRect[3] = tmp;</span>
+<span class="changed"> 160         }</span>
+<span class="changed"> 161 </span>
+<span class="changed"> 162         if (MarlinConst.DO_LOG_CLIP) {</span>
+<span class="changed"> 163                 MarlinUtils.logInfo("clipRect (ClipScale): "</span>
+<span class="changed"> 164                                     + Arrays.toString(clipRect));</span>
+<span class="changed"> 165         }</span>
+<span class="changed"> 166         return 0.5f * (Math.abs(scaleX) + Math.abs(scaleY));</span>
+ 167     }
+ 168 
+<span class="changed"> 169     private static float adjustClipInverseDelta(final float[] clipRect,</span>
+ 170                                                 final float mxx, final float mxy,
+ 171                                                 final float myx, final float myy)
+ 172     {
+
+
+ 173         // Adjust the clipping rectangle (iv_DeltaTransformFilter):
+ 174         final float det = mxx * myy - mxy * myx;
+ 175         final float imxx =  myy / det;
+ 176         final float imxy = -mxy / det;
+ 177         final float imyx = -myx / det;
+ 178         final float imyy =  mxx / det;
+ 179 
+ 180         float xmin, xmax, ymin, ymax;
+ 181         float x, y;
+ 182         // xmin, ymin:
+ 183         x = clipRect[2] * imxx + clipRect[0] * imxy;
+ 184         y = clipRect[2] * imyx + clipRect[0] * imyy;
+ 185 
+ 186         xmin = xmax = x;
+ 187         ymin = ymax = y;
+ 188 
+ 189         // xmax, ymin:
+ 190         x = clipRect[3] * imxx + clipRect[0] * imxy;
+ 191         y = clipRect[3] * imyx + clipRect[0] * imyy;
+ 192 
+
+</pre><hr></hr><pre>
+ 194         if (y &lt; ymin) { ymin = y; } else if (y &gt; ymax) { ymax = y; }
+ 195 
+ 196         // xmin, ymax:
+ 197         x = clipRect[2] * imxx + clipRect[1] * imxy;
+ 198         y = clipRect[2] * imyx + clipRect[1] * imyy;
+ 199 
+ 200         if (x &lt; xmin) { xmin = x; } else if (x &gt; xmax) { xmax = x; }
+ 201         if (y &lt; ymin) { ymin = y; } else if (y &gt; ymax) { ymax = y; }
+ 202 
+ 203         // xmax, ymax:
+ 204         x = clipRect[3] * imxx + clipRect[1] * imxy;
+ 205         y = clipRect[3] * imyx + clipRect[1] * imyy;
+ 206 
+ 207         if (x &lt; xmin) { xmin = x; } else if (x &gt; xmax) { xmax = x; }
+ 208         if (y &lt; ymin) { ymin = y; } else if (y &gt; ymax) { ymax = y; }
+ 209 
+ 210         clipRect[0] = ymin;
+ 211         clipRect[1] = ymax;
+ 212         clipRect[2] = xmin;
+ 213         clipRect[3] = xmax;
+<span class="new"> 214 </span>
+<span class="new"> 215         if (MarlinConst.DO_LOG_CLIP) {</span>
+<span class="new"> 216                 MarlinUtils.logInfo("clipRect (ClipInverseDelta): "</span>
+<span class="new"> 217                                     + Arrays.toString(clipRect));</span>
+<span class="new"> 218         }</span>
+<span class="new"> 219 </span>
+<span class="new"> 220         final float scaleX = (float) Math.sqrt(imxx * imxx + imxy * imxy);</span>
+<span class="new"> 221         final float scaleY = (float) Math.sqrt(imyx * imyx + imyy * imyy);</span>
+<span class="new"> 222 </span>
+<span class="new"> 223         return 0.5f * (scaleX + scaleY);</span>
+ 224     }
+ 225 
+ 226     PathConsumer2D inverseDeltaTransformConsumer(PathConsumer2D out,
+ 227                                                  AffineTransform at)
+ 228     {
+ 229         if (at == null) {
+ 230             return out;
+ 231         }
+ 232         float mxx = (float) at.getScaleX();
+ 233         float mxy = (float) at.getShearX();
+ 234         float myx = (float) at.getShearY();
+ 235         float myy = (float) at.getScaleY();
+ 236 
+ 237         if (mxy == 0.0f &amp;&amp; myx == 0.0f) {
+ 238             if (mxx == 1.0f &amp;&amp; myy == 1.0f) {
+ 239                 return out;
+ 240             } else {
+<span class="changed"> 241                 return iv_DeltaScaleFilter.init(out, 1.0f / mxx, 1.0f / myy);</span>
+ 242             }
+ 243         } else {
+ 244             final float det = mxx * myy - mxy * myx;
+ 245             return iv_DeltaTransformFilter.init(out,
+ 246                                                 myy / det,
+ 247                                                -mxy / det,
+ 248                                                -myx / det,
+ 249                                                 mxx / det);
+ 250         }
+ 251     }
+ 252 
+ 253     static final class DeltaScaleFilter implements PathConsumer2D {
+ 254         private PathConsumer2D out;
+ 255         private float sx, sy;
+ 256 
+ 257         DeltaScaleFilter() {}
+ 258 
+ 259         DeltaScaleFilter init(PathConsumer2D out,
+ 260                               float mxx, float myy)
+ 261         {
+
+</pre><hr></hr><pre>
+ 538         private float cox0, coy0;
+ 539 
+ 540         private boolean subdivide = MarlinConst.DO_CLIP_SUBDIVIDER;
+ 541         private final CurveClipSplitter curveSplitter;
+ 542 
+ 543         PathClipFilter(final RendererContext rdrCtx) {
+ 544             this.clipRect = rdrCtx.clipRect;
+ 545             this.curveSplitter = rdrCtx.curveClipSplitter;
+ 546 
+ 547             this.stack = (rdrCtx.stats != null) ?
+ 548                 new IndexStack(rdrCtx,
+ 549                         rdrCtx.stats.stat_pcf_idxstack_indices,
+ 550                         rdrCtx.stats.hist_pcf_idxstack_indices,
+ 551                         rdrCtx.stats.stat_array_pcf_idxstack_indices)
+ 552                 : new IndexStack(rdrCtx);
+ 553         }
+ 554 
+ 555         PathClipFilter init(final PathConsumer2D out) {
+ 556             this.out = out;
+ 557 
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 558             if (MarlinConst.DO_CLIP_SUBDIVIDER) {
+ 559                 // adjust padded clip rectangle:
+ 560                 curveSplitter.init();
+ 561             }
+ 562 
+ 563             this.init_corners = true;
+ 564             this.gOutCode = MarlinConst.OUTCODE_MASK_T_B_L_R;
+ 565 
+ 566             return this; // fluent API
+ 567         }
+ 568 
+ 569         /**
+ 570          * Disposes this instance:
+ 571          * clean up before reusing this instance
+ 572          */
+ 573         void dispose() {
+ 574             stack.dispose();
+ 575         }
+ 576 
+ 577         private void finishPath() {
+
+</pre><hr></hr><pre>
+ 860             out.quadTo(x1, y1, xe, ye);
+ 861             this.cx0 = xe;
+ 862             this.cy0 = ye;
+ 863         }
+ 864 
+ 865         @Override
+ 866         public long getNativeConsumer() {
+ 867             throw new InternalError("Not using a native peer");
+ 868         }
+ 869     }
+ 870 
+ 871     static final class CurveClipSplitter {
+ 872 
+ 873         static final float LEN_TH = MarlinProperties.getSubdividerMinLength();
+ 874         static final boolean DO_CHECK_LENGTH = (LEN_TH &gt; 0.0f);
+ 875 
+ 876         private static final boolean TRACE = false;
+ 877 
+ 878         private static final int MAX_N_CURVES = 3 * 4;
+ 879 
+<span class="new"> 880         private final RendererContext rdrCtx;</span>
+<span class="new"> 881 </span>
+<span class="new"> 882         // scaled length threshold:</span>
+<span class="new"> 883         private float minLength;</span>
+<span class="new"> 884 </span>
+ 885         // clip rectangle (ymin, ymax, xmin, xmax):
+ 886         final float[] clipRect;
+ 887 
+ 888         // clip rectangle (ymin, ymax, xmin, xmax) including padding:
+ 889         final float[] clipRectPad = new float[4];
+ 890         private boolean init_clipRectPad = false;
+ 891 
+ 892         // This is where the curve to be processed is put. We give it
+ 893         // enough room to store all curves.
+ 894         final float[] middle = new float[MAX_N_CURVES * 8 + 2];
+ 895         // t values at subdivision points
+ 896         private final float[] subdivTs = new float[MAX_N_CURVES];
+ 897 
+ 898         // dirty curve
+ 899         private final Curve curve;
+ 900 
+ 901         CurveClipSplitter(final RendererContext rdrCtx) {
+<span class="new"> 902             this.rdrCtx = rdrCtx;</span>
+ 903             this.clipRect = rdrCtx.clipRect;
+ 904             this.curve = rdrCtx.curve;
+ 905         }
+ 906 
+ 907         void init() {
+ 908             this.init_clipRectPad = true;
+<span class="new"> 909 </span>
+<span class="new"> 910             if (DO_CHECK_LENGTH) {</span>
+<span class="new"> 911                 this.minLength = (this.rdrCtx.clipInvScale == 0.0f) ? LEN_TH</span>
+<span class="new"> 912                                     : (LEN_TH * this.rdrCtx.clipInvScale);</span>
+<span class="new"> 913 </span>
+<span class="new"> 914                 if (MarlinConst.DO_LOG_CLIP) {</span>
+<span class="new"> 915                     MarlinUtils.logInfo("CurveClipSplitter.minLength = "</span>
+<span class="new"> 916                                             + minLength);</span>
+<span class="new"> 917                 }</span>
+<span class="new"> 918             }</span>
+ 919         }
+ 920 
+ 921         private void initPaddedClip() {
+ 922             // bounds as half-open intervals: minX &lt;= x &lt; maxX and minY &lt;= y &lt; maxY
+ 923             // adjust padded clip rectangle (ymin, ymax, xmin, xmax):
+ 924             // add a rounding error (curve subdivision ~ 0.1px):
+ 925             final float[] _clipRect = clipRect;
+ 926             final float[] _clipRectPad = clipRectPad;
+ 927 
+ 928             _clipRectPad[0] = _clipRect[0] - CLIP_RECT_PADDING;
+ 929             _clipRectPad[1] = _clipRect[1] + CLIP_RECT_PADDING;
+ 930             _clipRectPad[2] = _clipRect[2] - CLIP_RECT_PADDING;
+ 931             _clipRectPad[3] = _clipRect[3] + CLIP_RECT_PADDING;
+ 932 
+ 933             if (TRACE) {
+ 934                 MarlinUtils.logInfo("clip: X [" + _clipRectPad[2] + " .. " + _clipRectPad[3] +"] "
+<span class="changed"> 935                                         + "Y [" + _clipRectPad[0] + " .. " + _clipRectPad[1] +"]");</span>
+ 936             }
+ 937         }
+ 938 
+ 939         boolean splitLine(final float x0, final float y0,
+ 940                           final float x1, final float y1,
+ 941                           final int outCodeOR,
+ 942                           final PathConsumer2D out)
+ 943         {
+ 944             if (TRACE) {
+ 945                 MarlinUtils.logInfo("divLine P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ")");
+ 946             }
+ 947 
+<span class="changed"> 948             if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastLineLen(x0, y0, x1, y1) &lt;= minLength) {</span>
+ 949                 return false;
+ 950             }
+ 951 
+ 952             final float[] mid = middle;
+ 953             mid[0] = x0;  mid[1] = y0;
+ 954             mid[2] = x1;  mid[3] = y1;
+ 955 
+ 956             return subdivideAtIntersections(4, outCodeOR, out);
+ 957         }
+ 958 
+ 959         boolean splitQuad(final float x0, final float y0,
+ 960                           final float x1, final float y1,
+ 961                           final float x2, final float y2,
+ 962                           final int outCodeOR,
+ 963                           final PathConsumer2D out)
+ 964         {
+ 965             if (TRACE) {
+ 966                 MarlinUtils.logInfo("divQuad P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ")");
+ 967             }
+ 968 
+<span class="changed"> 969             if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastQuadLen(x0, y0, x1, y1, x2, y2) &lt;= minLength) {</span>
+ 970                 return false;
+ 971             }
+ 972 
+ 973             final float[] mid = middle;
+ 974             mid[0] = x0;  mid[1] = y0;
+ 975             mid[2] = x1;  mid[3] = y1;
+ 976             mid[4] = x2;  mid[5] = y2;
+ 977 
+ 978             return subdivideAtIntersections(6, outCodeOR, out);
+ 979         }
+ 980 
+ 981         boolean splitCurve(final float x0, final float y0,
+ 982                            final float x1, final float y1,
+ 983                            final float x2, final float y2,
+ 984                            final float x3, final float y3,
+ 985                            final int outCodeOR,
+ 986                            final PathConsumer2D out)
+ 987         {
+ 988             if (TRACE) {
+ 989                 MarlinUtils.logInfo("divCurve P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ") P3(" + x3 + ", " + y3 + ")");
+ 990             }
+ 991 
+<span class="changed"> 992             if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastCurvelen(x0, y0, x1, y1, x2, y2, x3, y3) &lt;= minLength) {</span>
+ 993                 return false;
+ 994             }
+ 995 
+ 996             final float[] mid = middle;
+ 997             mid[0] = x0;  mid[1] = y0;
+ 998             mid[2] = x1;  mid[3] = y1;
+ 999             mid[4] = x2;  mid[5] = y2;
+1000             mid[6] = x3;  mid[7] = y3;
+1001 
+1002             return subdivideAtIntersections(8, outCodeOR, out);
+1003         }
+1004 
+1005         private boolean subdivideAtIntersections(final int type, final int outCodeOR,
+1006                                                  final PathConsumer2D out)
+1007         {
+1008             final float[] mid = middle;
+1009             final float[] subTs = subdivTs;
+1010 
+1011             if (init_clipRectPad) {
+1012                 init_clipRectPad = false;
+1013                 initPaddedClip();
+1014             }
+1015 
+1016             final int nSplits = Helpers.findClipPoints(curve, mid, subTs, type,
+1017                                                         outCodeOR, clipRectPad);
+1018 
+1019             if (TRACE) {
+<span class="changed">1020                 MarlinUtils.logInfo("nSplits: " + nSplits);</span>
+<span class="changed">1021                 MarlinUtils.logInfo("subTs: " + Arrays.toString(Arrays.copyOfRange(subTs, 0, nSplits)));</span>
+1022             }
+1023             if (nSplits == 0) {
+1024                 // only curve support shortcut
+1025                 return false;
+1026             }
+1027             float prevT = 0.0f;
+1028 
+1029             for (int i = 0, off = 0; i &lt; nSplits; i++, off += type) {
+1030                 final float t = subTs[i];
+1031 
+1032                 Helpers.subdivideAt((t - prevT) / (1.0f - prevT),
+1033                                      mid, off, mid, off, type);
+1034                 prevT = t;
+1035             }
+1036 
+1037             for (int i = 0, off = 0; i &lt;= nSplits; i++, off += type) {
+1038                 if (TRACE) {
+<span class="changed">1039                     MarlinUtils.logInfo("Part Curve " + Arrays.toString(Arrays.copyOfRange(mid, off, off + type)));</span>
+1040                 }
+1041                 emitCurrent(type, mid, off, out);
+1042             }
+1043             return true;
+1044         }
+1045 
+1046         static void emitCurrent(final int type, final float[] pts,
+1047                                 final int off, final PathConsumer2D out)
+1048         {
+1049             // if instead of switch (perf + most probable cases first)
+1050             if (type == 8) {
+1051                 out.curveTo(pts[off + 2], pts[off + 3],
+1052                             pts[off + 4], pts[off + 5],
+1053                             pts[off + 6], pts[off + 7]);
+1054             } else if (type == 4) {
+1055                 out.lineTo(pts[off + 2], pts[off + 3]);
+1056             } else {
+1057                 out.quadTo(pts[off + 2], pts[off + 3],
+1058                            pts[off + 4], pts[off + 5]);
+1059             }
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Version.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

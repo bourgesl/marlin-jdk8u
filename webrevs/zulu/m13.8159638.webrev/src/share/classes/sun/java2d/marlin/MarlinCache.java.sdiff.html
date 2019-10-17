@@ -1,0 +1,529 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/IntArrayCache.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinConst.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/MarlinCache.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13692">13692</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159638">8159638</a>: Improve array caches and renderer stats in Marlin renderer
+Summary: Byte/Float/Int ArrayCache (Reference) refactoring + improved cache statistics and tuning settings
+Reviewed-by: flar, prr</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  83     final long[] rowAALen = new long[TILE_SIZE];
+  84     // last position in RLE decoding for each row (getAlpha):
+  85     final long[] rowAAPos = new long[TILE_SIZE];
+  86 
+  87     // dirty off-heap array containing pixel coverages for (32) rows (packed)
+  88     // if encoding=raw, it contains alpha coverage values (val) as integer
+  89     // if encoding=RLE, it contains tuples (val, last x-coordinate exclusive)
+  90     // use rowAAx0/rowAAx1 to get row indices within this chunk
+  91     final OffHeapArray rowAAChunk;
+  92 
+  93     // current position in rowAAChunk array
+  94     long rowAAChunkPos;
+  95 
+  96     // touchedTile[i] is the sum of all the alphas in the tile with
+  97     // x=j*TILE_SIZE+bboxX0.
+  98     int[] touchedTile;
+  99 
+ 100     // per-thread renderer context
+ 101     final RendererContext rdrCtx;
+ 102 
+<span class="changed"> 103     // large cached touchedTile (dirty)</span>
+<span class="changed"> 104     final int[] touchedTile_initial = new int[INITIAL_ARRAY]; // 1 tile line</span>
+ 105 
+ 106     int tileMin, tileMax;
+ 107 
+ 108     boolean useRLE = false;
+ 109 
+ 110     MarlinCache(final RendererContext rdrCtx) {
+ 111         this.rdrCtx = rdrCtx;
+ 112 
+<span class="changed"> 113         rowAAChunk = new OffHeapArray(rdrCtx, INITIAL_CHUNK_ARRAY);</span>
+ 114 
+<span class="changed"> 115         touchedTile = touchedTile_initial;</span>
+
+ 116 
+ 117         // tile used marks:
+ 118         tileMin = Integer.MAX_VALUE;
+ 119         tileMax = Integer.MIN_VALUE;
+ 120     }
+ 121 
+ 122     void init(int minx, int miny, int maxx, int maxy, int edgeSumDeltaY)
+ 123     {
+ 124         // assert maxy &gt;= miny &amp;&amp; maxx &gt;= minx;
+ 125         bboxX0 = minx;
+ 126         bboxY0 = miny;
+ 127         bboxX1 = maxx;
+ 128         bboxY1 = maxy;
+ 129 
+ 130         final int width = (maxx - minx);
+ 131 
+ 132         if (FORCE_NO_RLE) {
+ 133             useRLE = false;
+ 134         } else if (FORCE_RLE) {
+ 135             useRLE = true;
+
+</pre><hr></hr><pre>
+ 164 
+ 165                     System.out.println("High complexity: "
+ 166                         + " for bbox[width = " + width
+ 167                         + " height = " + (maxy - miny)
+ 168                         + "] edgeSumDeltaY = " + edgeSumDeltaY
+ 169                         + " heightSubPixel = " + heightSubPixel
+ 170                         + " meanCrossings = "+ meanCrossings
+ 171                         + " meanDist = " + meanDist
+ 172                         + " width =  " + (width * heightSubPixel)
+ 173                         + " &lt;= criteria:  " + ((edgeSumDeltaY - heightSubPixel) &lt;&lt; BLOCK_SIZE_LG)
+ 174                     );
+ 175                 }
+ 176             }
+ 177         }
+ 178 
+ 179         // the ceiling of (maxy - miny + 1) / TILE_SIZE;
+ 180         final int nxTiles = (width + TILE_SIZE) &gt;&gt; TILE_SIZE_LG;
+ 181 
+ 182         if (nxTiles &gt; INITIAL_ARRAY) {
+ 183             if (DO_STATS) {
+<span class="changed"> 184                 rdrCtx.stats.stat_array_marlincache_touchedTile</span>
+<span class="changed"> 185                     .add(nxTiles);</span>
+ 186             }
+<span class="changed"> 187             touchedTile = rdrCtx.getIntArray(nxTiles);</span>
+ 188         }
+ 189     }
+ 190 
+ 191     /**
+ 192      * Disposes this cache:
+ 193      * clean up before reusing this instance
+ 194      */
+ 195     void dispose() {
+ 196         // Reset touchedTile if needed:
+ 197         resetTileLine(0);
+ 198 
+<span class="changed"> 199         // Return arrays:</span>
+<span class="changed"> 200         if (touchedTile != touchedTile_initial) {</span>
+<span class="changed"> 201             rdrCtx.putIntArray(touchedTile, 0, 0); // already zero filled</span>
+<span class="changed"> 202             touchedTile = touchedTile_initial;</span>
+ 203         }
+
+
+
+
+ 204         // At last: resize back off-heap rowAA to initial size
+ 205         if (rowAAChunk.length != INITIAL_CHUNK_ARRAY) {
+ 206             // note: may throw OOME:
+ 207             rowAAChunk.resize(INITIAL_CHUNK_ARRAY);
+ 208         }
+ 209         if (DO_CLEAN_DIRTY) {
+ 210             // Force zero-fill dirty arrays:
+ 211             rowAAChunk.fill(BYTE_0);
+ 212         }
+ 213     }
+ 214 
+ 215     void resetTileLine(final int pminY) {
+ 216         // update bboxY0 to process a complete tile line [0 - 32]
+ 217         bboxY0 = pminY;
+ 218 
+ 219         // reset current pos
+ 220         if (DO_STATS) {
+ 221             rdrCtx.stats.stat_cache_rowAAChunk.add(rowAAChunkPos);
+ 222         }
+ 223         rowAAChunkPos = 0L;
+
+</pre><hr></hr><pre>
+ 537         // special case to encode entries into a single int:
+ 538         if (val == 0) {
+ 539             _unsafe.putInt(addr_off,
+ 540                 ((_bboxX0 + to) &lt;&lt; 8)
+ 541             );
+ 542         } else {
+ 543             _unsafe.putInt(addr_off,
+ 544                 ((_bboxX0 + to) &lt;&lt; 8)
+ 545                 | (((int) _unsafe.getByte(addr_alpha + val)) &amp; 0xFF) // [0..255]
+ 546             );
+ 547 
+ 548             if (runLen == 1) {
+ 549                 _touchedTile[cx0 &gt;&gt; _TILE_SIZE_LG] += val;
+ 550             } else {
+ 551                 touchTile(cx0, val, to, runLen, _touchedTile);
+ 552             }
+ 553         }
+ 554         addr_off += SIZE_INT;
+ 555 
+ 556         if (DO_STATS) {
+<span class="changed"> 557             rdrCtx.stats.hist_tile_generator_encoding_runLen</span>
+<span class="changed"> 558                 .add(runLen);</span>
+ 559         }
+ 560 
+ 561         long len = (addr_off - _rowAAChunk.address);
+ 562 
+ 563         // update coded length as bytes:
+ 564         rowAALen[row] = (len - initialPos);
+ 565 
+ 566         // update current position:
+ 567         rowAAChunkPos = len;
+ 568 
+ 569         if (DO_STATS) {
+ 570             rdrCtx.stats.stat_cache_rowAA.add(rowAALen[row]);
+ 571             rdrCtx.stats.hist_tile_generator_encoding_ratio.add(
+ 572                 (100 * skip) / (blkE - blkW)
+ 573             );
+ 574         }
+ 575 
+ 576         // update tile used marks:
+ 577         int tx = from &gt;&gt; _TILE_SIZE_LG; // inclusive
+ 578         if (tx &lt; tileMin) {
+
+</pre><hr></hr><pre>
+ 595         }
+ 596 
+ 597         if (DO_MONITORS) {
+ 598             rdrCtx.stats.mon_rdr_copyAARow.stop();
+ 599         }
+ 600     }
+ 601 
+ 602     long startRLERow(final int row, final int x0, final int x1) {
+ 603         // rows are supposed to be added by increasing y.
+ 604         rowAAx0[row]  = x0; // first pixel inclusive
+ 605         rowAAx1[row]  = x1; // last pixel exclusive
+ 606         rowAAEnc[row] = 1; // RLE encoding
+ 607         rowAAPos[row] = 0L; // position = 0
+ 608 
+ 609         // update row index to current position:
+ 610         return (rowAAChunkIndex[row] = rowAAChunkPos);
+ 611     }
+ 612 
+ 613     private void expandRowAAChunk(final long needSize) {
+ 614         if (DO_STATS) {
+<span class="changed"> 615             rdrCtx.stats.stat_array_marlincache_rowAAChunk</span>
+<span class="changed"> 616                 .add(needSize);</span>
+ 617         }
+ 618 
+ 619         // note: throw IOOB if neededSize &gt; 2Gb:
+<span class="changed"> 620         final long newSize = ArrayCache.getNewLargeSize(rowAAChunk.length, needSize);</span>
+
+ 621 
+ 622         rowAAChunk.resize(newSize);
+ 623     }
+ 624 
+ 625     private void touchTile(final int x0, final int val, final int x1,
+ 626                            final int runLen,
+ 627                            final int[] _touchedTile)
+ 628     {
+ 629         // the x and y of the current row, minus bboxX0, bboxY0
+ 630         // process tile line [0 - 32]
+ 631         final int _TILE_SIZE_LG = TILE_SIZE_LG;
+ 632 
+ 633         // update touchedTile
+ 634         int tx = (x0 &gt;&gt; _TILE_SIZE_LG);
+ 635 
+ 636         // handle trivial case: same tile (x0, x0+runLen)
+ 637         if (tx == (x1 &gt;&gt; _TILE_SIZE_LG)) {
+ 638             // same tile:
+ 639             _touchedTile[tx] += val * runLen;
+ 640             return;
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  83     final long[] rowAALen = new long[TILE_SIZE];
+  84     // last position in RLE decoding for each row (getAlpha):
+  85     final long[] rowAAPos = new long[TILE_SIZE];
+  86 
+  87     // dirty off-heap array containing pixel coverages for (32) rows (packed)
+  88     // if encoding=raw, it contains alpha coverage values (val) as integer
+  89     // if encoding=RLE, it contains tuples (val, last x-coordinate exclusive)
+  90     // use rowAAx0/rowAAx1 to get row indices within this chunk
+  91     final OffHeapArray rowAAChunk;
+  92 
+  93     // current position in rowAAChunk array
+  94     long rowAAChunkPos;
+  95 
+  96     // touchedTile[i] is the sum of all the alphas in the tile with
+  97     // x=j*TILE_SIZE+bboxX0.
+  98     int[] touchedTile;
+  99 
+ 100     // per-thread renderer context
+ 101     final RendererContext rdrCtx;
+ 102 
+<span class="changed"> 103     // touchedTile ref (clean)</span>
+<span class="changed"> 104     private final IntArrayCache.Reference touchedTile_ref;</span>
+ 105 
+ 106     int tileMin, tileMax;
+ 107 
+ 108     boolean useRLE = false;
+ 109 
+ 110     MarlinCache(final RendererContext rdrCtx) {
+ 111         this.rdrCtx = rdrCtx;
+ 112 
+<span class="changed"> 113         rowAAChunk = rdrCtx.newOffHeapArray(INITIAL_CHUNK_ARRAY); // 64K</span>
+ 114 
+<span class="changed"> 115         touchedTile_ref = rdrCtx.newCleanIntArrayRef(INITIAL_ARRAY); // 1K = 1 tile line</span>
+<span class="changed"> 116         touchedTile     = touchedTile_ref.initial;</span>
+ 117 
+ 118         // tile used marks:
+ 119         tileMin = Integer.MAX_VALUE;
+ 120         tileMax = Integer.MIN_VALUE;
+ 121     }
+ 122 
+ 123     void init(int minx, int miny, int maxx, int maxy, int edgeSumDeltaY)
+ 124     {
+ 125         // assert maxy &gt;= miny &amp;&amp; maxx &gt;= minx;
+ 126         bboxX0 = minx;
+ 127         bboxY0 = miny;
+ 128         bboxX1 = maxx;
+ 129         bboxY1 = maxy;
+ 130 
+ 131         final int width = (maxx - minx);
+ 132 
+ 133         if (FORCE_NO_RLE) {
+ 134             useRLE = false;
+ 135         } else if (FORCE_RLE) {
+ 136             useRLE = true;
+
+</pre><hr></hr><pre>
+ 165 
+ 166                     System.out.println("High complexity: "
+ 167                         + " for bbox[width = " + width
+ 168                         + " height = " + (maxy - miny)
+ 169                         + "] edgeSumDeltaY = " + edgeSumDeltaY
+ 170                         + " heightSubPixel = " + heightSubPixel
+ 171                         + " meanCrossings = "+ meanCrossings
+ 172                         + " meanDist = " + meanDist
+ 173                         + " width =  " + (width * heightSubPixel)
+ 174                         + " &lt;= criteria:  " + ((edgeSumDeltaY - heightSubPixel) &lt;&lt; BLOCK_SIZE_LG)
+ 175                     );
+ 176                 }
+ 177             }
+ 178         }
+ 179 
+ 180         // the ceiling of (maxy - miny + 1) / TILE_SIZE;
+ 181         final int nxTiles = (width + TILE_SIZE) &gt;&gt; TILE_SIZE_LG;
+ 182 
+ 183         if (nxTiles &gt; INITIAL_ARRAY) {
+ 184             if (DO_STATS) {
+<span class="changed"> 185                 rdrCtx.stats.stat_array_marlincache_touchedTile.add(nxTiles);</span>
+
+ 186             }
+<span class="changed"> 187             touchedTile = touchedTile_ref.getArray(nxTiles);</span>
+ 188         }
+ 189     }
+ 190 
+ 191     /**
+ 192      * Disposes this cache:
+ 193      * clean up before reusing this instance
+ 194      */
+ 195     void dispose() {
+ 196         // Reset touchedTile if needed:
+ 197         resetTileLine(0);
+ 198 
+<span class="changed"> 199         if (DO_STATS) {</span>
+<span class="changed"> 200             rdrCtx.stats.totalOffHeap += rowAAChunk.length;</span>
+
+
+ 201         }
+<span class="new"> 202 </span>
+<span class="new"> 203         // Return arrays:</span>
+<span class="new"> 204         touchedTile = touchedTile_ref.putArray(touchedTile, 0, 0); // already zero filled</span>
+<span class="new"> 205 </span>
+ 206         // At last: resize back off-heap rowAA to initial size
+ 207         if (rowAAChunk.length != INITIAL_CHUNK_ARRAY) {
+ 208             // note: may throw OOME:
+ 209             rowAAChunk.resize(INITIAL_CHUNK_ARRAY);
+ 210         }
+ 211         if (DO_CLEAN_DIRTY) {
+ 212             // Force zero-fill dirty arrays:
+ 213             rowAAChunk.fill(BYTE_0);
+ 214         }
+ 215     }
+ 216 
+ 217     void resetTileLine(final int pminY) {
+ 218         // update bboxY0 to process a complete tile line [0 - 32]
+ 219         bboxY0 = pminY;
+ 220 
+ 221         // reset current pos
+ 222         if (DO_STATS) {
+ 223             rdrCtx.stats.stat_cache_rowAAChunk.add(rowAAChunkPos);
+ 224         }
+ 225         rowAAChunkPos = 0L;
+
+</pre><hr></hr><pre>
+ 539         // special case to encode entries into a single int:
+ 540         if (val == 0) {
+ 541             _unsafe.putInt(addr_off,
+ 542                 ((_bboxX0 + to) &lt;&lt; 8)
+ 543             );
+ 544         } else {
+ 545             _unsafe.putInt(addr_off,
+ 546                 ((_bboxX0 + to) &lt;&lt; 8)
+ 547                 | (((int) _unsafe.getByte(addr_alpha + val)) &amp; 0xFF) // [0..255]
+ 548             );
+ 549 
+ 550             if (runLen == 1) {
+ 551                 _touchedTile[cx0 &gt;&gt; _TILE_SIZE_LG] += val;
+ 552             } else {
+ 553                 touchTile(cx0, val, to, runLen, _touchedTile);
+ 554             }
+ 555         }
+ 556         addr_off += SIZE_INT;
+ 557 
+ 558         if (DO_STATS) {
+<span class="changed"> 559             rdrCtx.stats.hist_tile_generator_encoding_runLen.add(runLen);</span>
+
+ 560         }
+ 561 
+ 562         long len = (addr_off - _rowAAChunk.address);
+ 563 
+ 564         // update coded length as bytes:
+ 565         rowAALen[row] = (len - initialPos);
+ 566 
+ 567         // update current position:
+ 568         rowAAChunkPos = len;
+ 569 
+ 570         if (DO_STATS) {
+ 571             rdrCtx.stats.stat_cache_rowAA.add(rowAALen[row]);
+ 572             rdrCtx.stats.hist_tile_generator_encoding_ratio.add(
+ 573                 (100 * skip) / (blkE - blkW)
+ 574             );
+ 575         }
+ 576 
+ 577         // update tile used marks:
+ 578         int tx = from &gt;&gt; _TILE_SIZE_LG; // inclusive
+ 579         if (tx &lt; tileMin) {
+
+</pre><hr></hr><pre>
+ 596         }
+ 597 
+ 598         if (DO_MONITORS) {
+ 599             rdrCtx.stats.mon_rdr_copyAARow.stop();
+ 600         }
+ 601     }
+ 602 
+ 603     long startRLERow(final int row, final int x0, final int x1) {
+ 604         // rows are supposed to be added by increasing y.
+ 605         rowAAx0[row]  = x0; // first pixel inclusive
+ 606         rowAAx1[row]  = x1; // last pixel exclusive
+ 607         rowAAEnc[row] = 1; // RLE encoding
+ 608         rowAAPos[row] = 0L; // position = 0
+ 609 
+ 610         // update row index to current position:
+ 611         return (rowAAChunkIndex[row] = rowAAChunkPos);
+ 612     }
+ 613 
+ 614     private void expandRowAAChunk(final long needSize) {
+ 615         if (DO_STATS) {
+<span class="changed"> 616             rdrCtx.stats.stat_array_marlincache_rowAAChunk.add(needSize);</span>
+
+ 617         }
+ 618 
+ 619         // note: throw IOOB if neededSize &gt; 2Gb:
+<span class="changed"> 620         final long newSize = ArrayCacheConst.getNewLargeSize(rowAAChunk.length,</span>
+<span class="changed"> 621                                                              needSize);</span>
+ 622 
+ 623         rowAAChunk.resize(newSize);
+ 624     }
+ 625 
+ 626     private void touchTile(final int x0, final int val, final int x1,
+ 627                            final int runLen,
+ 628                            final int[] _touchedTile)
+ 629     {
+ 630         // the x and y of the current row, minus bboxX0, bboxY0
+ 631         // process tile line [0 - 32]
+ 632         final int _TILE_SIZE_LG = TILE_SIZE_LG;
+ 633 
+ 634         // update touchedTile
+ 635         int tx = (x0 &gt;&gt; _TILE_SIZE_LG);
+ 636 
+ 637         // handle trivial case: same tile (x0, x0+runLen)
+ 638         if (tx == (x1 &gt;&gt; _TILE_SIZE_LG)) {
+ 639             // same tile:
+ 640             _touchedTile[tx] += val * runLen;
+ 641             return;
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/IntArrayCache.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinConst.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

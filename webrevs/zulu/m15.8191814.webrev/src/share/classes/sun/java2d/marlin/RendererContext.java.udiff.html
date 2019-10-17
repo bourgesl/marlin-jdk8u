@@ -1,0 +1,184 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/RendererContext.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Renderer.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererStats.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/RendererContext.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13694">13694</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8191814">8191814</a>: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
+Summary: upgrade to Marlin 0.8.2 providing efficient path clipping (Stroker and Filler)
+Reviewed-by: prr, serb</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -73,20 +73,26 @@</span>
+     final Dasher dasher;
+     final MarlinTileGenerator ptg;
+     final MarlinCache cache;
+     // flag indicating the shape is stroked (1) or filled (0)
+     int stroking = 0;
+<span class="new">+    // flag indicating to clip the shape</span>
+<span class="new">+    boolean doClip = false;</span>
+<span class="new">+    // flag indicating if the path is closed or not (in advance) to handle properly caps</span>
+<span class="new">+    boolean closedPath = false;</span>
+<span class="new">+    // clip rectangle (ymin, ymax, xmin, xmax):</span>
+<span class="new">+    final float[] clipRect = new float[4];</span>
+ 
+     // Array caches:
+     /* clean int[] cache (zero-filled) = 5 refs */
+     private final IntArrayCache cleanIntCache = new IntArrayCache(true, 5);
+<span class="removed">-    /* dirty int[] cache = 4 refs */</span>
+<span class="removed">-    private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 4);</span>
+<span class="removed">-    /* dirty float[] cache = 3 refs */</span>
+<span class="removed">-    private final FloatArrayCache dirtyFloatCache = new FloatArrayCache(false, 3);</span>
+<span class="removed">-    /* dirty byte[] cache = 1 ref */</span>
+<span class="removed">-    private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 1);</span>
+<span class="new">+    /* dirty int[] cache = 5 refs */</span>
+<span class="new">+    private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 5);</span>
+<span class="new">+    /* dirty float[] cache = 4 refs (2 polystack) */</span>
+<span class="new">+    private final FloatArrayCache dirtyFloatCache = new FloatArrayCache(false, 4);</span>
+<span class="new">+    /* dirty byte[] cache = 2 ref (2 polystack) */</span>
+<span class="new">+    private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 2);</span>
+ 
+     // RendererContext statistics
+     final RendererStats stats;
+ 
+     /**
+</pre><hr /><pre>
+<span class="newmarker">@@ -114,11 +120,11 @@</span>
+         // NormalizingPathIterator instances:
+         nPCPathIterator = new NormalizingPathIterator.NearestPixelCenter(float6);
+         nPQPathIterator  = new NormalizingPathIterator.NearestPixelQuarter(float6);
+ 
+         // MarlinRenderingEngine.TransformingPathConsumer2D
+<span class="removed">-        transformerPC2D = new TransformingPathConsumer2D();</span>
+<span class="new">+        transformerPC2D = new TransformingPathConsumer2D(this);</span>
+ 
+         // Renderer:
+         cache = new MarlinCache(this);
+         renderer = new Renderer(this); // needs MarlinCache from rdrCtx.cache
+         ptg = new MarlinTileGenerator(stats, renderer, cache);
+</pre><hr /><pre>
+<span class="newmarker">@@ -137,10 +143,13 @@</span>
+                 stats.totalOffHeapMax = stats.totalOffHeap;
+             }
+             stats.totalOffHeap = 0L;
+         }
+         stroking = 0;
+<span class="new">+        doClip     = false;</span>
+<span class="new">+        closedPath = false;</span>
+<span class="new">+</span>
+         // if context is maked as DIRTY:
+         if (dirty) {
+             // may happen if an exception if thrown in the pipeline processing:
+             // force cleanup of all possible pipelined blocks (except Renderer):
+ 
+</pre><hr /><pre>
+<span class="newmarker">@@ -157,16 +166,15 @@</span>
+         }
+     }
+ 
+     Path2D.Float getPath2D() {
+         // resolve reference:
+<span class="removed">-        Path2D.Float p2d</span>
+<span class="removed">-            = (refPath2D != null) ? refPath2D.get() : null;</span>
+<span class="new">+        Path2D.Float p2d = (refPath2D != null) ? refPath2D.get() : null;</span>
+ 
+         // create a new Path2D ?
+         if (p2d == null) {
+<span class="removed">-            p2d = new Path2D.Float(Path2D.WIND_NON_ZERO, INITIAL_EDGES_COUNT); // 32K</span>
+<span class="new">+            p2d = new Path2D.Float(WIND_NON_ZERO, INITIAL_EDGES_COUNT); // 32K</span>
+ 
+             // update weak reference:
+             refPath2D = new WeakReference&lt;Path2D.Float&gt;(p2d);
+         }
+         // reset the path anyway:
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Renderer.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererStats.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

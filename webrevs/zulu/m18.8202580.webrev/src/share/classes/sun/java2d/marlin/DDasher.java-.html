@@ -1,0 +1,1206 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>Old src/share/classes/sun/java2d/marlin/DDasher.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2007, 2018, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.util.Arrays;
+  29 import sun.java2d.marlin.DTransformingPathConsumer2D.CurveBasicMonotonizer;
+  30 import sun.java2d.marlin.DTransformingPathConsumer2D.CurveClipSplitter;
+  31 
+  32 /**
+  33  * The &lt;code&gt;DDasher&lt;/code&gt; class takes a series of linear commands
+  34  * (&lt;code&gt;moveTo&lt;/code&gt;, &lt;code&gt;lineTo&lt;/code&gt;, &lt;code&gt;close&lt;/code&gt; and
+  35  * &lt;code&gt;end&lt;/code&gt;) and breaks them into smaller segments according to a
+  36  * dash pattern array and a starting dash phase.
+  37  *
+  38  * &lt;p&gt; Issues: in J2Se, a zero length dash segment as drawn as a very
+  39  * short dash, whereas Pisces does not draw anything.  The PostScript
+  40  * semantics are unclear.
+  41  *
+  42  */
+  43 final class DDasher implements DPathConsumer2D, MarlinConst {
+  44 
+  45     /* huge circle with radius ~ 2E9 only needs 12 subdivision levels */
+  46     static final int REC_LIMIT = 16;
+  47     static final double CURVE_LEN_ERR = MarlinProperties.getCurveLengthError(); // 0.01 initial
+  48     static final double MIN_T_INC = 1.0d / (1 &lt;&lt; REC_LIMIT);
+  49 
+  50     // More than 24 bits of mantissa means we can no longer accurately
+  51     // measure the number of times cycled through the dash array so we
+  52     // punt and override the phase to just be 0 past that point.
+  53     static final double MAX_CYCLES = 16000000.0d;
+  54 
+  55     private DPathConsumer2D out;
+  56     private double[] dash;
+  57     private int dashLen;
+  58     private double startPhase;
+  59     private boolean startDashOn;
+  60     private int startIdx;
+  61 
+  62     private boolean starting;
+  63     private boolean needsMoveTo;
+  64 
+  65     private int idx;
+  66     private boolean dashOn;
+  67     private double phase;
+  68 
+  69     // The starting point of the path
+  70     private double sx0, sy0;
+  71     // the current point
+  72     private double cx0, cy0;
+  73 
+  74     // temporary storage for the current curve
+  75     private final double[] curCurvepts;
+  76 
+  77     // per-thread renderer context
+  78     final DRendererContext rdrCtx;
+  79 
+  80     // flag to recycle dash array copy
+  81     boolean recycleDashes;
+  82 
+  83     // We don't emit the first dash right away. If we did, caps would be
+  84     // drawn on it, but we need joins to be drawn if there's a closePath()
+  85     // So, we store the path elements that make up the first dash in the
+  86     // buffer below.
+  87     private double[] firstSegmentsBuffer; // dynamic array
+  88     private int firstSegidx;
+  89 
+  90     // dashes ref (dirty)
+  91     final DoubleArrayCache.Reference dashes_ref;
+  92     // firstSegmentsBuffer ref (dirty)
+  93     final DoubleArrayCache.Reference firstSegmentsBuffer_ref;
+  94 
+  95     // Bounds of the drawing region, at pixel precision.
+  96     private double[] clipRect;
+  97 
+  98     // the outcode of the current point
+  99     private int cOutCode = 0;
+ 100 
+ 101     private boolean subdivide = DO_CLIP_SUBDIVIDER;
+ 102 
+ 103     private final LengthIterator li = new LengthIterator();
+ 104 
+ 105     private final CurveClipSplitter curveSplitter;
+ 106 
+ 107     private double cycleLen;
+ 108     private boolean outside;
+ 109     private double totalSkipLen;
+ 110 
+ 111     /**
+ 112      * Constructs a &lt;code&gt;DDasher&lt;/code&gt;.
+ 113      * @param rdrCtx per-thread renderer context
+ 114      */
+ 115     DDasher(final DRendererContext rdrCtx) {
+ 116         this.rdrCtx = rdrCtx;
+ 117 
+ 118         dashes_ref = rdrCtx.newDirtyDoubleArrayRef(INITIAL_ARRAY); // 1K
+ 119 
+ 120         firstSegmentsBuffer_ref = rdrCtx.newDirtyDoubleArrayRef(INITIAL_ARRAY); // 1K
+ 121         firstSegmentsBuffer     = firstSegmentsBuffer_ref.initial;
+ 122 
+ 123         // we need curCurvepts to be able to contain 2 curves because when
+ 124         // dashing curves, we need to subdivide it
+ 125         curCurvepts = new double[8 * 2];
+ 126 
+ 127         this.curveSplitter = rdrCtx.curveClipSplitter;
+ 128     }
+ 129 
+ 130     /**
+ 131      * Initialize the &lt;code&gt;DDasher&lt;/code&gt;.
+ 132      *
+ 133      * @param out an output &lt;code&gt;DPathConsumer2D&lt;/code&gt;.
+ 134      * @param dash an array of &lt;code&gt;double&lt;/code&gt;s containing the dash pattern
+ 135      * @param dashLen length of the given dash array
+ 136      * @param phase a &lt;code&gt;double&lt;/code&gt; containing the dash phase
+ 137      * @param recycleDashes true to indicate to recycle the given dash array
+ 138      * @return this instance
+ 139      */
+ 140     DDasher init(final DPathConsumer2D out, double[] dash, int dashLen,
+ 141                 double phase, boolean recycleDashes)
+ 142     {
+ 143         this.out = out;
+ 144 
+ 145         // Normalize so 0 &lt;= phase &lt; dash[0]
+ 146         int sidx = 0;
+ 147         dashOn = true;
+ 148 
+ 149         double sum = 0.0d;
+ 150         for (double d : dash) {
+ 151             sum += d;
+ 152         }
+ 153         this.cycleLen = sum;
+ 154 
+ 155         double cycles = phase / sum;
+ 156         if (phase &lt; 0.0d) {
+ 157             if (-cycles &gt;= MAX_CYCLES) {
+ 158                 phase = 0.0d;
+ 159             } else {
+ 160                 int fullcycles = FloatMath.floor_int(-cycles);
+ 161                 if ((fullcycles &amp; dash.length &amp; 1) != 0) {
+ 162                     dashOn = !dashOn;
+ 163                 }
+ 164                 phase += fullcycles * sum;
+ 165                 while (phase &lt; 0.0d) {
+ 166                     if (--sidx &lt; 0) {
+ 167                         sidx = dash.length - 1;
+ 168                     }
+ 169                     phase += dash[sidx];
+ 170                     dashOn = !dashOn;
+ 171                 }
+ 172             }
+ 173         } else if (phase &gt; 0.0d) {
+ 174             if (cycles &gt;= MAX_CYCLES) {
+ 175                 phase = 0.0d;
+ 176             } else {
+ 177                 int fullcycles = FloatMath.floor_int(cycles);
+ 178                 if ((fullcycles &amp; dash.length &amp; 1) != 0) {
+ 179                     dashOn = !dashOn;
+ 180                 }
+ 181                 phase -= fullcycles * sum;
+ 182                 double d;
+ 183                 while (phase &gt;= (d = dash[sidx])) {
+ 184                     phase -= d;
+ 185                     sidx = (sidx + 1) % dash.length;
+ 186                     dashOn = !dashOn;
+ 187                 }
+ 188             }
+ 189         }
+ 190 
+ 191         this.dash = dash;
+ 192         this.dashLen = dashLen;
+ 193         this.phase = phase;
+ 194         this.startPhase = phase;
+ 195         this.startDashOn = dashOn;
+ 196         this.startIdx = sidx;
+ 197         this.starting = true;
+ 198         this.needsMoveTo = false;
+ 199         this.firstSegidx = 0;
+ 200 
+ 201         this.recycleDashes = recycleDashes;
+ 202 
+ 203         if (rdrCtx.doClip) {
+ 204             this.clipRect = rdrCtx.clipRect;
+ 205         } else {
+ 206             this.clipRect = null;
+ 207             this.cOutCode = 0;
+ 208         }
+ 209         return this; // fluent API
+ 210     }
+ 211 
+ 212     /**
+ 213      * Disposes this dasher:
+ 214      * clean up before reusing this instance
+ 215      */
+ 216     void dispose() {
+ 217         if (DO_CLEAN_DIRTY) {
+ 218             // Force zero-fill dirty arrays:
+ 219             Arrays.fill(curCurvepts, 0.0d);
+ 220         }
+ 221         // Return arrays:
+ 222         if (recycleDashes) {
+ 223             dash = dashes_ref.putArray(dash);
+ 224         }
+ 225         firstSegmentsBuffer = firstSegmentsBuffer_ref.putArray(firstSegmentsBuffer);
+ 226     }
+ 227 
+ 228     double[] copyDashArray(final float[] dashes) {
+ 229         final int len = dashes.length;
+ 230         final double[] newDashes;
+ 231         if (len &lt;= MarlinConst.INITIAL_ARRAY) {
+ 232             newDashes = dashes_ref.initial;
+ 233         } else {
+ 234             if (DO_STATS) {
+ 235                 rdrCtx.stats.stat_array_dasher_dasher.add(len);
+ 236             }
+ 237             newDashes = dashes_ref.getArray(len);
+ 238         }
+ 239         for (int i = 0; i &lt; len; i++) { newDashes[i] = dashes[i]; }
+ 240         return newDashes;
+ 241     }
+ 242 
+ 243     @Override
+ 244     public void moveTo(final double x0, final double y0) {
+ 245         if (firstSegidx != 0) {
+ 246             out.moveTo(sx0, sy0);
+ 247             emitFirstSegments();
+ 248         }
+ 249         this.needsMoveTo = true;
+ 250         this.idx = startIdx;
+ 251         this.dashOn = this.startDashOn;
+ 252         this.phase = this.startPhase;
+ 253         this.cx0 = x0;
+ 254         this.cy0 = y0;
+ 255 
+ 256         // update starting point:
+ 257         this.sx0 = x0;
+ 258         this.sy0 = y0;
+ 259         this.starting = true;
+ 260 
+ 261         if (clipRect != null) {
+ 262             final int outcode = DHelpers.outcode(x0, y0, clipRect);
+ 263             this.cOutCode = outcode;
+ 264             this.outside = false;
+ 265             this.totalSkipLen = 0.0d;
+ 266         }
+ 267     }
+ 268 
+ 269     private void emitSeg(double[] buf, int off, int type) {
+ 270         switch (type) {
+ 271         case 8:
+ 272             out.curveTo(buf[off    ], buf[off + 1],
+ 273                         buf[off + 2], buf[off + 3],
+ 274                         buf[off + 4], buf[off + 5]);
+ 275             return;
+ 276         case 6:
+ 277             out.quadTo(buf[off    ], buf[off + 1],
+ 278                        buf[off + 2], buf[off + 3]);
+ 279             return;
+ 280         case 4:
+ 281             out.lineTo(buf[off], buf[off + 1]);
+ 282             return;
+ 283         default:
+ 284         }
+ 285     }
+ 286 
+ 287     private void emitFirstSegments() {
+ 288         final double[] fSegBuf = firstSegmentsBuffer;
+ 289 
+ 290         for (int i = 0, len = firstSegidx; i &lt; len; ) {
+ 291             int type = (int)fSegBuf[i];
+ 292             emitSeg(fSegBuf, i + 1, type);
+ 293             i += (type - 1);
+ 294         }
+ 295         firstSegidx = 0;
+ 296     }
+ 297 
+ 298     // precondition: pts must be in relative coordinates (relative to x0,y0)
+ 299     private void goTo(final double[] pts, final int off, final int type,
+ 300                       final boolean on)
+ 301     {
+ 302         final int index = off + type;
+ 303         final double x = pts[index - 4];
+ 304         final double y = pts[index - 3];
+ 305 
+ 306         if (on) {
+ 307             if (starting) {
+ 308                 goTo_starting(pts, off, type);
+ 309             } else {
+ 310                 if (needsMoveTo) {
+ 311                     needsMoveTo = false;
+ 312                     out.moveTo(cx0, cy0);
+ 313                 }
+ 314                 emitSeg(pts, off, type);
+ 315             }
+ 316         } else {
+ 317             if (starting) {
+ 318                 // low probability test (hotspot)
+ 319                 starting = false;
+ 320             }
+ 321             needsMoveTo = true;
+ 322         }
+ 323         this.cx0 = x;
+ 324         this.cy0 = y;
+ 325     }
+ 326 
+ 327     private void goTo_starting(final double[] pts, final int off, final int type) {
+ 328         int len = type - 1; // - 2 + 1
+ 329         int segIdx = firstSegidx;
+ 330         double[] buf = firstSegmentsBuffer;
+ 331 
+ 332         if (segIdx + len  &gt; buf.length) {
+ 333             if (DO_STATS) {
+ 334                 rdrCtx.stats.stat_array_dasher_firstSegmentsBuffer
+ 335                     .add(segIdx + len);
+ 336             }
+ 337             firstSegmentsBuffer = buf
+ 338                 = firstSegmentsBuffer_ref.widenArray(buf, segIdx,
+ 339                                                      segIdx + len);
+ 340         }
+ 341         buf[segIdx++] = type;
+ 342         len--;
+ 343         // small arraycopy (2, 4 or 6) but with offset:
+ 344         System.arraycopy(pts, off, buf, segIdx, len);
+ 345         firstSegidx = segIdx + len;
+ 346     }
+ 347 
+ 348     @Override
+ 349     public void lineTo(final double x1, final double y1) {
+ 350         final int outcode0 = this.cOutCode;
+ 351 
+ 352         if (clipRect != null) {
+ 353             final int outcode1 = DHelpers.outcode(x1, y1, clipRect);
+ 354 
+ 355             // Should clip
+ 356             final int orCode = (outcode0 | outcode1);
+ 357 
+ 358             if (orCode != 0) {
+ 359                 final int sideCode = outcode0 &amp; outcode1;
+ 360 
+ 361                 // basic rejection criteria:
+ 362                 if (sideCode == 0) {
+ 363                     // ovelap clip:
+ 364                     if (subdivide) {
+ 365                         // avoid reentrance
+ 366                         subdivide = false;
+ 367                         // subdivide curve =&gt; callback with subdivided parts:
+ 368                         boolean ret = curveSplitter.splitLine(cx0, cy0, x1, y1,
+ 369                                                               orCode, this);
+ 370                         // reentrance is done:
+ 371                         subdivide = true;
+ 372                         if (ret) {
+ 373                             return;
+ 374                         }
+ 375                     }
+ 376                     // already subdivided so render it
+ 377                 } else {
+ 378                     this.cOutCode = outcode1;
+ 379                     skipLineTo(x1, y1);
+ 380                     return;
+ 381                 }
+ 382             }
+ 383 
+ 384             this.cOutCode = outcode1;
+ 385 
+ 386             if (this.outside) {
+ 387                 this.outside = false;
+ 388                 // Adjust current index, phase &amp; dash:
+ 389                 skipLen();
+ 390             }
+ 391         }
+ 392         _lineTo(x1, y1);
+ 393     }
+ 394 
+ 395     private void _lineTo(final double x1, final double y1) {
+ 396         final double dx = x1 - cx0;
+ 397         final double dy = y1 - cy0;
+ 398 
+ 399         double len = dx * dx + dy * dy;
+ 400         if (len == 0.0d) {
+ 401             return;
+ 402         }
+ 403         len = Math.sqrt(len);
+ 404 
+ 405         // The scaling factors needed to get the dx and dy of the
+ 406         // transformed dash segments.
+ 407         final double cx = dx / len;
+ 408         final double cy = dy / len;
+ 409 
+ 410         final double[] _curCurvepts = curCurvepts;
+ 411         final double[] _dash = dash;
+ 412         final int _dashLen = this.dashLen;
+ 413 
+ 414         int _idx = idx;
+ 415         boolean _dashOn = dashOn;
+ 416         double _phase = phase;
+ 417 
+ 418         double leftInThisDashSegment, d;
+ 419 
+ 420         while (true) {
+ 421             d = _dash[_idx];
+ 422             leftInThisDashSegment = d - _phase;
+ 423 
+ 424             if (len &lt;= leftInThisDashSegment) {
+ 425                 _curCurvepts[0] = x1;
+ 426                 _curCurvepts[1] = y1;
+ 427 
+ 428                 goTo(_curCurvepts, 0, 4, _dashOn);
+ 429 
+ 430                 // Advance phase within current dash segment
+ 431                 _phase += len;
+ 432 
+ 433                 // TODO: compare double values using epsilon:
+ 434                 if (len == leftInThisDashSegment) {
+ 435                     _phase = 0.0d;
+ 436                     _idx = (_idx + 1) % _dashLen;
+ 437                     _dashOn = !_dashOn;
+ 438                 }
+ 439                 break;
+ 440             }
+ 441 
+ 442             if (_phase == 0.0d) {
+ 443                 _curCurvepts[0] = cx0 + d * cx;
+ 444                 _curCurvepts[1] = cy0 + d * cy;
+ 445             } else {
+ 446                 _curCurvepts[0] = cx0 + leftInThisDashSegment * cx;
+ 447                 _curCurvepts[1] = cy0 + leftInThisDashSegment * cy;
+ 448             }
+ 449 
+ 450             goTo(_curCurvepts, 0, 4, _dashOn);
+ 451 
+ 452             len -= leftInThisDashSegment;
+ 453             // Advance to next dash segment
+ 454             _idx = (_idx + 1) % _dashLen;
+ 455             _dashOn = !_dashOn;
+ 456             _phase = 0.0d;
+ 457         }
+ 458         // Save local state:
+ 459         idx = _idx;
+ 460         dashOn = _dashOn;
+ 461         phase = _phase;
+ 462     }
+ 463 
+ 464     private void skipLineTo(final double x1, final double y1) {
+ 465         final double dx = x1 - cx0;
+ 466         final double dy = y1 - cy0;
+ 467 
+ 468         double len = dx * dx + dy * dy;
+ 469         if (len != 0.0d) {
+ 470             len = Math.sqrt(len);
+ 471         }
+ 472 
+ 473         // Accumulate skipped length:
+ 474         this.outside = true;
+ 475         this.totalSkipLen += len;
+ 476 
+ 477         // Fix initial move:
+ 478         this.needsMoveTo = true;
+ 479         this.starting = false;
+ 480 
+ 481         this.cx0 = x1;
+ 482         this.cy0 = y1;
+ 483     }
+ 484 
+ 485     public void skipLen() {
+ 486         double len = this.totalSkipLen;
+ 487         this.totalSkipLen = 0.0d;
+ 488 
+ 489         final double[] _dash = dash;
+ 490         final int _dashLen = this.dashLen;
+ 491 
+ 492         int _idx = idx;
+ 493         boolean _dashOn = dashOn;
+ 494         double _phase = phase;
+ 495 
+ 496         // -2 to ensure having 2 iterations of the post-loop
+ 497         // to compensate the remaining phase
+ 498         final long fullcycles = (long)Math.floor(len / cycleLen) - 2L;
+ 499 
+ 500         if (fullcycles &gt; 0L) {
+ 501             len -= cycleLen * fullcycles;
+ 502 
+ 503             final long iterations = fullcycles * _dashLen;
+ 504             _idx = (int) (iterations + _idx) % _dashLen;
+ 505             _dashOn = (iterations + (_dashOn ? 1L : 0L) &amp; 1L) == 1L;
+ 506         }
+ 507 
+ 508         double leftInThisDashSegment, d;
+ 509 
+ 510         while (true) {
+ 511             d = _dash[_idx];
+ 512             leftInThisDashSegment = d - _phase;
+ 513 
+ 514             if (len &lt;= leftInThisDashSegment) {
+ 515                 // Advance phase within current dash segment
+ 516                 _phase += len;
+ 517 
+ 518                 // TODO: compare double values using epsilon:
+ 519                 if (len == leftInThisDashSegment) {
+ 520                     _phase = 0.0d;
+ 521                     _idx = (_idx + 1) % _dashLen;
+ 522                     _dashOn = !_dashOn;
+ 523                 }
+ 524                 break;
+ 525             }
+ 526 
+ 527             len -= leftInThisDashSegment;
+ 528             // Advance to next dash segment
+ 529             _idx = (_idx + 1) % _dashLen;
+ 530             _dashOn = !_dashOn;
+ 531             _phase = 0.0d;
+ 532         }
+ 533         // Save local state:
+ 534         idx = _idx;
+ 535         dashOn = _dashOn;
+ 536         phase = _phase;
+ 537     }
+ 538 
+ 539     // preconditions: curCurvepts must be an array of length at least 2 * type,
+ 540     // that contains the curve we want to dash in the first type elements
+ 541     private void somethingTo(final int type) {
+ 542         final double[] _curCurvepts = curCurvepts;
+ 543         if (pointCurve(_curCurvepts, type)) {
+ 544             return;
+ 545         }
+ 546         final LengthIterator _li = li;
+ 547         final double[] _dash = dash;
+ 548         final int _dashLen = this.dashLen;
+ 549 
+ 550         _li.initializeIterationOnCurve(_curCurvepts, type);
+ 551 
+ 552         int _idx = idx;
+ 553         boolean _dashOn = dashOn;
+ 554         double _phase = phase;
+ 555 
+ 556         // initially the current curve is at curCurvepts[0...type]
+ 557         int curCurveoff = 0;
+ 558         double prevT = 0.0d;
+ 559         double t;
+ 560         double leftInThisDashSegment = _dash[_idx] - _phase;
+ 561 
+ 562         while ((t = _li.next(leftInThisDashSegment)) &lt; 1.0d) {
+ 563             if (t != 0.0d) {
+ 564                 DHelpers.subdivideAt((t - prevT) / (1.0d - prevT),
+ 565                                     _curCurvepts, curCurveoff,
+ 566                                     _curCurvepts, 0, type);
+ 567                 prevT = t;
+ 568                 goTo(_curCurvepts, 2, type, _dashOn);
+ 569                 curCurveoff = type;
+ 570             }
+ 571             // Advance to next dash segment
+ 572             _idx = (_idx + 1) % _dashLen;
+ 573             _dashOn = !_dashOn;
+ 574             _phase = 0.0d;
+ 575             leftInThisDashSegment = _dash[_idx];
+ 576         }
+ 577 
+ 578         goTo(_curCurvepts, curCurveoff + 2, type, _dashOn);
+ 579 
+ 580         _phase += _li.lastSegLen();
+ 581         if (_phase &gt;= _dash[_idx]) {
+ 582             _phase = 0.0d;
+ 583             _idx = (_idx + 1) % _dashLen;
+ 584             _dashOn = !_dashOn;
+ 585         }
+ 586         // Save local state:
+ 587         idx = _idx;
+ 588         dashOn = _dashOn;
+ 589         phase = _phase;
+ 590 
+ 591         // reset LengthIterator:
+ 592         _li.reset();
+ 593     }
+ 594 
+ 595     private void skipSomethingTo(final int type) {
+ 596         final double[] _curCurvepts = curCurvepts;
+ 597         if (pointCurve(_curCurvepts, type)) {
+ 598             return;
+ 599         }
+ 600         final LengthIterator _li = li;
+ 601 
+ 602         _li.initializeIterationOnCurve(_curCurvepts, type);
+ 603 
+ 604         // In contrary to somethingTo(),
+ 605         // just estimate properly the curve length:
+ 606         final double len = _li.totalLength();
+ 607 
+ 608         // Accumulate skipped length:
+ 609         this.outside = true;
+ 610         this.totalSkipLen += len;
+ 611 
+ 612         // Fix initial move:
+ 613         this.needsMoveTo = true;
+ 614         this.starting = false;
+ 615     }
+ 616 
+ 617     private static boolean pointCurve(final double[] curve, final int type) {
+ 618         for (int i = 2; i &lt; type; i++) {
+ 619             if (curve[i] != curve[i-2]) {
+ 620                 return false;
+ 621             }
+ 622         }
+ 623         return true;
+ 624     }
+ 625 
+ 626     // Objects of this class are used to iterate through curves. They return
+ 627     // t values where the left side of the curve has a specified length.
+ 628     // It does this by subdividing the input curve until a certain error
+ 629     // condition has been met. A recursive subdivision procedure would
+ 630     // return as many as 1&lt;&lt;limit curves, but this is an iterator and we
+ 631     // don't need all the curves all at once, so what we carry out a
+ 632     // lazy inorder traversal of the recursion tree (meaning we only move
+ 633     // through the tree when we need the next subdivided curve). This saves
+ 634     // us a lot of memory because at any one time we only need to store
+ 635     // limit+1 curves - one for each level of the tree + 1.
+ 636     // NOTE: the way we do things here is not enough to traverse a general
+ 637     // tree; however, the trees we are interested in have the property that
+ 638     // every non leaf node has exactly 2 children
+ 639     static final class LengthIterator {
+ 640         // Holds the curves at various levels of the recursion. The root
+ 641         // (i.e. the original curve) is at recCurveStack[0] (but then it
+ 642         // gets subdivided, the left half is put at 1, so most of the time
+ 643         // only the right half of the original curve is at 0)
+ 644         private final double[][] recCurveStack; // dirty
+ 645         // sidesRight[i] indicates whether the node at level i+1 in the path from
+ 646         // the root to the current leaf is a left or right child of its parent.
+ 647         private final boolean[] sidesRight; // dirty
+ 648         private int curveType;
+ 649         // lastT and nextT delimit the current leaf.
+ 650         private double nextT;
+ 651         private double lenAtNextT;
+ 652         private double lastT;
+ 653         private double lenAtLastT;
+ 654         private double lenAtLastSplit;
+ 655         private double lastSegLen;
+ 656         // the current level in the recursion tree. 0 is the root. limit
+ 657         // is the deepest possible leaf.
+ 658         private int recLevel;
+ 659         private boolean done;
+ 660 
+ 661         // the lengths of the lines of the control polygon. Only its first
+ 662         // curveType/2 - 1 elements are valid. This is an optimization. See
+ 663         // next() for more detail.
+ 664         private final double[] curLeafCtrlPolyLengths = new double[3];
+ 665 
+ 666         LengthIterator() {
+ 667             this.recCurveStack = new double[REC_LIMIT + 1][8];
+ 668             this.sidesRight = new boolean[REC_LIMIT];
+ 669             // if any methods are called without first initializing this object
+ 670             // on a curve, we want it to fail ASAP.
+ 671             this.nextT = Double.MAX_VALUE;
+ 672             this.lenAtNextT = Double.MAX_VALUE;
+ 673             this.lenAtLastSplit = Double.MIN_VALUE;
+ 674             this.recLevel = Integer.MIN_VALUE;
+ 675             this.lastSegLen = Double.MAX_VALUE;
+ 676             this.done = true;
+ 677         }
+ 678 
+ 679         /**
+ 680          * Reset this LengthIterator.
+ 681          */
+ 682         void reset() {
+ 683             // keep data dirty
+ 684             // as it appears not useful to reset data:
+ 685             if (DO_CLEAN_DIRTY) {
+ 686                 final int recLimit = recCurveStack.length - 1;
+ 687                 for (int i = recLimit; i &gt;= 0; i--) {
+ 688                     Arrays.fill(recCurveStack[i], 0.0d);
+ 689                 }
+ 690                 Arrays.fill(sidesRight, false);
+ 691                 Arrays.fill(curLeafCtrlPolyLengths, 0.0d);
+ 692                 Arrays.fill(nextRoots, 0.0d);
+ 693                 Arrays.fill(flatLeafCoefCache, 0.0d);
+ 694                 flatLeafCoefCache[2] = -1.0d;
+ 695             }
+ 696         }
+ 697 
+ 698         void initializeIterationOnCurve(final double[] pts, final int type) {
+ 699             // optimize arraycopy (8 values faster than 6 = type):
+ 700             System.arraycopy(pts, 0, recCurveStack[0], 0, 8);
+ 701             this.curveType = type;
+ 702             this.recLevel = 0;
+ 703             this.lastT = 0.0d;
+ 704             this.lenAtLastT = 0.0d;
+ 705             this.nextT = 0.0d;
+ 706             this.lenAtNextT = 0.0d;
+ 707             goLeft(); // initializes nextT and lenAtNextT properly
+ 708             this.lenAtLastSplit = 0.0d;
+ 709             if (recLevel &gt; 0) {
+ 710                 this.sidesRight[0] = false;
+ 711                 this.done = false;
+ 712             } else {
+ 713                 // the root of the tree is a leaf so we're done.
+ 714                 this.sidesRight[0] = true;
+ 715                 this.done = true;
+ 716             }
+ 717             this.lastSegLen = 0.0d;
+ 718         }
+ 719 
+ 720         // 0 == false, 1 == true, -1 == invalid cached value.
+ 721         private int cachedHaveLowAcceleration = -1;
+ 722 
+ 723         private boolean haveLowAcceleration(final double err) {
+ 724             if (cachedHaveLowAcceleration == -1) {
+ 725                 final double len1 = curLeafCtrlPolyLengths[0];
+ 726                 final double len2 = curLeafCtrlPolyLengths[1];
+ 727                 // the test below is equivalent to !within(len1/len2, 1, err).
+ 728                 // It is using a multiplication instead of a division, so it
+ 729                 // should be a bit faster.
+ 730                 if (!DHelpers.within(len1, len2, err * len2)) {
+ 731                     cachedHaveLowAcceleration = 0;
+ 732                     return false;
+ 733                 }
+ 734                 if (curveType == 8) {
+ 735                     final double len3 = curLeafCtrlPolyLengths[2];
+ 736                     // if len1 is close to 2 and 2 is close to 3, that probably
+ 737                     // means 1 is close to 3 so the second part of this test might
+ 738                     // not be needed, but it doesn't hurt to include it.
+ 739                     final double errLen3 = err * len3;
+ 740                     if (!(DHelpers.within(len2, len3, errLen3) &amp;&amp;
+ 741                           DHelpers.within(len1, len3, errLen3))) {
+ 742                         cachedHaveLowAcceleration = 0;
+ 743                         return false;
+ 744                     }
+ 745                 }
+ 746                 cachedHaveLowAcceleration = 1;
+ 747                 return true;
+ 748             }
+ 749 
+ 750             return (cachedHaveLowAcceleration == 1);
+ 751         }
+ 752 
+ 753         // we want to avoid allocations/gc so we keep this array so we
+ 754         // can put roots in it,
+ 755         private final double[] nextRoots = new double[4];
+ 756 
+ 757         // caches the coefficients of the current leaf in its flattened
+ 758         // form (see inside next() for what that means). The cache is
+ 759         // invalid when it's third element is negative, since in any
+ 760         // valid flattened curve, this would be &gt;= 0.
+ 761         private final double[] flatLeafCoefCache = new double[]{0.0d, 0.0d, -1.0d, 0.0d};
+ 762 
+ 763         // returns the t value where the remaining curve should be split in
+ 764         // order for the left subdivided curve to have length len. If len
+ 765         // is &gt;= than the length of the uniterated curve, it returns 1.
+ 766         double next(final double len) {
+ 767             final double targetLength = lenAtLastSplit + len;
+ 768             while (lenAtNextT &lt; targetLength) {
+ 769                 if (done) {
+ 770                     lastSegLen = lenAtNextT - lenAtLastSplit;
+ 771                     return 1.0d;
+ 772                 }
+ 773                 goToNextLeaf();
+ 774             }
+ 775             lenAtLastSplit = targetLength;
+ 776             final double leaflen = lenAtNextT - lenAtLastT;
+ 777             double t = (targetLength - lenAtLastT) / leaflen;
+ 778 
+ 779             // cubicRootsInAB is a fairly expensive call, so we just don't do it
+ 780             // if the acceleration in this section of the curve is small enough.
+ 781             if (!haveLowAcceleration(0.05d)) {
+ 782                 // We flatten the current leaf along the x axis, so that we're
+ 783                 // left with a, b, c which define a 1D Bezier curve. We then
+ 784                 // solve this to get the parameter of the original leaf that
+ 785                 // gives us the desired length.
+ 786                 final double[] _flatLeafCoefCache = flatLeafCoefCache;
+ 787 
+ 788                 if (_flatLeafCoefCache[2] &lt; 0.0d) {
+ 789                     double x =     curLeafCtrlPolyLengths[0],
+ 790                            y = x + curLeafCtrlPolyLengths[1];
+ 791                     if (curveType == 8) {
+ 792                         double z = y + curLeafCtrlPolyLengths[2];
+ 793                         _flatLeafCoefCache[0] = 3.0d * (x - y) + z;
+ 794                         _flatLeafCoefCache[1] = 3.0d * (y - 2.0d * x);
+ 795                         _flatLeafCoefCache[2] = 3.0d * x;
+ 796                         _flatLeafCoefCache[3] = -z;
+ 797                     } else if (curveType == 6) {
+ 798                         _flatLeafCoefCache[0] = 0.0d;
+ 799                         _flatLeafCoefCache[1] = y - 2.0d * x;
+ 800                         _flatLeafCoefCache[2] = 2.0d * x;
+ 801                         _flatLeafCoefCache[3] = -y;
+ 802                     }
+ 803                 }
+ 804                 double a = _flatLeafCoefCache[0];
+ 805                 double b = _flatLeafCoefCache[1];
+ 806                 double c = _flatLeafCoefCache[2];
+ 807                 double d = t * _flatLeafCoefCache[3];
+ 808 
+ 809                 // we use cubicRootsInAB here, because we want only roots in 0, 1,
+ 810                 // and our quadratic root finder doesn't filter, so it's just a
+ 811                 // matter of convenience.
+ 812                 final int n = DHelpers.cubicRootsInAB(a, b, c, d, nextRoots, 0, 0.0d, 1.0d);
+ 813                 if (n == 1 &amp;&amp; !Double.isNaN(nextRoots[0])) {
+ 814                     t = nextRoots[0];
+ 815                 }
+ 816             }
+ 817             // t is relative to the current leaf, so we must make it a valid parameter
+ 818             // of the original curve.
+ 819             t = t * (nextT - lastT) + lastT;
+ 820             if (t &gt;= 1.0d) {
+ 821                 t = 1.0d;
+ 822                 done = true;
+ 823             }
+ 824             // even if done = true, if we're here, that means targetLength
+ 825             // is equal to, or very, very close to the total length of the
+ 826             // curve, so lastSegLen won't be too high. In cases where len
+ 827             // overshoots the curve, this method will exit in the while
+ 828             // loop, and lastSegLen will still be set to the right value.
+ 829             lastSegLen = len;
+ 830             return t;
+ 831         }
+ 832 
+ 833         double totalLength() {
+ 834             while (!done) {
+ 835                 goToNextLeaf();
+ 836             }
+ 837             // reset LengthIterator:
+ 838             reset();
+ 839 
+ 840             return lenAtNextT;
+ 841         }
+ 842 
+ 843         double lastSegLen() {
+ 844             return lastSegLen;
+ 845         }
+ 846 
+ 847         // go to the next leaf (in an inorder traversal) in the recursion tree
+ 848         // preconditions: must be on a leaf, and that leaf must not be the root.
+ 849         private void goToNextLeaf() {
+ 850             // We must go to the first ancestor node that has an unvisited
+ 851             // right child.
+ 852             final boolean[] _sides = sidesRight;
+ 853             int _recLevel = recLevel;
+ 854             _recLevel--;
+ 855 
+ 856             while(_sides[_recLevel]) {
+ 857                 if (_recLevel == 0) {
+ 858                     recLevel = 0;
+ 859                     done = true;
+ 860                     return;
+ 861                 }
+ 862                 _recLevel--;
+ 863             }
+ 864 
+ 865             _sides[_recLevel] = true;
+ 866             // optimize arraycopy (8 values faster than 6 = type):
+ 867             System.arraycopy(recCurveStack[_recLevel++], 0,
+ 868                              recCurveStack[_recLevel], 0, 8);
+ 869             recLevel = _recLevel;
+ 870             goLeft();
+ 871         }
+ 872 
+ 873         // go to the leftmost node from the current node. Return its length.
+ 874         private void goLeft() {
+ 875             final double len = onLeaf();
+ 876             if (len &gt;= 0.0d) {
+ 877                 lastT = nextT;
+ 878                 lenAtLastT = lenAtNextT;
+ 879                 nextT += (1 &lt;&lt; (REC_LIMIT - recLevel)) * MIN_T_INC;
+ 880                 lenAtNextT += len;
+ 881                 // invalidate caches
+ 882                 flatLeafCoefCache[2] = -1.0d;
+ 883                 cachedHaveLowAcceleration = -1;
+ 884             } else {
+ 885                 DHelpers.subdivide(recCurveStack[recLevel],
+ 886                                    recCurveStack[recLevel + 1],
+ 887                                    recCurveStack[recLevel], curveType);
+ 888 
+ 889                 sidesRight[recLevel] = false;
+ 890                 recLevel++;
+ 891                 goLeft();
+ 892             }
+ 893         }
+ 894 
+ 895         // this is a bit of a hack. It returns -1 if we're not on a leaf, and
+ 896         // the length of the leaf if we are on a leaf.
+ 897         private double onLeaf() {
+ 898             final double[] curve = recCurveStack[recLevel];
+ 899             final int _curveType = curveType;
+ 900             double polyLen = 0.0d;
+ 901 
+ 902             double x0 = curve[0], y0 = curve[1];
+ 903             for (int i = 2; i &lt; _curveType; i += 2) {
+ 904                 final double x1 = curve[i], y1 = curve[i + 1];
+ 905                 final double len = DHelpers.linelen(x0, y0, x1, y1);
+ 906                 polyLen += len;
+ 907                 curLeafCtrlPolyLengths[(i &gt;&gt; 1) - 1] = len;
+ 908                 x0 = x1;
+ 909                 y0 = y1;
+ 910             }
+ 911 
+ 912             final double lineLen = DHelpers.linelen(curve[0], curve[1], x0, y0);
+ 913 
+ 914             if ((polyLen - lineLen) &lt; CURVE_LEN_ERR || recLevel == REC_LIMIT) {
+ 915                 return (polyLen + lineLen) / 2.0d;
+ 916             }
+ 917             return -1.0d;
+ 918         }
+ 919     }
+ 920 
+ 921     @Override
+ 922     public void curveTo(final double x1, final double y1,
+ 923                         final double x2, final double y2,
+ 924                         final double x3, final double y3)
+ 925     {
+ 926         final int outcode0 = this.cOutCode;
+ 927 
+ 928         if (clipRect != null) {
+ 929             final int outcode1 = DHelpers.outcode(x1, y1, clipRect);
+ 930             final int outcode2 = DHelpers.outcode(x2, y2, clipRect);
+ 931             final int outcode3 = DHelpers.outcode(x3, y3, clipRect);
+ 932 
+ 933             // Should clip
+ 934             final int orCode = (outcode0 | outcode1 | outcode2 | outcode3);
+ 935             if (orCode != 0) {
+ 936                 final int sideCode = outcode0 &amp; outcode1 &amp; outcode2 &amp; outcode3;
+ 937 
+ 938                 // basic rejection criteria:
+ 939                 if (sideCode == 0) {
+ 940                     // ovelap clip:
+ 941                     if (subdivide) {
+ 942                         // avoid reentrance
+ 943                         subdivide = false;
+ 944                         // subdivide curve =&gt; callback with subdivided parts:
+ 945                         boolean ret = curveSplitter.splitCurve(cx0, cy0, x1, y1, x2, y2, x3, y3,
+ 946                                                                orCode, this);
+ 947                         // reentrance is done:
+ 948                         subdivide = true;
+ 949                         if (ret) {
+ 950                             return;
+ 951                         }
+ 952                     }
+ 953                     // already subdivided so render it
+ 954                 } else {
+ 955                     this.cOutCode = outcode3;
+ 956                     skipCurveTo(x1, y1, x2, y2, x3, y3);
+ 957                     return;
+ 958                 }
+ 959             }
+ 960 
+ 961             this.cOutCode = outcode3;
+ 962 
+ 963             if (this.outside) {
+ 964                 this.outside = false;
+ 965                 // Adjust current index, phase &amp; dash:
+ 966                 skipLen();
+ 967             }
+ 968         }
+ 969         _curveTo(x1, y1, x2, y2, x3, y3);
+ 970     }
+ 971 
+ 972     private void _curveTo(final double x1, final double y1,
+ 973                           final double x2, final double y2,
+ 974                           final double x3, final double y3)
+ 975     {
+ 976         final double[] _curCurvepts = curCurvepts;
+ 977 
+ 978         // monotonize curve:
+ 979         final CurveBasicMonotonizer monotonizer
+ 980             = rdrCtx.monotonizer.curve(cx0, cy0, x1, y1, x2, y2, x3, y3);
+ 981 
+ 982         final int nSplits = monotonizer.nbSplits;
+ 983         final double[] mid = monotonizer.middle;
+ 984 
+ 985         for (int i = 0, off = 0; i &lt;= nSplits; i++, off += 6) {
+ 986             // optimize arraycopy (8 values faster than 6 = type):
+ 987             System.arraycopy(mid, off, _curCurvepts, 0, 8);
+ 988 
+ 989             somethingTo(8);
+ 990         }
+ 991     }
+ 992 
+ 993     private void skipCurveTo(final double x1, final double y1,
+ 994                              final double x2, final double y2,
+ 995                              final double x3, final double y3)
+ 996     {
+ 997         final double[] _curCurvepts = curCurvepts;
+ 998         _curCurvepts[0] = cx0; _curCurvepts[1] = cy0;
+ 999         _curCurvepts[2] = x1;  _curCurvepts[3] = y1;
+1000         _curCurvepts[4] = x2;  _curCurvepts[5] = y2;
+1001         _curCurvepts[6] = x3;  _curCurvepts[7] = y3;
+1002 
+1003         skipSomethingTo(8);
+1004 
+1005         this.cx0 = x3;
+1006         this.cy0 = y3;
+1007     }
+1008 
+1009     @Override
+1010     public void quadTo(final double x1, final double y1,
+1011                        final double x2, final double y2)
+1012     {
+1013         final int outcode0 = this.cOutCode;
+1014 
+1015         if (clipRect != null) {
+1016             final int outcode1 = DHelpers.outcode(x1, y1, clipRect);
+1017             final int outcode2 = DHelpers.outcode(x2, y2, clipRect);
+1018 
+1019             // Should clip
+1020             final int orCode = (outcode0 | outcode1 | outcode2);
+1021             if (orCode != 0) {
+1022                 final int sideCode = outcode0 &amp; outcode1 &amp; outcode2;
+1023 
+1024                 // basic rejection criteria:
+1025                 if (sideCode == 0) {
+1026                     // ovelap clip:
+1027                     if (subdivide) {
+1028                         // avoid reentrance
+1029                         subdivide = false;
+1030                         // subdivide curve =&gt; call lineTo() with subdivided curves:
+1031                         boolean ret = curveSplitter.splitQuad(cx0, cy0, x1, y1,
+1032                                                               x2, y2, orCode, this);
+1033                         // reentrance is done:
+1034                         subdivide = true;
+1035                         if (ret) {
+1036                             return;
+1037                         }
+1038                     }
+1039                     // already subdivided so render it
+1040                 } else {
+1041                     this.cOutCode = outcode2;
+1042                     skipQuadTo(x1, y1, x2, y2);
+1043                     return;
+1044                 }
+1045             }
+1046 
+1047             this.cOutCode = outcode2;
+1048 
+1049             if (this.outside) {
+1050                 this.outside = false;
+1051                 // Adjust current index, phase &amp; dash:
+1052                 skipLen();
+1053             }
+1054         }
+1055         _quadTo(x1, y1, x2, y2);
+1056     }
+1057 
+1058     private void _quadTo(final double x1, final double y1,
+1059                          final double x2, final double y2)
+1060     {
+1061         final double[] _curCurvepts = curCurvepts;
+1062 
+1063         // monotonize quad:
+1064         final CurveBasicMonotonizer monotonizer
+1065             = rdrCtx.monotonizer.quad(cx0, cy0, x1, y1, x2, y2);
+1066 
+1067         final int nSplits = monotonizer.nbSplits;
+1068         final double[] mid = monotonizer.middle;
+1069 
+1070         for (int i = 0, off = 0; i &lt;= nSplits; i++, off += 4) {
+1071             // optimize arraycopy (8 values faster than 6 = type):
+1072             System.arraycopy(mid, off, _curCurvepts, 0, 8);
+1073 
+1074             somethingTo(6);
+1075         }
+1076     }
+1077 
+1078     private void skipQuadTo(final double x1, final double y1,
+1079                             final double x2, final double y2)
+1080     {
+1081         final double[] _curCurvepts = curCurvepts;
+1082         _curCurvepts[0] = cx0; _curCurvepts[1] = cy0;
+1083         _curCurvepts[2] = x1;  _curCurvepts[3] = y1;
+1084         _curCurvepts[4] = x2;  _curCurvepts[5] = y2;
+1085 
+1086         skipSomethingTo(6);
+1087 
+1088         this.cx0 = x2;
+1089         this.cy0 = y2;
+1090     }
+1091 
+1092     @Override
+1093     public void closePath() {
+1094         if (cx0 != sx0 || cy0 != sy0) {
+1095             lineTo(sx0, sy0);
+1096         }
+1097         if (firstSegidx != 0) {
+1098             if (!dashOn || needsMoveTo) {
+1099                 out.moveTo(sx0, sy0);
+1100             }
+1101             emitFirstSegments();
+1102         }
+1103         moveTo(sx0, sy0);
+1104     }
+1105 
+1106     @Override
+1107     public void pathDone() {
+1108         if (firstSegidx != 0) {
+1109             out.moveTo(sx0, sy0);
+1110             emitFirstSegments();
+1111         }
+1112         out.pathDone();
+1113 
+1114         // Dispose this instance:
+1115         dispose();
+1116     }
+1117 
+1118     @Override
+1119     public long getNativeConsumer() {
+1120         throw new InternalError("DDasher does not use a native consumer");
+1121     }
+1122 }
+1123 
+</pre></body></html>

@@ -1,0 +1,315 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DStroker.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/DRendererContext.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13698">13698</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8210335">8210335</a>: Clipping problems with complex affine transforms: negative scaling factors or small scaling factors
+Summary: fixed clipping rectangle to take into account the inverse transform (scale/shear)
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  68     final DTransformingPathConsumer2D transformerPC2D;
+  69     // recycled Path2D instance (weak)
+  70     private WeakReference&lt;Path2D.Double&gt; refPath2D = null;
+  71     final DRenderer renderer;
+  72     final DStroker stroker;
+  73     // Simplifies out collinear lines
+  74     final DCollinearSimplifier simplifier = new DCollinearSimplifier();
+  75     // Simplifies path
+  76     final DPathSimplifier pathSimplifier = new DPathSimplifier();
+  77     final DDasher dasher;
+  78     final MarlinTileGenerator ptg;
+  79     final MarlinCache cache;
+  80     // flag indicating the shape is stroked (1) or filled (0)
+  81     int stroking = 0;
+  82     // flag indicating to clip the shape
+  83     boolean doClip = false;
+  84     // flag indicating if the path is closed or not (in advance) to handle properly caps
+  85     boolean closedPath = false;
+  86     // clip rectangle (ymin, ymax, xmin, xmax):
+  87     final double[] clipRect = new double[4];
+
+
+  88     // CurveBasicMonotonizer instance
+  89     final CurveBasicMonotonizer monotonizer;
+  90     // CurveClipSplitter instance
+  91     final CurveClipSplitter curveClipSplitter;
+  92 
+  93     // Array caches:
+  94     /* clean int[] cache (zero-filled) = 5 refs */
+  95     private final IntArrayCache cleanIntCache = new IntArrayCache(true, 5);
+  96     /* dirty int[] cache = 5 refs */
+  97     private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 5);
+  98     /* dirty double[] cache = 4 refs (2 polystack) */
+  99     private final DoubleArrayCache dirtyDoubleCache = new DoubleArrayCache(false, 4);
+ 100     /* dirty byte[] cache = 2 ref (2 polystack) */
+ 101     private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 2);
+ 102 
+ 103     // RendererContext statistics
+ 104     final RendererStats stats;
+ 105 
+ 106     final PathConsumer2DAdapter p2dAdapter = new PathConsumer2DAdapter();
+ 107 
+<span class="removed"> 108 </span>
+ 109     /**
+ 110      * Constructor
+ 111      *
+ 112      * @param name context name (debugging)
+ 113      */
+ 114     DRendererContext(final String name) {
+ 115         if (LOG_CREATE_CONTEXT) {
+ 116             MarlinUtils.logInfo("new RendererContext = " + name);
+ 117         }
+ 118         this.cleanerObj = new Object();
+ 119 
+ 120         // create first stats (needed by newOffHeapArray):
+ 121         if (DO_STATS || DO_MONITORS) {
+ 122             stats = RendererStats.createInstance(cleanerObj, name);
+ 123             // push cache stats:
+ 124             stats.cacheStats = new CacheStats[] { cleanIntCache.stats,
+ 125                 dirtyIntCache.stats, dirtyDoubleCache.stats, dirtyByteCache.stats
+ 126             };
+ 127         } else {
+ 128             stats = null;
+
+</pre><hr></hr><pre>
+ 145         ptg = new MarlinTileGenerator(stats, renderer, cache);
+ 146 
+ 147         stroker = new DStroker(this);
+ 148         dasher = new DDasher(this);
+ 149     }
+ 150 
+ 151     /**
+ 152      * Disposes this renderer context:
+ 153      * clean up before reusing this context
+ 154      */
+ 155     void dispose() {
+ 156         if (DO_STATS) {
+ 157             if (stats.totalOffHeap &gt; stats.totalOffHeapMax) {
+ 158                 stats.totalOffHeapMax = stats.totalOffHeap;
+ 159             }
+ 160             stats.totalOffHeap = 0L;
+ 161         }
+ 162         stroking   = 0;
+ 163         doClip     = false;
+ 164         closedPath = false;
+
+ 165 
+ 166         // if context is maked as DIRTY:
+ 167         if (dirty) {
+ 168             // may happen if an exception if thrown in the pipeline processing:
+ 169             // force cleanup of all possible pipelined blocks (except Renderer):
+ 170 
+ 171             // NormalizingPathIterator instances:
+ 172             this.nPCPathIterator.dispose();
+ 173             this.nPQPathIterator.dispose();
+ 174             // Dasher:
+ 175             this.dasher.dispose();
+ 176             // Stroker:
+ 177             this.stroker.dispose();
+ 178 
+ 179             // mark context as CLEAN:
+ 180             dirty = false;
+ 181         }
+ 182     }
+ 183 
+ 184     Path2D.Double getPath2D() {
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  68     final DTransformingPathConsumer2D transformerPC2D;
+  69     // recycled Path2D instance (weak)
+  70     private WeakReference&lt;Path2D.Double&gt; refPath2D = null;
+  71     final DRenderer renderer;
+  72     final DStroker stroker;
+  73     // Simplifies out collinear lines
+  74     final DCollinearSimplifier simplifier = new DCollinearSimplifier();
+  75     // Simplifies path
+  76     final DPathSimplifier pathSimplifier = new DPathSimplifier();
+  77     final DDasher dasher;
+  78     final MarlinTileGenerator ptg;
+  79     final MarlinCache cache;
+  80     // flag indicating the shape is stroked (1) or filled (0)
+  81     int stroking = 0;
+  82     // flag indicating to clip the shape
+  83     boolean doClip = false;
+  84     // flag indicating if the path is closed or not (in advance) to handle properly caps
+  85     boolean closedPath = false;
+  86     // clip rectangle (ymin, ymax, xmin, xmax):
+  87     final double[] clipRect = new double[4];
+<span class="new">  88     // clip inverse scale (mean) to adjust length checks</span>
+<span class="new">  89     double clipInvScale = 0.0d;</span>
+  90     // CurveBasicMonotonizer instance
+  91     final CurveBasicMonotonizer monotonizer;
+  92     // CurveClipSplitter instance
+  93     final CurveClipSplitter curveClipSplitter;
+  94 
+  95     // Array caches:
+  96     /* clean int[] cache (zero-filled) = 5 refs */
+  97     private final IntArrayCache cleanIntCache = new IntArrayCache(true, 5);
+  98     /* dirty int[] cache = 5 refs */
+  99     private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 5);
+ 100     /* dirty double[] cache = 4 refs (2 polystack) */
+ 101     private final DoubleArrayCache dirtyDoubleCache = new DoubleArrayCache(false, 4);
+ 102     /* dirty byte[] cache = 2 ref (2 polystack) */
+ 103     private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 2);
+ 104 
+ 105     // RendererContext statistics
+ 106     final RendererStats stats;
+ 107 
+ 108     final PathConsumer2DAdapter p2dAdapter = new PathConsumer2DAdapter();
+ 109 
+
+ 110     /**
+ 111      * Constructor
+ 112      *
+ 113      * @param name context name (debugging)
+ 114      */
+ 115     DRendererContext(final String name) {
+ 116         if (LOG_CREATE_CONTEXT) {
+ 117             MarlinUtils.logInfo("new RendererContext = " + name);
+ 118         }
+ 119         this.cleanerObj = new Object();
+ 120 
+ 121         // create first stats (needed by newOffHeapArray):
+ 122         if (DO_STATS || DO_MONITORS) {
+ 123             stats = RendererStats.createInstance(cleanerObj, name);
+ 124             // push cache stats:
+ 125             stats.cacheStats = new CacheStats[] { cleanIntCache.stats,
+ 126                 dirtyIntCache.stats, dirtyDoubleCache.stats, dirtyByteCache.stats
+ 127             };
+ 128         } else {
+ 129             stats = null;
+
+</pre><hr></hr><pre>
+ 146         ptg = new MarlinTileGenerator(stats, renderer, cache);
+ 147 
+ 148         stroker = new DStroker(this);
+ 149         dasher = new DDasher(this);
+ 150     }
+ 151 
+ 152     /**
+ 153      * Disposes this renderer context:
+ 154      * clean up before reusing this context
+ 155      */
+ 156     void dispose() {
+ 157         if (DO_STATS) {
+ 158             if (stats.totalOffHeap &gt; stats.totalOffHeapMax) {
+ 159                 stats.totalOffHeapMax = stats.totalOffHeap;
+ 160             }
+ 161             stats.totalOffHeap = 0L;
+ 162         }
+ 163         stroking   = 0;
+ 164         doClip     = false;
+ 165         closedPath = false;
+<span class="new"> 166         clipInvScale = 0.0d;</span>
+ 167 
+ 168         // if context is maked as DIRTY:
+ 169         if (dirty) {
+ 170             // may happen if an exception if thrown in the pipeline processing:
+ 171             // force cleanup of all possible pipelined blocks (except Renderer):
+ 172 
+ 173             // NormalizingPathIterator instances:
+ 174             this.nPCPathIterator.dispose();
+ 175             this.nPQPathIterator.dispose();
+ 176             // Dasher:
+ 177             this.dasher.dispose();
+ 178             // Stroker:
+ 179             this.stroker.dispose();
+ 180 
+ 181             // mark context as CLEAN:
+ 182             dirty = false;
+ 183         }
+ 184     }
+ 185 
+ 186     Path2D.Double getPath2D() {
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DStroker.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

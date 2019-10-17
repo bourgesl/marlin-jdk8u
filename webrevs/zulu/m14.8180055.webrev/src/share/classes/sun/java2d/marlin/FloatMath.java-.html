@@ -1,0 +1,296 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>Old src/share/classes/sun/java2d/marlin/FloatMath.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 package sun.java2d.marlin;
+  26 
+  27 import sun.misc.DoubleConsts;
+  28 import sun.misc.FloatConsts;
+  29 
+  30 /**
+  31  * Faster Math ceil / floor routines derived from StrictMath
+  32  */
+  33 public final class FloatMath implements MarlinConst {
+  34 
+  35     // overflow / NaN handling enabled:
+  36     static final boolean CHECK_OVERFLOW = true;
+  37     static final boolean CHECK_NAN = true;
+  38 
+  39     private FloatMath() {
+  40         // utility class
+  41     }
+  42 
+  43     // faster inlined min/max functions in the branch prediction is high
+  44     static float max(final float a, final float b) {
+  45         // no NaN handling
+  46         return (a &gt;= b) ? a : b;
+  47     }
+  48 
+  49     static int max(final int a, final int b) {
+  50         return (a &gt;= b) ? a : b;
+  51     }
+  52 
+  53     static int min(final int a, final int b) {
+  54         return (a &lt;= b) ? a : b;
+  55     }
+  56 
+  57     /**
+  58      * Returns the smallest (closest to negative infinity) {@code float} value
+  59      * that is greater than or equal to the argument and is equal to a
+  60      * mathematical integer. Special cases:
+  61      * &lt;ul&gt;&lt;li&gt;If the argument value is already equal to a mathematical integer,
+  62      * then the result is the same as the argument.  &lt;li&gt;If the argument is NaN
+  63      * or an infinity or positive zero or negative zero, then the result is the
+  64      * same as the argument.  &lt;li&gt;If the argument value is less than zero but
+  65      * greater than -1.0, then the result is negative zero.&lt;/ul&gt; Note that the
+  66      * value of {@code StrictMath.ceil(x)} is exactly the value of
+  67      * {@code -StrictMath.floor(-x)}.
+  68      *
+  69      * @param a a value.
+  70      * @return the smallest (closest to negative infinity) floating-point value
+  71      * that is greater than or equal to the argument and is equal to a
+  72      * mathematical integer.
+  73      */
+  74     public static float ceil_f(final float a) {
+  75         // Derived from StrictMath.ceil(double):
+  76 
+  77         // Inline call to Math.getExponent(a) to
+  78         // compute only once Float.floatToRawIntBits(a)
+  79         final int doppel = Float.floatToRawIntBits(a);
+  80 
+  81         final int exponent = ((doppel &amp; FloatConsts.EXP_BIT_MASK)
+  82                 &gt;&gt; (FloatConsts.SIGNIFICAND_WIDTH - 1))
+  83                 - FloatConsts.EXP_BIAS;
+  84 
+  85         if (exponent &lt; 0) {
+  86             /*
+  87              * Absolute value of argument is less than 1.
+  88              * floorOrceil(-0.0) =&gt; -0.0
+  89              * floorOrceil(+0.0) =&gt; +0.0
+  90              */
+  91             return ((a == 0) ? a :
+  92                     ( (a &lt; 0f) ? -0f : 1f) );
+  93         }
+  94         if (CHECK_OVERFLOW &amp;&amp; (exponent &gt;= 23)) { // 52 for double
+  95             /*
+  96              * Infinity, NaN, or a value so large it must be integral.
+  97              */
+  98             return a;
+  99         }
+ 100         // Else the argument is either an integral value already XOR it
+ 101         // has to be rounded to one.
+ 102         assert exponent &gt;= 0 &amp;&amp; exponent &lt;= 22; // 51 for double
+ 103 
+ 104         final int intpart = doppel
+ 105                 &amp; (~(FloatConsts.SIGNIF_BIT_MASK &gt;&gt; exponent));
+ 106 
+ 107         if (intpart == doppel) {
+ 108             return a; // integral value (including 0)
+ 109         }
+ 110 
+ 111         // 0 handled above as an integer
+ 112         // sign: 1 for negative, 0 for positive numbers
+ 113         // add : 0 for negative and 1 for positive numbers
+ 114         return Float.intBitsToFloat(intpart) + ((~intpart) &gt;&gt;&gt; 31);
+ 115     }
+ 116 
+ 117     /**
+ 118      * Returns the largest (closest to positive infinity) {@code float} value
+ 119      * that is less than or equal to the argument and is equal to a mathematical
+ 120      * integer. Special cases:
+ 121      * &lt;ul&gt;&lt;li&gt;If the argument value is already equal to a mathematical integer,
+ 122      * then the result is the same as the argument.  &lt;li&gt;If the argument is NaN
+ 123      * or an infinity or positive zero or negative zero, then the result is the
+ 124      * same as the argument.&lt;/ul&gt;
+ 125      *
+ 126      * @param a a value.
+ 127      * @return the largest (closest to positive infinity) floating-point value
+ 128      * that less than or equal to the argument and is equal to a mathematical
+ 129      * integer.
+ 130      */
+ 131     public static float floor_f(final float a) {
+ 132         // Derived from StrictMath.floor(double):
+ 133 
+ 134         // Inline call to Math.getExponent(a) to
+ 135         // compute only once Float.floatToRawIntBits(a)
+ 136         final int doppel = Float.floatToRawIntBits(a);
+ 137 
+ 138         final int exponent = ((doppel &amp; FloatConsts.EXP_BIT_MASK)
+ 139                 &gt;&gt; (FloatConsts.SIGNIFICAND_WIDTH - 1))
+ 140                 - FloatConsts.EXP_BIAS;
+ 141 
+ 142         if (exponent &lt; 0) {
+ 143             /*
+ 144              * Absolute value of argument is less than 1.
+ 145              * floorOrceil(-0.0) =&gt; -0.0
+ 146              * floorOrceil(+0.0) =&gt; +0.0
+ 147              */
+ 148             return ((a == 0) ? a :
+ 149                     ( (a &lt; 0f) ? -1f : 0f) );
+ 150         }
+ 151         if (CHECK_OVERFLOW &amp;&amp; (exponent &gt;= 23)) { // 52 for double
+ 152             /*
+ 153              * Infinity, NaN, or a value so large it must be integral.
+ 154              */
+ 155             return a;
+ 156         }
+ 157         // Else the argument is either an integral value already XOR it
+ 158         // has to be rounded to one.
+ 159         assert exponent &gt;= 0 &amp;&amp; exponent &lt;= 22; // 51 for double
+ 160 
+ 161         final int intpart = doppel
+ 162                 &amp; (~(FloatConsts.SIGNIF_BIT_MASK &gt;&gt; exponent));
+ 163 
+ 164         if (intpart == doppel) {
+ 165             return a; // integral value (including 0)
+ 166         }
+ 167 
+ 168         // 0 handled above as an integer
+ 169         // sign: 1 for negative, 0 for positive numbers
+ 170         // add : -1 for negative and 0 for positive numbers
+ 171         return Float.intBitsToFloat(intpart) + (intpart &gt;&gt; 31);
+ 172     }
+ 173 
+ 174     /**
+ 175      * Faster alternative to ceil(float) optimized for the integer domain
+ 176      * and supporting NaN and +/-Infinity.
+ 177      *
+ 178      * @param a a value.
+ 179      * @return the largest (closest to positive infinity) integer value
+ 180      * that less than or equal to the argument and is equal to a mathematical
+ 181      * integer.
+ 182      */
+ 183     public static int ceil_int(final float a) {
+ 184         final int intpart = (int) a;
+ 185 
+ 186         if (a &lt;= intpart
+ 187                 || (CHECK_OVERFLOW &amp;&amp; intpart == Integer.MAX_VALUE)
+ 188                 || CHECK_NAN &amp;&amp; Float.isNaN(a)) {
+ 189             return intpart;
+ 190         }
+ 191         return intpart + 1;
+ 192     }
+ 193 
+ 194     /**
+ 195      * Faster alternative to floor(float) optimized for the integer domain
+ 196      * and supporting NaN and +/-Infinity.
+ 197      *
+ 198      * @param a a value.
+ 199      * @return the largest (closest to positive infinity) floating-point value
+ 200      * that less than or equal to the argument and is equal to a mathematical
+ 201      * integer.
+ 202      */
+ 203     public static int floor_int(final float a) {
+ 204         final int intpart = (int) a;
+ 205 
+ 206         if (a &gt;= intpart
+ 207                 || (CHECK_OVERFLOW &amp;&amp; intpart == Integer.MIN_VALUE)
+ 208                 || CHECK_NAN &amp;&amp; Float.isNaN(a)) {
+ 209             return intpart;
+ 210         }
+ 211         return intpart - 1;
+ 212     }
+ 213 }
+</pre></body></html>

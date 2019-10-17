@@ -1,0 +1,277 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DDasher.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../test/sun/java2d/marlin/DashedRectTest.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Dasher.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13697">13697</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8202580">8202580</a>: Dashed BasicStroke randomly painted incorrectly, may freeze application
+Summary: fixed Dasher.init() to use the correct part [0; dashLen[
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 121         firstSegmentsBuffer_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_ARRAY); // 1K
+ 122         firstSegmentsBuffer     = firstSegmentsBuffer_ref.initial;
+ 123 
+ 124         // we need curCurvepts to be able to contain 2 curves because when
+ 125         // dashing curves, we need to subdivide it
+ 126         curCurvepts = new float[8 * 2];
+ 127 
+ 128         this.curveSplitter = rdrCtx.curveClipSplitter;
+ 129     }
+ 130 
+ 131     /**
+ 132      * Initialize the &lt;code&gt;Dasher&lt;/code&gt;.
+ 133      *
+ 134      * @param out an output &lt;code&gt;PathConsumer2D&lt;/code&gt;.
+ 135      * @param dash an array of &lt;code&gt;float&lt;/code&gt;s containing the dash pattern
+ 136      * @param dashLen length of the given dash array
+ 137      * @param phase a &lt;code&gt;float&lt;/code&gt; containing the dash phase
+ 138      * @param recycleDashes true to indicate to recycle the given dash array
+ 139      * @return this instance
+ 140      */
+<span class="changed"> 141     Dasher init(final PathConsumer2D out, float[] dash, int dashLen,</span>
+<span class="changed"> 142                 float phase, boolean recycleDashes)</span>
+ 143     {
+ 144         this.out = out;
+ 145 
+ 146         // Normalize so 0 &lt;= phase &lt; dash[0]
+ 147         int sidx = 0;
+ 148         dashOn = true;
+ 149 
+
+ 150         float sum = 0.0f;
+<span class="changed"> 151         for (float d : dash) {</span>
+<span class="changed"> 152             sum += d;</span>
+ 153         }
+ 154         this.cycleLen = sum;
+ 155 
+ 156         float cycles = phase / sum;
+ 157         if (phase &lt; 0.0f) {
+ 158             if (-cycles &gt;= MAX_CYCLES) {
+ 159                 phase = 0.0f;
+ 160             } else {
+ 161                 int fullcycles = FloatMath.floor_int(-cycles);
+<span class="changed"> 162                 if ((fullcycles &amp; dash.length &amp; 1) != 0) {</span>
+ 163                     dashOn = !dashOn;
+ 164                 }
+ 165                 phase += fullcycles * sum;
+ 166                 while (phase &lt; 0.0f) {
+ 167                     if (--sidx &lt; 0) {
+<span class="changed"> 168                         sidx = dash.length - 1;</span>
+ 169                     }
+ 170                     phase += dash[sidx];
+ 171                     dashOn = !dashOn;
+ 172                 }
+ 173             }
+ 174         } else if (phase &gt; 0.0f) {
+ 175             if (cycles &gt;= MAX_CYCLES) {
+ 176                 phase = 0.0f;
+ 177             } else {
+ 178                 int fullcycles = FloatMath.floor_int(cycles);
+<span class="changed"> 179                 if ((fullcycles &amp; dash.length &amp; 1) != 0) {</span>
+ 180                     dashOn = !dashOn;
+ 181                 }
+ 182                 phase -= fullcycles * sum;
+ 183                 float d;
+ 184                 while (phase &gt;= (d = dash[sidx])) {
+ 185                     phase -= d;
+<span class="changed"> 186                     sidx = (sidx + 1) % dash.length;</span>
+ 187                     dashOn = !dashOn;
+ 188                 }
+ 189             }
+ 190         }
+ 191 
+ 192         this.dash = dash;
+ 193         this.dashLen = dashLen;
+ 194         this.phase = phase;
+ 195         this.startPhase = phase;
+ 196         this.startDashOn = dashOn;
+ 197         this.startIdx = sidx;
+ 198         this.starting = true;
+ 199         this.needsMoveTo = false;
+ 200         this.firstSegidx = 0;
+ 201 
+ 202         this.recycleDashes = recycleDashes;
+ 203 
+ 204         if (rdrCtx.doClip) {
+ 205             this.clipRect = rdrCtx.clipRect;
+ 206         } else {
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 121         firstSegmentsBuffer_ref = rdrCtx.newDirtyFloatArrayRef(INITIAL_ARRAY); // 1K
+ 122         firstSegmentsBuffer     = firstSegmentsBuffer_ref.initial;
+ 123 
+ 124         // we need curCurvepts to be able to contain 2 curves because when
+ 125         // dashing curves, we need to subdivide it
+ 126         curCurvepts = new float[8 * 2];
+ 127 
+ 128         this.curveSplitter = rdrCtx.curveClipSplitter;
+ 129     }
+ 130 
+ 131     /**
+ 132      * Initialize the &lt;code&gt;Dasher&lt;/code&gt;.
+ 133      *
+ 134      * @param out an output &lt;code&gt;PathConsumer2D&lt;/code&gt;.
+ 135      * @param dash an array of &lt;code&gt;float&lt;/code&gt;s containing the dash pattern
+ 136      * @param dashLen length of the given dash array
+ 137      * @param phase a &lt;code&gt;float&lt;/code&gt; containing the dash phase
+ 138      * @param recycleDashes true to indicate to recycle the given dash array
+ 139      * @return this instance
+ 140      */
+<span class="changed"> 141     Dasher init(final PathConsumer2D out, final float[] dash, final int dashLen,</span>
+<span class="changed"> 142                 float phase, final boolean recycleDashes)</span>
+ 143     {
+ 144         this.out = out;
+ 145 
+ 146         // Normalize so 0 &lt;= phase &lt; dash[0]
+ 147         int sidx = 0;
+ 148         dashOn = true;
+ 149 
+<span class="new"> 150         // note: BasicStroke constructor checks dash elements and sum &gt; 0</span>
+ 151         float sum = 0.0f;
+<span class="changed"> 152         for (int i = 0; i &lt; dashLen; i++) {</span>
+<span class="changed"> 153             sum += dash[i];</span>
+ 154         }
+ 155         this.cycleLen = sum;
+ 156 
+ 157         float cycles = phase / sum;
+ 158         if (phase &lt; 0.0f) {
+ 159             if (-cycles &gt;= MAX_CYCLES) {
+ 160                 phase = 0.0f;
+ 161             } else {
+ 162                 int fullcycles = FloatMath.floor_int(-cycles);
+<span class="changed"> 163                 if ((fullcycles &amp; dashLen &amp; 1) != 0) {</span>
+ 164                     dashOn = !dashOn;
+ 165                 }
+ 166                 phase += fullcycles * sum;
+ 167                 while (phase &lt; 0.0f) {
+ 168                     if (--sidx &lt; 0) {
+<span class="changed"> 169                         sidx = dashLen - 1;</span>
+ 170                     }
+ 171                     phase += dash[sidx];
+ 172                     dashOn = !dashOn;
+ 173                 }
+ 174             }
+ 175         } else if (phase &gt; 0.0f) {
+ 176             if (cycles &gt;= MAX_CYCLES) {
+ 177                 phase = 0.0f;
+ 178             } else {
+ 179                 int fullcycles = FloatMath.floor_int(cycles);
+<span class="changed"> 180                 if ((fullcycles &amp; dashLen &amp; 1) != 0) {</span>
+ 181                     dashOn = !dashOn;
+ 182                 }
+ 183                 phase -= fullcycles * sum;
+ 184                 float d;
+ 185                 while (phase &gt;= (d = dash[sidx])) {
+ 186                     phase -= d;
+<span class="changed"> 187                     sidx = (sidx + 1) % dashLen;</span>
+ 188                     dashOn = !dashOn;
+ 189                 }
+ 190             }
+ 191         }
+ 192 
+ 193         this.dash = dash;
+ 194         this.dashLen = dashLen;
+ 195         this.phase = phase;
+ 196         this.startPhase = phase;
+ 197         this.startDashOn = dashOn;
+ 198         this.startIdx = sidx;
+ 199         this.starting = true;
+ 200         this.needsMoveTo = false;
+ 201         this.firstSegidx = 0;
+ 202 
+ 203         this.recycleDashes = recycleDashes;
+ 204 
+ 205         if (rdrCtx.doClip) {
+ 206             this.clipRect = rdrCtx.clipRect;
+ 207         } else {
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DDasher.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../test/sun/java2d/marlin/DashedRectTest.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

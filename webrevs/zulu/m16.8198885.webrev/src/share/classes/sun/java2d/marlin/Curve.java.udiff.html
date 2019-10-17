@@ -1,0 +1,411 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/Curve.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/ByteArrayCache.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DCurve.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Curve.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -1,7 +1,7 @@</span>
+ /*
+<span class="removed">- * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+<span class="new">+ * Copyright (c) 2007, 2018, Oracle and/or its affiliates. All rights reserved.</span>
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License version 2 only, as
+  * published by the Free Software Foundation.  Oracle designates this
+</pre><hr /><pre>
+<span class="newmarker">@@ -31,113 +31,132 @@</span>
+     float dax, day, dbx, dby;
+ 
+     Curve() {
+     }
+ 
+<span class="removed">-    void set(float[] points, int type) {</span>
+<span class="removed">-        switch(type) {</span>
+<span class="removed">-        case 8:</span>
+<span class="new">+    void set(final float[] points, final int type) {</span>
+<span class="new">+        // if instead of switch (perf + most probable cases first)</span>
+<span class="new">+        if (type == 8) {</span>
+             set(points[0], points[1],
+                 points[2], points[3],
+                 points[4], points[5],
+                 points[6], points[7]);
+<span class="removed">-            return;</span>
+<span class="removed">-        case 6:</span>
+<span class="new">+        } else if (type == 4) {</span>
+<span class="new">+            set(points[0], points[1],</span>
+<span class="new">+                points[2], points[3]);</span>
+<span class="new">+        } else {</span>
+             set(points[0], points[1],
+                 points[2], points[3],
+                 points[4], points[5]);
+<span class="removed">-            return;</span>
+<span class="removed">-        default:</span>
+<span class="removed">-            throw new InternalError("Curves can only be cubic or quadratic");</span>
+         }
+     }
+ 
+<span class="removed">-    void set(float x1, float y1,</span>
+<span class="removed">-             float x2, float y2,</span>
+<span class="removed">-             float x3, float y3,</span>
+<span class="removed">-             float x4, float y4)</span>
+<span class="new">+    void set(final float x1, final float y1,</span>
+<span class="new">+             final float x2, final float y2,</span>
+<span class="new">+             final float x3, final float y3,</span>
+<span class="new">+             final float x4, final float y4)</span>
+     {
+         final float dx32 = 3.0f * (x3 - x2);
+         final float dy32 = 3.0f * (y3 - y2);
+         final float dx21 = 3.0f * (x2 - x1);
+         final float dy21 = 3.0f * (y2 - y1);
+<span class="removed">-        ax = (x4 - x1) - dx32;</span>
+<span class="new">+        ax = (x4 - x1) - dx32;  // A = P3 - P0 - 3 (P2 - P1) = (P3 - P0) + 3 (P1 - P2)</span>
+         ay = (y4 - y1) - dy32;
+<span class="removed">-        bx = (dx32 - dx21);</span>
+<span class="new">+        bx = (dx32 - dx21);     // B = 3 (P2 - P1) - 3(P1 - P0) = 3 (P2 + P0) - 6 P1</span>
+         by = (dy32 - dy21);
+<span class="removed">-        cx = dx21;</span>
+<span class="new">+        cx = dx21;              // C = 3 (P1 - P0)</span>
+         cy = dy21;
+<span class="removed">-        dx = x1;</span>
+<span class="new">+        dx = x1;                // D = P0</span>
+         dy = y1;
+<span class="removed">-        dax = 3.0f * ax; day = 3.0f * ay;</span>
+<span class="removed">-        dbx = 2.0f * bx; dby = 2.0f * by;</span>
+<span class="new">+        dax = 3.0f * ax;</span>
+<span class="new">+        day = 3.0f * ay;</span>
+<span class="new">+        dbx = 2.0f * bx;</span>
+<span class="new">+        dby = 2.0f * by;</span>
+     }
+ 
+<span class="removed">-    void set(float x1, float y1,</span>
+<span class="removed">-             float x2, float y2,</span>
+<span class="removed">-             float x3, float y3)</span>
+<span class="new">+    void set(final float x1, final float y1,</span>
+<span class="new">+             final float x2, final float y2,</span>
+<span class="new">+             final float x3, final float y3)</span>
+     {
+         final float dx21 = (x2 - x1);
+         final float dy21 = (y2 - y1);
+<span class="removed">-        ax = 0.0f; ay = 0.0f;</span>
+<span class="removed">-        bx = (x3 - x2) - dx21;</span>
+<span class="new">+        ax = 0.0f;              // A = 0</span>
+<span class="new">+        ay = 0.0f;</span>
+<span class="new">+        bx = (x3 - x2) - dx21;  // B = P3 - P0 - 2 P2</span>
+         by = (y3 - y2) - dy21;
+<span class="removed">-        cx = 2.0f * dx21;</span>
+<span class="new">+        cx = 2.0f * dx21;       // C = 2 (P2 - P1)</span>
+         cy = 2.0f * dy21;
+<span class="removed">-        dx = x1;</span>
+<span class="new">+        dx = x1;                // D = P1</span>
+         dy = y1;
+<span class="removed">-        dax = 0.0f; day = 0.0f;</span>
+<span class="removed">-        dbx = 2.0f * bx; dby = 2.0f * by;</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    float xat(float t) {</span>
+<span class="removed">-        return t * (t * (t * ax + bx) + cx) + dx;</span>
+<span class="removed">-    }</span>
+<span class="removed">-    float yat(float t) {</span>
+<span class="removed">-        return t * (t * (t * ay + by) + cy) + dy;</span>
+<span class="removed">-    }</span>
+<span class="removed">-</span>
+<span class="removed">-    float dxat(float t) {</span>
+<span class="removed">-        return t * (t * dax + dbx) + cx;</span>
+<span class="new">+        dax = 0.0f;</span>
+<span class="new">+        day = 0.0f;</span>
+<span class="new">+        dbx = 2.0f * bx;</span>
+<span class="new">+        dby = 2.0f * by;</span>
+     }
+ 
+<span class="removed">-    float dyat(float t) {</span>
+<span class="removed">-        return t * (t * day + dby) + cy;</span>
+<span class="new">+    void set(final float x1, final float y1,</span>
+<span class="new">+             final float x2, final float y2)</span>
+<span class="new">+    {</span>
+<span class="new">+        final float dx21 = (x2 - x1);</span>
+<span class="new">+        final float dy21 = (y2 - y1);</span>
+<span class="new">+        ax = 0.0f;              // A = 0</span>
+<span class="new">+        ay = 0.0f;</span>
+<span class="new">+        bx = 0.0f;              // B = 0</span>
+<span class="new">+        by = 0.0f;</span>
+<span class="new">+        cx = dx21;              // C = (P2 - P1)</span>
+<span class="new">+        cy = dy21;</span>
+<span class="new">+        dx = x1;                // D = P1</span>
+<span class="new">+        dy = y1;</span>
+<span class="new">+        dax = 0.0f;</span>
+<span class="new">+        day = 0.0f;</span>
+<span class="new">+        dbx = 0.0f;</span>
+<span class="new">+        dby = 0.0f;</span>
+     }
+ 
+<span class="removed">-    int dxRoots(float[] roots, int off) {</span>
+<span class="new">+    int dxRoots(final float[] roots, final int off) {</span>
+         return Helpers.quadraticRoots(dax, dbx, cx, roots, off);
+     }
+ 
+<span class="removed">-    int dyRoots(float[] roots, int off) {</span>
+<span class="new">+    int dyRoots(final float[] roots, final int off) {</span>
+         return Helpers.quadraticRoots(day, dby, cy, roots, off);
+     }
+ 
+<span class="removed">-    int infPoints(float[] pts, int off) {</span>
+<span class="new">+    int infPoints(final float[] pts, final int off) {</span>
+         // inflection point at t if -f'(t)x*f''(t)y + f'(t)y*f''(t)x == 0
+         // Fortunately, this turns out to be quadratic, so there are at
+         // most 2 inflection points.
+         final float a = dax * dby - dbx * day;
+         final float b = 2.0f * (cy * dax - day * cx);
+         final float c = cy * dbx - cx * dby;
+ 
+         return Helpers.quadraticRoots(a, b, c, pts, off);
+     }
+ 
+<span class="new">+    int xPoints(final float[] ts, final int off, final float x)</span>
+<span class="new">+    {</span>
+<span class="new">+        return Helpers.cubicRootsInAB(ax, bx, cx, dx - x, ts, off, 0.0f, 1.0f);</span>
+<span class="new">+    }</span>
+<span class="new">+</span>
+<span class="new">+    int yPoints(final float[] ts, final int off, final float y)</span>
+<span class="new">+    {</span>
+<span class="new">+        return Helpers.cubicRootsInAB(ay, by, cy, dy - y, ts, off, 0.0f, 1.0f);</span>
+<span class="new">+    }</span>
+<span class="new">+</span>
+     // finds points where the first and second derivative are
+     // perpendicular. This happens when g(t) = f'(t)*f''(t) == 0 (where
+     // * is a dot product). Unfortunately, we have to solve a cubic.
+<span class="removed">-    private int perpendiculardfddf(float[] pts, int off) {</span>
+<span class="new">+    private int perpendiculardfddf(final float[] pts, final int off) {</span>
+         assert pts.length &gt;= off + 4;
+ 
+         // these are the coefficients of some multiple of g(t) (not g(t),
+         // because the roots of a polynomial are not changed after multiplication
+         // by a constant, and this way we save a few multiplications).
+<span class="removed">-        final float a = 2.0f * (dax*dax + day*day);</span>
+<span class="removed">-        final float b = 3.0f * (dax*dbx + day*dby);</span>
+<span class="removed">-        final float c = 2.0f * (dax*cx + day*cy) + dbx*dbx + dby*dby;</span>
+<span class="removed">-        final float d = dbx*cx + dby*cy;</span>
+<span class="new">+        final float a = 2.0f * (dax * dax + day * day);</span>
+<span class="new">+        final float b = 3.0f * (dax * dbx + day * dby);</span>
+<span class="new">+        final float c = 2.0f * (dax * cx  + day * cy) + dbx * dbx + dby * dby;</span>
+<span class="new">+        final float d = dbx * cx + dby * cy;</span>
+<span class="new">+</span>
+         return Helpers.cubicRootsInAB(a, b, c, d, pts, off, 0.0f, 1.0f);
+     }
+ 
+     // Tries to find the roots of the function ROC(t)-w in [0, 1). It uses
+     // a variant of the false position algorithm to find the roots. False
+</pre><hr /><pre>
+<span class="newmarker">@@ -150,35 +169,37 @@</span>
+     // first and second derivative are perpendicular, and we pretend these
+     // are our local extrema. There are at most 3 of these, so we will check
+     // at most 4 sub-intervals of (0,1). ROC has asymptotes at inflection
+     // points, so roc-w can have at least 6 roots. This shouldn't be a
+     // problem for what we're trying to do (draw a nice looking curve).
+<span class="removed">-    int rootsOfROCMinusW(float[] roots, int off, final float w, final float err) {</span>
+<span class="new">+    int rootsOfROCMinusW(final float[] roots, final int off, final float w2, final float err) {</span>
+         // no OOB exception, because by now off&lt;=6, and roots.length &gt;= 10
+         assert off &lt;= 6 &amp;&amp; roots.length &gt;= 10;
+<span class="new">+</span>
+         int ret = off;
+<span class="removed">-        int numPerpdfddf = perpendiculardfddf(roots, off);</span>
+<span class="removed">-        float t0 = 0.0f, ft0 = ROCsq(t0) - w*w;</span>
+<span class="removed">-        roots[off + numPerpdfddf] = 1.0f; // always check interval end points</span>
+<span class="removed">-        numPerpdfddf++;</span>
+<span class="removed">-        for (int i = off; i &lt; off + numPerpdfddf; i++) {</span>
+<span class="removed">-            float t1 = roots[i], ft1 = ROCsq(t1) - w*w;</span>
+<span class="new">+        final int end = off + perpendiculardfddf(roots, off);</span>
+<span class="new">+        roots[end] = 1.0f; // always check interval end points</span>
+<span class="new">+</span>
+<span class="new">+        float t0 = 0.0f, ft0 = ROCsq(t0) - w2;</span>
+<span class="new">+</span>
+<span class="new">+        for (int i = off; i &lt;= end; i++) {</span>
+<span class="new">+            float t1 = roots[i], ft1 = ROCsq(t1) - w2;</span>
+             if (ft0 == 0.0f) {
+                 roots[ret++] = t0;
+             } else if (ft1 * ft0 &lt; 0.0f) { // have opposite signs
+                 // (ROC(t)^2 == w^2) == (ROC(t) == w) is true because
+                 // ROC(t) &gt;= 0 for all t.
+<span class="removed">-                roots[ret++] = falsePositionROCsqMinusX(t0, t1, w*w, err);</span>
+<span class="new">+                roots[ret++] = falsePositionROCsqMinusX(t0, t1, w2, err);</span>
+             }
+             t0 = t1;
+             ft0 = ft1;
+         }
+ 
+         return ret - off;
+     }
+ 
+<span class="removed">-    private static float eliminateInf(float x) {</span>
+<span class="new">+    private static float eliminateInf(final float x) {</span>
+         return (x == Float.POSITIVE_INFINITY ? Float.MAX_VALUE :
+             (x == Float.NEGATIVE_INFINITY ? Float.MIN_VALUE : x));
+     }
+ 
+     // A slight modification of the false position algorithm on wikipedia.
+</pre><hr /><pre>
+<span class="newmarker">@@ -186,30 +207,31 @@</span>
+     // the function as an argument, but that would be awkward in java6.
+     // TODO: It is something to consider for java8 (or whenever lambda
+     // expressions make it into the language), depending on how closures
+     // and turn out. Same goes for the newton's method
+     // algorithm in Helpers.java
+<span class="removed">-    private float falsePositionROCsqMinusX(float x0, float x1,</span>
+<span class="removed">-                                           final float x, final float err)</span>
+<span class="new">+    private float falsePositionROCsqMinusX(final float t0, final float t1,</span>
+<span class="new">+                                           final float w2, final float err)</span>
+     {
+         final int iterLimit = 100;
+         int side = 0;
+<span class="removed">-        float t = x1, ft = eliminateInf(ROCsq(t) - x);</span>
+<span class="removed">-        float s = x0, fs = eliminateInf(ROCsq(s) - x);</span>
+<span class="new">+        float t = t1, ft = eliminateInf(ROCsq(t) - w2);</span>
+<span class="new">+        float s = t0, fs = eliminateInf(ROCsq(s) - w2);</span>
+         float r = s, fr;
+<span class="new">+</span>
+         for (int i = 0; i &lt; iterLimit &amp;&amp; Math.abs(t - s) &gt; err * Math.abs(t + s); i++) {
+             r = (fs * t - ft * s) / (fs - ft);
+<span class="removed">-            fr = ROCsq(r) - x;</span>
+<span class="new">+            fr = ROCsq(r) - w2;</span>
+             if (sameSign(fr, ft)) {
+                 ft = fr; t = r;
+                 if (side &lt; 0) {
+                     fs /= (1 &lt;&lt; (-side));
+                     side--;
+                 } else {
+                     side = -1;
+                 }
+<span class="removed">-            } else if (fr * fs &gt; 0) {</span>
+<span class="new">+            } else if (fr * fs &gt; 0.0f) {</span>
+                 fs = fr; s = r;
+                 if (side &gt; 0) {
+                     ft /= (1 &lt;&lt; side);
+                     side++;
+                 } else {
+</pre><hr /><pre>
+<span class="newmarker">@@ -220,24 +242,23 @@</span>
+             }
+         }
+         return r;
+     }
+ 
+<span class="removed">-    private static boolean sameSign(float x, float y) {</span>
+<span class="new">+    private static boolean sameSign(final float x, final float y) {</span>
+         // another way is to test if x*y &gt; 0. This is bad for small x, y.
+         return (x &lt; 0.0f &amp;&amp; y &lt; 0.0f) || (x &gt; 0.0f &amp;&amp; y &gt; 0.0f);
+     }
+ 
+     // returns the radius of curvature squared at t of this curve
+     // see http://en.wikipedia.org/wiki/Radius_of_curvature_(applications)
+     private float ROCsq(final float t) {
+<span class="removed">-        // dx=xat(t) and dy=yat(t). These calls have been inlined for efficiency</span>
+         final float dx = t * (t * dax + dbx) + cx;
+         final float dy = t * (t * day + dby) + cy;
+         final float ddx = 2.0f * dax * t + dbx;
+         final float ddy = 2.0f * day * t + dby;
+<span class="removed">-        final float dx2dy2 = dx*dx + dy*dy;</span>
+<span class="removed">-        final float ddx2ddy2 = ddx*ddx + ddy*ddy;</span>
+<span class="removed">-        final float ddxdxddydy = ddx*dx + ddy*dy;</span>
+<span class="removed">-        return dx2dy2*((dx2dy2*dx2dy2) / (dx2dy2 * ddx2ddy2 - ddxdxddydy*ddxdxddydy));</span>
+<span class="new">+        final float dx2dy2 = dx * dx + dy * dy;</span>
+<span class="new">+        final float ddx2ddy2 = ddx * ddx + ddy * ddy;</span>
+<span class="new">+        final float ddxdxddydy = ddx * dx + ddy * dy;</span>
+<span class="new">+        return dx2dy2 * ((dx2dy2 * dx2dy2) / (dx2dy2 * ddx2ddy2 - ddxdxddydy * ddxdxddydy));</span>
+     }
+ }
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/ByteArrayCache.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DCurve.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

@@ -1,0 +1,298 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New src/share/classes/sun/java2d/marlin/RendererContext.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2015, 2017, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.geom.Path2D;
+  29 import java.lang.ref.WeakReference;
+  30 import java.util.concurrent.atomic.AtomicInteger;
+  31 import sun.java2d.ReentrantContext;
+  32 import sun.java2d.marlin.ArrayCacheConst.CacheStats;
+  33 import sun.java2d.marlin.MarlinRenderingEngine.NormalizingPathIterator;
+  34 
+  35 /**
+  36  * This class is a renderer context dedicated to a single thread
+  37  */
+  38 final class RendererContext extends ReentrantContext implements IRendererContext {
+  39 
+  40     // RendererContext creation counter
+  41     private static final AtomicInteger CTX_COUNT = new AtomicInteger(1);
+  42 
+  43     /**
+  44      * Create a new renderer context
+  45      *
+  46      * @return new RendererContext instance
+  47      */
+  48     static RendererContext createContext() {
+  49         return new RendererContext("ctx"
+  50                        + Integer.toString(CTX_COUNT.getAndIncrement()));
+  51     }
+  52 
+  53     // Smallest object used as Cleaner's parent reference
+  54     private final Object cleanerObj;
+  55     // dirty flag indicating an exception occured during pipeline in pathTo()
+  56     boolean dirty = false;
+  57     // shared data
+  58     final float[] float6 = new float[6];
+  59     // shared curve (dirty) (Renderer / Stroker)
+  60     final Curve curve = new Curve();
+  61     // MarlinRenderingEngine NormalizingPathIterator NearestPixelCenter:
+  62     final NormalizingPathIterator nPCPathIterator;
+  63     // MarlinRenderingEngine NearestPixelQuarter NormalizingPathIterator:
+  64     final NormalizingPathIterator nPQPathIterator;
+  65     // MarlinRenderingEngine.TransformingPathConsumer2D
+  66     final TransformingPathConsumer2D transformerPC2D;
+  67     // recycled Path2D instance (weak)
+  68     private WeakReference&lt;Path2D.Float&gt; refPath2D = null;
+  69     final Renderer renderer;
+  70     final Stroker stroker;
+  71     // Simplifies out collinear lines
+  72     final CollinearSimplifier simplifier = new CollinearSimplifier();
+  73     final Dasher dasher;
+  74     final MarlinTileGenerator ptg;
+  75     final MarlinCache cache;
+  76     // flag indicating the shape is stroked (1) or filled (0)
+  77     int stroking = 0;
+  78     // flag indicating to clip the shape
+  79     boolean doClip = false;
+  80     // flag indicating if the path is closed or not (in advance) to handle properly caps
+  81     boolean closedPath = false;
+  82     // clip rectangle (ymin, ymax, xmin, xmax):
+  83     final float[] clipRect = new float[4];
+  84 
+  85     // Array caches:
+  86     /* clean int[] cache (zero-filled) = 5 refs */
+  87     private final IntArrayCache cleanIntCache = new IntArrayCache(true, 5);
+  88     /* dirty int[] cache = 5 refs */
+  89     private final IntArrayCache dirtyIntCache = new IntArrayCache(false, 5);
+  90     /* dirty float[] cache = 4 refs (2 polystack) */
+  91     private final FloatArrayCache dirtyFloatCache = new FloatArrayCache(false, 4);
+  92     /* dirty byte[] cache = 2 ref (2 polystack) */
+  93     private final ByteArrayCache dirtyByteCache = new ByteArrayCache(false, 2);
+  94 
+  95     // RendererContext statistics
+  96     final RendererStats stats;
+  97 
+  98     /**
+  99      * Constructor
+ 100      *
+ 101      * @param name context name (debugging)
+ 102      */
+ 103     RendererContext(final String name) {
+ 104         if (LOG_CREATE_CONTEXT) {
+ 105             MarlinUtils.logInfo("new RendererContext = " + name);
+ 106         }
+ 107         this.cleanerObj = new Object();
+ 108 
+ 109         // create first stats (needed by newOffHeapArray):
+ 110         if (DO_STATS || DO_MONITORS) {
+ 111             stats = RendererStats.createInstance(cleanerObj, name);
+ 112             // push cache stats:
+ 113             stats.cacheStats = new CacheStats[] { cleanIntCache.stats,
+ 114                 dirtyIntCache.stats, dirtyFloatCache.stats, dirtyByteCache.stats
+ 115             };
+ 116         } else {
+ 117             stats = null;
+ 118         }
+ 119 
+ 120         // NormalizingPathIterator instances:
+ 121         nPCPathIterator = new NormalizingPathIterator.NearestPixelCenter(float6);
+ 122         nPQPathIterator  = new NormalizingPathIterator.NearestPixelQuarter(float6);
+ 123 
+ 124         // MarlinRenderingEngine.TransformingPathConsumer2D
+ 125         transformerPC2D = new TransformingPathConsumer2D(this);
+ 126 
+ 127         // Renderer:
+ 128         cache = new MarlinCache(this);
+ 129         renderer = new Renderer(this); // needs MarlinCache from rdrCtx.cache
+ 130         ptg = new MarlinTileGenerator(stats, renderer, cache);
+ 131 
+ 132         stroker = new Stroker(this);
+ 133         dasher = new Dasher(this);
+ 134     }
+ 135 
+ 136     /**
+ 137      * Disposes this renderer context:
+ 138      * clean up before reusing this context
+ 139      */
+ 140     void dispose() {
+ 141         if (DO_STATS) {
+ 142             if (stats.totalOffHeap &gt; stats.totalOffHeapMax) {
+ 143                 stats.totalOffHeapMax = stats.totalOffHeap;
+ 144             }
+ 145             stats.totalOffHeap = 0L;
+ 146         }
+ 147         stroking   = 0;
+ 148         doClip     = false;
+ 149         closedPath = false;
+ 150 
+ 151         // if context is maked as DIRTY:
+ 152         if (dirty) {
+ 153             // may happen if an exception if thrown in the pipeline processing:
+ 154             // force cleanup of all possible pipelined blocks (except Renderer):
+ 155 
+ 156             // NormalizingPathIterator instances:
+ 157             this.nPCPathIterator.dispose();
+ 158             this.nPQPathIterator.dispose();
+ 159             // Dasher:
+ 160             this.dasher.dispose();
+ 161             // Stroker:
+ 162             this.stroker.dispose();
+ 163 
+ 164             // mark context as CLEAN:
+ 165             dirty = false;
+ 166         }
+ 167     }
+ 168 
+ 169     Path2D.Float getPath2D() {
+ 170         // resolve reference:
+ 171         Path2D.Float p2d = (refPath2D != null) ? refPath2D.get() : null;
+ 172 
+ 173         // create a new Path2D ?
+ 174         if (p2d == null) {
+ 175             p2d = new Path2D.Float(WIND_NON_ZERO, INITIAL_EDGES_COUNT); // 32K
+ 176 
+ 177             // update weak reference:
+ 178             refPath2D = new WeakReference&lt;Path2D.Float&gt;(p2d);
+ 179         }
+ 180         // reset the path anyway:
+ 181         p2d.reset();
+ 182         return p2d;
+ 183     }
+ 184 
+ 185     @Override
+ 186     public RendererStats stats() {
+ 187         return stats;
+ 188     }
+ 189 
+ 190     @Override
+ 191     public OffHeapArray newOffHeapArray(final long initialSize) {
+ 192         if (DO_STATS) {
+ 193             stats.totalOffHeapInitial += initialSize;
+ 194         }
+ 195         return new OffHeapArray(cleanerObj, initialSize);
+ 196     }
+ 197 
+ 198     @Override
+ 199     public IntArrayCache.Reference newCleanIntArrayRef(final int initialSize) {
+ 200         return cleanIntCache.createRef(initialSize);
+ 201     }
+ 202 
+ 203     IntArrayCache.Reference newDirtyIntArrayRef(final int initialSize) {
+ 204         return dirtyIntCache.createRef(initialSize);
+ 205     }
+ 206 
+ 207     FloatArrayCache.Reference newDirtyFloatArrayRef(final int initialSize) {
+ 208         return dirtyFloatCache.createRef(initialSize);
+ 209     }
+ 210 
+ 211     ByteArrayCache.Reference newDirtyByteArrayRef(final int initialSize) {
+ 212         return dirtyByteCache.createRef(initialSize);
+ 213     }
+ 214 
+ 215 }
+</pre></body></html>

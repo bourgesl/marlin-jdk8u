@@ -1,0 +1,752 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Version.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/TransformingPathConsumer2D.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -1,7 +1,7 @@</span>
+ /*
+<span class="removed">- * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+<span class="new">+ * Copyright (c) 2007, 2018, Oracle and/or its affiliates. All rights reserved.</span>
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License version 2 only, as
+  * published by the Free Software Foundation.  Oracle designates this
+</pre><hr /><pre>
+<span class="newmarker">@@ -26,15 +26,19 @@</span>
+ package sun.java2d.marlin;
+ 
+ import sun.awt.geom.PathConsumer2D;
+ import java.awt.geom.AffineTransform;
+ import java.awt.geom.Path2D;
+<span class="new">+import java.util.Arrays;</span>
+ import sun.java2d.marlin.Helpers.IndexStack;
+ import sun.java2d.marlin.Helpers.PolyStack;
+ 
+ final class TransformingPathConsumer2D {
+ 
+<span class="new">+    // higher uncertainty in float variant for huge shapes &gt; 10^7</span>
+<span class="new">+    static final float CLIP_RECT_PADDING = 1.0f;</span>
+<span class="new">+</span>
+     private final RendererContext rdrCtx;
+ 
+     // recycled ClosedPathDetector instance from detectClosedPath()
+     private final ClosedPathDetector   cpDetector;
+ 
+</pre><hr /><pre>
+<span class="newmarker">@@ -55,10 +59,11 @@</span>
+     // recycled PathTracer instances from tracer...() methods
+     private final PathTracer tracerInput      = new PathTracer("[Input]");
+     private final PathTracer tracerCPDetector = new PathTracer("ClosedPathDetector");
+     private final PathTracer tracerFiller     = new PathTracer("Filler");
+     private final PathTracer tracerStroker    = new PathTracer("Stroker");
+<span class="new">+    private final PathTracer tracerDasher     = new PathTracer("Dasher");</span>
+ 
+     TransformingPathConsumer2D(final RendererContext rdrCtx) {
+         // used by RendererContext
+         this.rdrCtx = rdrCtx;
+         this.cpDetector = new ClosedPathDetector(rdrCtx);
+</pre><hr /><pre>
+<span class="newmarker">@@ -83,10 +88,14 @@</span>
+ 
+     PathConsumer2D traceStroker(PathConsumer2D out) {
+         return tracerStroker.init(out);
+     }
+ 
+<span class="new">+    PathConsumer2D traceDasher(PathConsumer2D out) {</span>
+<span class="new">+        return tracerDasher.init(out);</span>
+<span class="new">+    }</span>
+<span class="new">+</span>
+     PathConsumer2D detectClosedPath(PathConsumer2D out) {
+         return cpDetector.init(out);
+     }
+ 
+     PathConsumer2D pathClipper(PathConsumer2D out) {
+</pre><hr /><pre>
+<span class="newmarker">@@ -498,15 +507,23 @@</span>
+         // the cumulated (and) outcode of the complete path
+         private int gOutCode = MarlinConst.OUTCODE_MASK_T_B_L_R;
+ 
+         private boolean outside = false;
+ 
+<span class="removed">-        // The current point OUTSIDE</span>
+<span class="new">+        // The current point (TODO stupid repeated info)</span>
+         private float cx0, cy0;
+ 
+<span class="new">+        // The current point OUTSIDE</span>
+<span class="new">+        private float cox0, coy0;</span>
+<span class="new">+</span>
+<span class="new">+        private boolean subdivide = MarlinConst.DO_CLIP_SUBDIVIDER;</span>
+<span class="new">+        private final CurveClipSplitter curveSplitter;</span>
+<span class="new">+</span>
+         PathClipFilter(final RendererContext rdrCtx) {
+             this.clipRect = rdrCtx.clipRect;
+<span class="new">+            this.curveSplitter = rdrCtx.curveClipSplitter;</span>
+<span class="new">+</span>
+             this.stack = (rdrCtx.stats != null) ?
+                 new IndexStack(rdrCtx,
+                         rdrCtx.stats.stat_pcf_idxstack_indices,
+                         rdrCtx.stats.hist_pcf_idxstack_indices,
+                         rdrCtx.stats.stat_array_pcf_idxstack_indices)
+</pre><hr /><pre>
+<span class="newmarker">@@ -527,10 +544,15 @@</span>
+             _clipRect[0] -= margin - rdrOffY;
+             _clipRect[1] += margin + rdrOffY;
+             _clipRect[2] -= margin - rdrOffX;
+             _clipRect[3] += margin + rdrOffX;
+ 
+<span class="new">+            if (MarlinConst.DO_CLIP_SUBDIVIDER) {</span>
+<span class="new">+                // adjust padded clip rectangle:</span>
+<span class="new">+                curveSplitter.init();</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+             this.init_corners = true;
+             this.gOutCode = MarlinConst.OUTCODE_MASK_T_B_L_R;
+ 
+             return this; // fluent API
+         }
+</pre><hr /><pre>
+<span class="newmarker">@@ -577,11 +599,13 @@</span>
+                     _corners[6] = _clipRect[3];
+                     _corners[7] = _clipRect[1];
+                 }
+                 stack.pullAll(corners, out);
+             }
+<span class="removed">-            out.lineTo(cx0, cy0);</span>
+<span class="new">+            out.lineTo(cox0, coy0);</span>
+<span class="new">+            this.cx0 = cox0;</span>
+<span class="new">+            this.cy0 = coy0;</span>
+         }
+ 
+         @Override
+         public void pathDone() {
+             finishPath();
+</pre><hr /><pre>
+<span class="newmarker">@@ -602,42 +626,72 @@</span>
+ 
+         @Override
+         public void moveTo(final float x0, final float y0) {
+             finishPath();
+ 
+<span class="removed">-            final int outcode = Helpers.outcode(x0, y0, clipRect);</span>
+<span class="removed">-            this.cOutCode = outcode;</span>
+<span class="new">+            this.cOutCode = Helpers.outcode(x0, y0, clipRect);</span>
+             this.outside = false;
+             out.moveTo(x0, y0);
+<span class="new">+            this.cx0 = x0;</span>
+<span class="new">+            this.cy0 = y0;</span>
+         }
+ 
+         @Override
+         public void lineTo(final float xe, final float ye) {
+             final int outcode0 = this.cOutCode;
+             final int outcode1 = Helpers.outcode(xe, ye, clipRect);
+<span class="removed">-            this.cOutCode = outcode1;</span>
+ 
+<span class="new">+            // Should clip</span>
+<span class="new">+            final int orCode = (outcode0 | outcode1);</span>
+<span class="new">+            if (orCode != 0) {</span>
+             final int sideCode = (outcode0 &amp; outcode1);
+ 
+             // basic rejection criteria:
+             if (sideCode == 0) {
+<span class="removed">-                this.gOutCode = 0;</span>
+<span class="new">+                    // ovelap clip:</span>
+<span class="new">+                    if (subdivide) {</span>
+<span class="new">+                        // avoid reentrance</span>
+<span class="new">+                        subdivide = false;</span>
+<span class="new">+                        boolean ret;</span>
+<span class="new">+                        // subdivide curve =&gt; callback with subdivided parts:</span>
+<span class="new">+                        if (outside) {</span>
+<span class="new">+                            ret = curveSplitter.splitLine(cox0, coy0, xe, ye,</span>
+<span class="new">+                                                          orCode, this);</span>
+<span class="new">+                        } else {</span>
+<span class="new">+                            ret = curveSplitter.splitLine(cx0, cy0, xe, ye,</span>
+<span class="new">+                                                          orCode, this);</span>
+<span class="new">+                        }</span>
+<span class="new">+                        // reentrance is done:</span>
+<span class="new">+                        subdivide = true;</span>
+<span class="new">+                        if (ret) {</span>
+<span class="new">+                            return;</span>
+<span class="new">+                        }</span>
+<span class="new">+                    }</span>
+<span class="new">+                    // already subdivided so render it</span>
+             } else {
+<span class="new">+                    this.cOutCode = outcode1;</span>
+                 this.gOutCode &amp;= sideCode;
+                 // keep last point coordinate before entering the clip again:
+                 this.outside = true;
+<span class="removed">-                this.cx0 = xe;</span>
+<span class="removed">-                this.cy0 = ye;</span>
+<span class="new">+                    this.cox0 = xe;</span>
+<span class="new">+                    this.coy0 = ye;</span>
+ 
+                 clip(sideCode, outcode0, outcode1);
+                 return;
+             }
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            this.cOutCode = outcode1;</span>
+<span class="new">+            this.gOutCode = 0;</span>
+<span class="new">+</span>
+             if (outside) {
+                 finish();
+             }
+             // clipping disabled:
+             out.lineTo(xe, ye);
+<span class="new">+            this.cx0 = xe;</span>
+<span class="new">+            this.cy0 = ye;</span>
+         }
+ 
+         private void clip(final int sideCode,
+                           final int outcode0,
+                           final int outcode1)
+</pre><hr /><pre>
+<span class="newmarker">@@ -653,26 +707,22 @@</span>
+                 final int off = (lrCode == MarlinConst.OUTCODE_LEFT) ? 0 : 2;
+ 
+                 // add corners to outside stack:
+                 switch (tbCode) {
+                     case MarlinConst.OUTCODE_TOP:
+<span class="removed">-// System.out.println("TOP "+ ((off == 0) ? "LEFT" : "RIGHT"));</span>
+                         stack.push(off); // top
+                         return;
+                     case MarlinConst.OUTCODE_BOTTOM:
+<span class="removed">-// System.out.println("BOTTOM "+ ((off == 0) ? "LEFT" : "RIGHT"));</span>
+                         stack.push(off + 1); // bottom
+                         return;
+                     default:
+                         // both TOP / BOTTOM:
+                         if ((outcode0 &amp; MarlinConst.OUTCODE_TOP) != 0) {
+<span class="removed">-// System.out.println("TOP + BOTTOM "+ ((off == 0) ? "LEFT" : "RIGHT"));</span>
+                             // top to bottom
+                             stack.push(off); // top
+                             stack.push(off + 1); // bottom
+                         } else {
+<span class="removed">-// System.out.println("BOTTOM + TOP "+ ((off == 0) ? "LEFT" : "RIGHT"));</span>
+                             // bottom to top
+                             stack.push(off + 1); // bottom
+                             stack.push(off); // top
+                         }
+                 }
+</pre><hr /><pre>
+<span class="newmarker">@@ -683,80 +733,389 @@</span>
+         public void curveTo(final float x1, final float y1,
+                             final float x2, final float y2,
+                             final float xe, final float ye)
+         {
+             final int outcode0 = this.cOutCode;
+<span class="new">+            final int outcode1 = Helpers.outcode(x1, y1, clipRect);</span>
+<span class="new">+            final int outcode2 = Helpers.outcode(x2, y2, clipRect);</span>
+             final int outcode3 = Helpers.outcode(xe, ye, clipRect);
+<span class="removed">-            this.cOutCode = outcode3;</span>
+ 
+<span class="removed">-            int sideCode = outcode0 &amp; outcode3;</span>
+<span class="new">+            // Should clip</span>
+<span class="new">+            final int orCode = (outcode0 | outcode1 | outcode2 | outcode3);</span>
+<span class="new">+            if (orCode != 0) {</span>
+<span class="new">+                final int sideCode = outcode0 &amp; outcode1 &amp; outcode2 &amp; outcode3;</span>
+ 
+<span class="new">+                // basic rejection criteria:</span>
+             if (sideCode == 0) {
+<span class="removed">-                this.gOutCode = 0;</span>
+<span class="new">+                    // ovelap clip:</span>
+<span class="new">+                    if (subdivide) {</span>
+<span class="new">+                        // avoid reentrance</span>
+<span class="new">+                        subdivide = false;</span>
+<span class="new">+                        // subdivide curve =&gt; callback with subdivided parts:</span>
+<span class="new">+                        boolean ret;</span>
+<span class="new">+                        if (outside) {</span>
+<span class="new">+                            ret = curveSplitter.splitCurve(cox0, coy0, x1, y1,</span>
+<span class="new">+                                                           x2, y2, xe, ye,</span>
+<span class="new">+                                                           orCode, this);</span>
+<span class="new">+                        } else {</span>
+<span class="new">+                            ret = curveSplitter.splitCurve(cx0, cy0, x1, y1,</span>
+<span class="new">+                                                           x2, y2, xe, ye,</span>
+<span class="new">+                                                           orCode, this);</span>
+<span class="new">+                        }</span>
+<span class="new">+                        // reentrance is done:</span>
+<span class="new">+                        subdivide = true;</span>
+<span class="new">+                        if (ret) {</span>
+<span class="new">+                            return;</span>
+<span class="new">+                        }</span>
+<span class="new">+                    }</span>
+<span class="new">+                    // already subdivided so render it</span>
+             } else {
+<span class="removed">-                sideCode &amp;= Helpers.outcode(x1, y1, clipRect);</span>
+<span class="removed">-                sideCode &amp;= Helpers.outcode(x2, y2, clipRect);</span>
+<span class="new">+                    this.cOutCode = outcode3;</span>
+                 this.gOutCode &amp;= sideCode;
+<span class="removed">-</span>
+<span class="removed">-                // basic rejection criteria:</span>
+<span class="removed">-                if (sideCode != 0) {</span>
+                     // keep last point coordinate before entering the clip again:
+                     this.outside = true;
+<span class="removed">-                    this.cx0 = xe;</span>
+<span class="removed">-                    this.cy0 = ye;</span>
+<span class="new">+                    this.cox0 = xe;</span>
+<span class="new">+                    this.coy0 = ye;</span>
+ 
+                     clip(sideCode, outcode0, outcode3);
+                     return;
+                 }
+             }
+<span class="new">+</span>
+<span class="new">+            this.cOutCode = outcode3;</span>
+<span class="new">+            this.gOutCode = 0;</span>
+<span class="new">+</span>
+             if (outside) {
+                 finish();
+             }
+             // clipping disabled:
+             out.curveTo(x1, y1, x2, y2, xe, ye);
+<span class="new">+            this.cx0 = xe;</span>
+<span class="new">+            this.cy0 = ye;</span>
+         }
+ 
+         @Override
+         public void quadTo(final float x1, final float y1,
+                            final float xe, final float ye)
+         {
+             final int outcode0 = this.cOutCode;
+<span class="new">+            final int outcode1 = Helpers.outcode(x1, y1, clipRect);</span>
+             final int outcode2 = Helpers.outcode(xe, ye, clipRect);
+<span class="removed">-            this.cOutCode = outcode2;</span>
+ 
+<span class="removed">-            int sideCode = outcode0 &amp; outcode2;</span>
+<span class="new">+            // Should clip</span>
+<span class="new">+            final int orCode = (outcode0 | outcode1 | outcode2);</span>
+<span class="new">+            if (orCode != 0) {</span>
+<span class="new">+                final int sideCode = outcode0 &amp; outcode1 &amp; outcode2;</span>
+ 
+<span class="new">+                // basic rejection criteria:</span>
+             if (sideCode == 0) {
+<span class="removed">-                this.gOutCode = 0;</span>
+<span class="new">+                    // ovelap clip:</span>
+<span class="new">+                    if (subdivide) {</span>
+<span class="new">+                        // avoid reentrance</span>
+<span class="new">+                        subdivide = false;</span>
+<span class="new">+                        // subdivide curve =&gt; callback with subdivided parts:</span>
+<span class="new">+                        boolean ret;</span>
+<span class="new">+                        if (outside) {</span>
+<span class="new">+                            ret = curveSplitter.splitQuad(cox0, coy0, x1, y1,</span>
+<span class="new">+                                                          xe, ye, orCode, this);</span>
+<span class="new">+                        } else {</span>
+<span class="new">+                            ret = curveSplitter.splitQuad(cx0, cy0, x1, y1,</span>
+<span class="new">+                                                          xe, ye, orCode, this);</span>
+<span class="new">+                        }</span>
+<span class="new">+                        // reentrance is done:</span>
+<span class="new">+                        subdivide = true;</span>
+<span class="new">+                        if (ret) {</span>
+<span class="new">+                            return;</span>
+<span class="new">+                        }</span>
+<span class="new">+                    }</span>
+<span class="new">+                    // already subdivided so render it</span>
+             } else {
+<span class="removed">-                sideCode &amp;= Helpers.outcode(x1, y1, clipRect);</span>
+<span class="new">+                    this.cOutCode = outcode2;</span>
+                 this.gOutCode &amp;= sideCode;
+<span class="removed">-</span>
+<span class="removed">-                // basic rejection criteria:</span>
+<span class="removed">-                if (sideCode != 0) {</span>
+                     // keep last point coordinate before entering the clip again:
+                     this.outside = true;
+<span class="removed">-                    this.cx0 = xe;</span>
+<span class="removed">-                    this.cy0 = ye;</span>
+<span class="new">+                    this.cox0 = xe;</span>
+<span class="new">+                    this.coy0 = ye;</span>
+ 
+                     clip(sideCode, outcode0, outcode2);
+                     return;
+                 }
+             }
+<span class="new">+</span>
+<span class="new">+            this.cOutCode = outcode2;</span>
+<span class="new">+            this.gOutCode = 0;</span>
+<span class="new">+</span>
+             if (outside) {
+                 finish();
+             }
+             // clipping disabled:
+             out.quadTo(x1, y1, xe, ye);
+<span class="new">+            this.cx0 = xe;</span>
+<span class="new">+            this.cy0 = ye;</span>
+         }
+ 
+         @Override
+         public long getNativeConsumer() {
+             throw new InternalError("Not using a native peer");
+         }
+     }
+ 
+<span class="new">+    static final class CurveClipSplitter {</span>
+<span class="new">+</span>
+<span class="new">+        static final float LEN_TH = MarlinProperties.getSubdividerMinLength();</span>
+<span class="new">+        static final boolean DO_CHECK_LENGTH = (LEN_TH &gt; 0.0f);</span>
+<span class="new">+</span>
+<span class="new">+        private static final boolean TRACE = false;</span>
+<span class="new">+</span>
+<span class="new">+        private static final int MAX_N_CURVES = 3 * 4;</span>
+<span class="new">+</span>
+<span class="new">+        // clip rectangle (ymin, ymax, xmin, xmax):</span>
+<span class="new">+        final float[] clipRect;</span>
+<span class="new">+</span>
+<span class="new">+        // clip rectangle (ymin, ymax, xmin, xmax) including padding:</span>
+<span class="new">+        final float[] clipRectPad = new float[4];</span>
+<span class="new">+        private boolean init_clipRectPad = false;</span>
+<span class="new">+</span>
+<span class="new">+        // This is where the curve to be processed is put. We give it</span>
+<span class="new">+        // enough room to store all curves.</span>
+<span class="new">+        final float[] middle = new float[MAX_N_CURVES * 8 + 2];</span>
+<span class="new">+        // t values at subdivision points</span>
+<span class="new">+        private final float[] subdivTs = new float[MAX_N_CURVES];</span>
+<span class="new">+</span>
+<span class="new">+        // dirty curve</span>
+<span class="new">+        private final Curve curve;</span>
+<span class="new">+</span>
+<span class="new">+        CurveClipSplitter(final RendererContext rdrCtx) {</span>
+<span class="new">+            this.clipRect = rdrCtx.clipRect;</span>
+<span class="new">+            this.curve = rdrCtx.curve;</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        void init() {</span>
+<span class="new">+            this.init_clipRectPad = true;</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        private void initPaddedClip() {</span>
+<span class="new">+            // bounds as half-open intervals: minX &lt;= x &lt; maxX and minY &lt;= y &lt; maxY</span>
+<span class="new">+            // adjust padded clip rectangle (ymin, ymax, xmin, xmax):</span>
+<span class="new">+            // add a rounding error (curve subdivision ~ 0.1px):</span>
+<span class="new">+            final float[] _clipRect = clipRect;</span>
+<span class="new">+            final float[] _clipRectPad = clipRectPad;</span>
+<span class="new">+</span>
+<span class="new">+            _clipRectPad[0] = _clipRect[0] - CLIP_RECT_PADDING;</span>
+<span class="new">+            _clipRectPad[1] = _clipRect[1] + CLIP_RECT_PADDING;</span>
+<span class="new">+            _clipRectPad[2] = _clipRect[2] - CLIP_RECT_PADDING;</span>
+<span class="new">+            _clipRectPad[3] = _clipRect[3] + CLIP_RECT_PADDING;</span>
+<span class="new">+</span>
+<span class="new">+            if (TRACE) {</span>
+<span class="new">+                MarlinUtils.logInfo("clip: X [" + _clipRectPad[2] + " .. " + _clipRectPad[3] +"] "</span>
+<span class="new">+                                        + "Y ["+ _clipRectPad[0] + " .. " + _clipRectPad[1] +"]");</span>
+<span class="new">+            }</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        boolean splitLine(final float x0, final float y0,</span>
+<span class="new">+                          final float x1, final float y1,</span>
+<span class="new">+                          final int outCodeOR,</span>
+<span class="new">+                          final PathConsumer2D out)</span>
+<span class="new">+        {</span>
+<span class="new">+            if (TRACE) {</span>
+<span class="new">+                MarlinUtils.logInfo("divLine P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ")");</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastLineLen(x0, y0, x1, y1) &lt;= LEN_TH) {</span>
+<span class="new">+                return false;</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            final float[] mid = middle;</span>
+<span class="new">+            mid[0] = x0;  mid[1] = y0;</span>
+<span class="new">+            mid[2] = x1;  mid[3] = y1;</span>
+<span class="new">+</span>
+<span class="new">+            return subdivideAtIntersections(4, outCodeOR, out);</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        boolean splitQuad(final float x0, final float y0,</span>
+<span class="new">+                          final float x1, final float y1,</span>
+<span class="new">+                          final float x2, final float y2,</span>
+<span class="new">+                          final int outCodeOR,</span>
+<span class="new">+                          final PathConsumer2D out)</span>
+<span class="new">+        {</span>
+<span class="new">+            if (TRACE) {</span>
+<span class="new">+                MarlinUtils.logInfo("divQuad P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ")");</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastQuadLen(x0, y0, x1, y1, x2, y2) &lt;= LEN_TH) {</span>
+<span class="new">+                return false;</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            final float[] mid = middle;</span>
+<span class="new">+            mid[0] = x0;  mid[1] = y0;</span>
+<span class="new">+            mid[2] = x1;  mid[3] = y1;</span>
+<span class="new">+            mid[4] = x2;  mid[5] = y2;</span>
+<span class="new">+</span>
+<span class="new">+            return subdivideAtIntersections(6, outCodeOR, out);</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        boolean splitCurve(final float x0, final float y0,</span>
+<span class="new">+                           final float x1, final float y1,</span>
+<span class="new">+                           final float x2, final float y2,</span>
+<span class="new">+                           final float x3, final float y3,</span>
+<span class="new">+                           final int outCodeOR,</span>
+<span class="new">+                           final PathConsumer2D out)</span>
+<span class="new">+        {</span>
+<span class="new">+            if (TRACE) {</span>
+<span class="new">+                MarlinUtils.logInfo("divCurve P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ") P3(" + x3 + ", " + y3 + ")");</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            if (DO_CHECK_LENGTH &amp;&amp; Helpers.fastCurvelen(x0, y0, x1, y1, x2, y2, x3, y3) &lt;= LEN_TH) {</span>
+<span class="new">+                return false;</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            final float[] mid = middle;</span>
+<span class="new">+            mid[0] = x0;  mid[1] = y0;</span>
+<span class="new">+            mid[2] = x1;  mid[3] = y1;</span>
+<span class="new">+            mid[4] = x2;  mid[5] = y2;</span>
+<span class="new">+            mid[6] = x3;  mid[7] = y3;</span>
+<span class="new">+</span>
+<span class="new">+            return subdivideAtIntersections(8, outCodeOR, out);</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        private boolean subdivideAtIntersections(final int type, final int outCodeOR,</span>
+<span class="new">+                                                 final PathConsumer2D out)</span>
+<span class="new">+        {</span>
+<span class="new">+            final float[] mid = middle;</span>
+<span class="new">+            final float[] subTs = subdivTs;</span>
+<span class="new">+</span>
+<span class="new">+            if (init_clipRectPad) {</span>
+<span class="new">+                init_clipRectPad = false;</span>
+<span class="new">+                initPaddedClip();</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            final int nSplits = Helpers.findClipPoints(curve, mid, subTs, type,</span>
+<span class="new">+                                                        outCodeOR, clipRectPad);</span>
+<span class="new">+</span>
+<span class="new">+            if (TRACE) {</span>
+<span class="new">+                MarlinUtils.logInfo("nSplits: "+ nSplits);</span>
+<span class="new">+                MarlinUtils.logInfo("subTs: "+Arrays.toString(Arrays.copyOfRange(subTs, 0, nSplits)));</span>
+<span class="new">+            }</span>
+<span class="new">+            if (nSplits == 0) {</span>
+<span class="new">+                // only curve support shortcut</span>
+<span class="new">+                return false;</span>
+<span class="new">+            }</span>
+<span class="new">+            float prevT = 0.0f;</span>
+<span class="new">+</span>
+<span class="new">+            for (int i = 0, off = 0; i &lt; nSplits; i++, off += type) {</span>
+<span class="new">+                final float t = subTs[i];</span>
+<span class="new">+</span>
+<span class="new">+                Helpers.subdivideAt((t - prevT) / (1.0f - prevT),</span>
+<span class="new">+                                     mid, off, mid, off, type);</span>
+<span class="new">+                prevT = t;</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            for (int i = 0, off = 0; i &lt;= nSplits; i++, off += type) {</span>
+<span class="new">+                if (TRACE) {</span>
+<span class="new">+                    MarlinUtils.logInfo("Part Curve "+Arrays.toString(Arrays.copyOfRange(mid, off, off + type)));</span>
+<span class="new">+                }</span>
+<span class="new">+                emitCurrent(type, mid, off, out);</span>
+<span class="new">+            }</span>
+<span class="new">+            return true;</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        static void emitCurrent(final int type, final float[] pts,</span>
+<span class="new">+                                final int off, final PathConsumer2D out)</span>
+<span class="new">+        {</span>
+<span class="new">+            // if instead of switch (perf + most probable cases first)</span>
+<span class="new">+            if (type == 8) {</span>
+<span class="new">+                out.curveTo(pts[off + 2], pts[off + 3],</span>
+<span class="new">+                            pts[off + 4], pts[off + 5],</span>
+<span class="new">+                            pts[off + 6], pts[off + 7]);</span>
+<span class="new">+            } else if (type == 4) {</span>
+<span class="new">+                out.lineTo(pts[off + 2], pts[off + 3]);</span>
+<span class="new">+            } else {</span>
+<span class="new">+                out.quadTo(pts[off + 2], pts[off + 3],</span>
+<span class="new">+                           pts[off + 4], pts[off + 5]);</span>
+<span class="new">+            }</span>
+<span class="new">+        }</span>
+<span class="new">+    }</span>
+<span class="new">+</span>
+<span class="new">+    static final class CurveBasicMonotonizer {</span>
+<span class="new">+</span>
+<span class="new">+        private static final int MAX_N_CURVES = 11;</span>
+<span class="new">+</span>
+<span class="new">+        // squared half line width (for stroker)</span>
+<span class="new">+        private float lw2;</span>
+<span class="new">+</span>
+<span class="new">+        // number of splitted curves</span>
+<span class="new">+        int nbSplits;</span>
+<span class="new">+</span>
+<span class="new">+        // This is where the curve to be processed is put. We give it</span>
+<span class="new">+        // enough room to store all curves.</span>
+<span class="new">+        final float[] middle = new float[MAX_N_CURVES * 6 + 2];</span>
+<span class="new">+        // t values at subdivision points</span>
+<span class="new">+        private final float[] subdivTs = new float[MAX_N_CURVES - 1];</span>
+<span class="new">+</span>
+<span class="new">+        // dirty curve</span>
+<span class="new">+        private final Curve curve;</span>
+<span class="new">+</span>
+<span class="new">+        CurveBasicMonotonizer(final RendererContext rdrCtx) {</span>
+<span class="new">+            this.curve = rdrCtx.curve;</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        void init(final float lineWidth) {</span>
+<span class="new">+            this.lw2 = (lineWidth * lineWidth) / 4.0f;</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        CurveBasicMonotonizer curve(final float x0, final float y0,</span>
+<span class="new">+                                    final float x1, final float y1,</span>
+<span class="new">+                                    final float x2, final float y2,</span>
+<span class="new">+                                    final float x3, final float y3)</span>
+<span class="new">+        {</span>
+<span class="new">+            final float[] mid = middle;</span>
+<span class="new">+            mid[0] = x0;  mid[1] = y0;</span>
+<span class="new">+            mid[2] = x1;  mid[3] = y1;</span>
+<span class="new">+            mid[4] = x2;  mid[5] = y2;</span>
+<span class="new">+            mid[6] = x3;  mid[7] = y3;</span>
+<span class="new">+</span>
+<span class="new">+            final float[] subTs = subdivTs;</span>
+<span class="new">+            final int nSplits = Helpers.findSubdivPoints(curve, mid, subTs, 8, lw2);</span>
+<span class="new">+</span>
+<span class="new">+            float prevT = 0.0f;</span>
+<span class="new">+            for (int i = 0, off = 0; i &lt; nSplits; i++, off += 6) {</span>
+<span class="new">+                final float t = subTs[i];</span>
+<span class="new">+</span>
+<span class="new">+                Helpers.subdivideCubicAt((t - prevT) / (1.0f - prevT),</span>
+<span class="new">+                                          mid, off, mid, off, off + 6);</span>
+<span class="new">+                prevT = t;</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            this.nbSplits = nSplits;</span>
+<span class="new">+            return this;</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        CurveBasicMonotonizer quad(final float x0, final float y0,</span>
+<span class="new">+                                   final float x1, final float y1,</span>
+<span class="new">+                                   final float x2, final float y2)</span>
+<span class="new">+        {</span>
+<span class="new">+            final float[] mid = middle;</span>
+<span class="new">+            mid[0] = x0;  mid[1] = y0;</span>
+<span class="new">+            mid[2] = x1;  mid[3] = y1;</span>
+<span class="new">+            mid[4] = x2;  mid[5] = y2;</span>
+<span class="new">+</span>
+<span class="new">+            final float[] subTs = subdivTs;</span>
+<span class="new">+            final int nSplits = Helpers.findSubdivPoints(curve, mid, subTs, 6, lw2);</span>
+<span class="new">+</span>
+<span class="new">+            float prevt = 0.0f;</span>
+<span class="new">+            for (int i = 0, off = 0; i &lt; nSplits; i++, off += 4) {</span>
+<span class="new">+                final float t = subTs[i];</span>
+<span class="new">+                Helpers.subdivideQuadAt((t - prevt) / (1.0f - prevt),</span>
+<span class="new">+                                         mid, off, mid, off, off + 4);</span>
+<span class="new">+                prevt = t;</span>
+<span class="new">+            }</span>
+<span class="new">+</span>
+<span class="new">+            this.nbSplits = nSplits;</span>
+<span class="new">+            return this;</span>
+<span class="new">+        }</span>
+<span class="new">+    }</span>
+<span class="new">+</span>
+     static final class PathTracer implements PathConsumer2D {
+         private final String prefix;
+         private PathConsumer2D out;
+ 
+         PathTracer(String name) {
+</pre><hr /><pre>
+<span class="newmarker">@@ -806,11 +1165,11 @@</span>
+             log("pathDone");
+             out.pathDone();
+         }
+ 
+         private void log(final String message) {
+<span class="removed">-            System.out.println(prefix + message);</span>
+<span class="new">+            MarlinUtils.logInfo(prefix + message);</span>
+         }
+ 
+         @Override
+         public long getNativeConsumer() {
+             throw new InternalError("Not using a native peer");
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/Stroker.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Version.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

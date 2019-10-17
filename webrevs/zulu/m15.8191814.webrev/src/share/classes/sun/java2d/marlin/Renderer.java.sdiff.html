@@ -1,0 +1,529 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Renderer.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13694">13694</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8191814">8191814</a>: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
+Summary: upgrade to Marlin 0.8.2 providing efficient path clipping (Stroker and Filler)
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  30 import sun.misc.Unsafe;
+  31 
+  32 final class Renderer implements PathConsumer2D, MarlinRenderer {
+  33 
+  34     static final boolean DISABLE_RENDER = false;
+  35 
+  36     static final boolean ENABLE_BLOCK_FLAGS = MarlinProperties.isUseTileFlags();
+  37     static final boolean ENABLE_BLOCK_FLAGS_HEURISTICS = MarlinProperties.isUseTileFlagsWithHeuristics();
+  38 
+  39     private static final int ALL_BUT_LSB = 0xFFFFFFFE;
+  40     private static final int ERR_STEP_MAX = 0x7FFFFFFF; // = 2^31 - 1
+  41 
+  42     private static final double POWER_2_TO_32 = 0x1.0p32d;
+  43 
+  44     // use float to make tosubpix methods faster (no int to float conversion)
+  45     static final float SUBPIXEL_SCALE_X = (float) SUBPIXEL_POSITIONS_X;
+  46     static final float SUBPIXEL_SCALE_Y = (float) SUBPIXEL_POSITIONS_Y;
+  47     static final int SUBPIXEL_MASK_X = SUBPIXEL_POSITIONS_X - 1;
+  48     static final int SUBPIXEL_MASK_Y = SUBPIXEL_POSITIONS_Y - 1;
+  49 
+
+
+
+  50     // number of subpixels corresponding to a tile line
+  51     private static final int SUBPIXEL_TILE
+  52         = TILE_H &lt;&lt; SUBPIXEL_LG_POSITIONS_Y;
+  53 
+  54     // 2048 (pixelSize) pixels (height) x 8 subpixels = 64K
+  55     static final int INITIAL_BUCKET_ARRAY
+  56         = INITIAL_PIXEL_DIM * SUBPIXEL_POSITIONS_Y;
+  57 
+  58     // crossing capacity = edges count / 4 ~ 1024
+  59     static final int INITIAL_CROSSING_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 2;
+  60 
+<span class="removed">  61     public static final int WIND_EVEN_ODD = 0;</span>
+<span class="removed">  62     public static final int WIND_NON_ZERO = 1;</span>
+<span class="removed">  63 </span>
+  64     // common to all types of input path segments.
+  65     // OFFSET as bytes
+  66     // only integer values:
+  67     public static final long OFF_CURX_OR  = 0;
+  68     public static final long OFF_ERROR    = OFF_CURX_OR  + SIZE_INT;
+  69     public static final long OFF_BUMP_X   = OFF_ERROR    + SIZE_INT;
+  70     public static final long OFF_BUMP_ERR = OFF_BUMP_X   + SIZE_INT;
+  71     public static final long OFF_NEXT     = OFF_BUMP_ERR + SIZE_INT;
+  72     public static final long OFF_YMAX     = OFF_NEXT     + SIZE_INT;
+  73 
+  74     // size of one edge in bytes
+  75     public static final int SIZEOF_EDGE_BYTES = (int)(OFF_YMAX + SIZE_INT);
+  76 
+  77     // curve break into lines
+  78     // cubic error in subpixels to decrement step
+  79     private static final float CUB_DEC_ERR_SUBPIX
+  80         = MarlinProperties.getCubicDecD2() * (NORM_SUBPIXELS / 8.0f); // 1 pixel
+  81     // cubic error in subpixels to increment step
+  82     private static final float CUB_INC_ERR_SUBPIX
+  83         = MarlinProperties.getCubicIncD1() * (NORM_SUBPIXELS / 8.0f); // 0.4 pixel
+
+</pre><hr></hr><pre>
+ 509     // dirty curve
+ 510     private final Curve curve;
+ 511 
+ 512     // clean alpha array (zero filled)
+ 513     private int[] alphaLine;
+ 514 
+ 515     // alphaLine ref (clean)
+ 516     private final IntArrayCache.Reference alphaLine_ref;
+ 517 
+ 518     private boolean enableBlkFlags = false;
+ 519     private boolean prevUseBlkFlags = false;
+ 520 
+ 521     /* block flags (0|1) */
+ 522     private int[] blkFlags;
+ 523 
+ 524     // blkFlags ref (clean)
+ 525     private final IntArrayCache.Reference blkFlags_ref;
+ 526 
+ 527     Renderer(final RendererContext rdrCtx) {
+ 528         this.rdrCtx = rdrCtx;
+
+
+ 529 
+ 530         this.edges = rdrCtx.newOffHeapArray(INITIAL_EDGES_CAPACITY); // 96K
+ 531 
+<span class="removed"> 532         this.curve = rdrCtx.curve;</span>
+<span class="removed"> 533 </span>
+ 534         edgeBuckets_ref      = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+ 535         edgeBucketCounts_ref = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+ 536 
+ 537         edgeBuckets      = edgeBuckets_ref.initial;
+ 538         edgeBucketCounts = edgeBucketCounts_ref.initial;
+ 539 
+ 540         // 2048 (pixelsize) pixel large
+ 541         alphaLine_ref = rdrCtx.newCleanIntArrayRef(INITIAL_AA_ARRAY); // 8K
+ 542         alphaLine     = alphaLine_ref.initial;
+ 543 
+<span class="removed"> 544         this.cache = rdrCtx.cache;</span>
+<span class="removed"> 545 </span>
+ 546         crossings_ref     = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 547         aux_crossings_ref = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 548         edgePtrs_ref      = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 549         aux_edgePtrs_ref  = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 550 
+ 551         crossings     = crossings_ref.initial;
+ 552         aux_crossings = aux_crossings_ref.initial;
+ 553         edgePtrs      = edgePtrs_ref.initial;
+ 554         aux_edgePtrs  = aux_edgePtrs_ref.initial;
+ 555 
+ 556         blkFlags_ref = rdrCtx.newCleanIntArrayRef(INITIAL_ARRAY); // 1K = 1 tile line
+ 557         blkFlags     = blkFlags_ref.initial;
+ 558     }
+ 559 
+ 560     Renderer init(final int pix_boundsX, final int pix_boundsY,
+ 561                   final int pix_boundsWidth, final int pix_boundsHeight,
+ 562                   final int windingRule)
+ 563     {
+ 564         this.windingRule = windingRule;
+ 565 
+
+</pre><hr></hr><pre>
+ 655             // Force zero-fill dirty arrays:
+ 656             edges.fill(BYTE_0);
+ 657         }
+ 658         if (DO_MONITORS) {
+ 659             rdrCtx.stats.mon_rdr_endRendering.stop();
+ 660         }
+ 661         // recycle the RendererContext instance
+ 662         MarlinRenderingEngine.returnRendererContext(rdrCtx);
+ 663     }
+ 664 
+ 665     private static float tosubpixx(final float pix_x) {
+ 666         return SUBPIXEL_SCALE_X * pix_x;
+ 667     }
+ 668 
+ 669     private static float tosubpixy(final float pix_y) {
+ 670         // shift y by -0.5 for fast ceil(y - 0.5):
+ 671         return SUBPIXEL_SCALE_Y * pix_y - 0.5f;
+ 672     }
+ 673 
+ 674     @Override
+<span class="changed"> 675     public void moveTo(float pix_x0, float pix_y0) {</span>
+ 676         closePath();
+ 677         final float sx = tosubpixx(pix_x0);
+ 678         final float sy = tosubpixy(pix_y0);
+ 679         this.sx0 = sx;
+ 680         this.sy0 = sy;
+ 681         this.x0 = sx;
+ 682         this.y0 = sy;
+ 683     }
+ 684 
+ 685     @Override
+<span class="changed"> 686     public void lineTo(float pix_x1, float pix_y1) {</span>
+ 687         final float x1 = tosubpixx(pix_x1);
+ 688         final float y1 = tosubpixy(pix_y1);
+ 689         addLine(x0, y0, x1, y1);
+ 690         x0 = x1;
+ 691         y0 = y1;
+ 692     }
+ 693 
+ 694     @Override
+<span class="changed"> 695     public void curveTo(float x1, float y1,</span>
+<span class="changed"> 696                         float x2, float y2,</span>
+<span class="changed"> 697                         float x3, float y3)</span>
+ 698     {
+<span class="changed"> 699         final float xe = tosubpixx(x3);</span>
+<span class="changed"> 700         final float ye = tosubpixy(y3);</span>
+<span class="changed"> 701         curve.set(x0, y0, tosubpixx(x1), tosubpixy(y1),</span>
+<span class="changed"> 702                           tosubpixx(x2), tosubpixy(y2), xe, ye);</span>
+ 703         curveBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 704         x0 = xe;
+ 705         y0 = ye;
+ 706     }
+ 707 
+ 708     @Override
+<span class="changed"> 709     public void quadTo(float x1, float y1, float x2, float y2) {</span>
+<span class="changed"> 710         final float xe = tosubpixx(x2);</span>
+<span class="changed"> 711         final float ye = tosubpixy(y2);</span>
+<span class="changed"> 712         curve.set(x0, y0, tosubpixx(x1), tosubpixy(y1), xe, ye);</span>
+
+
+ 713         quadBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 714         x0 = xe;
+ 715         y0 = ye;
+ 716     }
+ 717 
+ 718     @Override
+ 719     public void closePath() {
+
+ 720         addLine(x0, y0, sx0, sy0);
+ 721         x0 = sx0;
+ 722         y0 = sy0;
+ 723     }
+
+ 724 
+ 725     @Override
+ 726     public void pathDone() {
+ 727         closePath();
+ 728     }
+ 729 
+ 730     @Override
+ 731     public long getNativeConsumer() {
+ 732         throw new InternalError("Renderer does not use a native consumer.");
+ 733     }
+ 734 
+ 735     private void _endRendering(final int ymin, final int ymax) {
+ 736         if (DISABLE_RENDER) {
+ 737             return;
+ 738         }
+ 739 
+ 740         // Get X bounds as true pixel boundaries to compute correct pixel coverage:
+ 741         final int bboxx0 = bbox_spminX;
+ 742         final int bboxx1 = bbox_spmaxX;
+ 743 
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  30 import sun.misc.Unsafe;
+  31 
+  32 final class Renderer implements PathConsumer2D, MarlinRenderer {
+  33 
+  34     static final boolean DISABLE_RENDER = false;
+  35 
+  36     static final boolean ENABLE_BLOCK_FLAGS = MarlinProperties.isUseTileFlags();
+  37     static final boolean ENABLE_BLOCK_FLAGS_HEURISTICS = MarlinProperties.isUseTileFlagsWithHeuristics();
+  38 
+  39     private static final int ALL_BUT_LSB = 0xFFFFFFFE;
+  40     private static final int ERR_STEP_MAX = 0x7FFFFFFF; // = 2^31 - 1
+  41 
+  42     private static final double POWER_2_TO_32 = 0x1.0p32d;
+  43 
+  44     // use float to make tosubpix methods faster (no int to float conversion)
+  45     static final float SUBPIXEL_SCALE_X = (float) SUBPIXEL_POSITIONS_X;
+  46     static final float SUBPIXEL_SCALE_Y = (float) SUBPIXEL_POSITIONS_Y;
+  47     static final int SUBPIXEL_MASK_X = SUBPIXEL_POSITIONS_X - 1;
+  48     static final int SUBPIXEL_MASK_Y = SUBPIXEL_POSITIONS_Y - 1;
+  49 
+<span class="new">  50     static final float RDR_OFFSET_X = 0.5f / SUBPIXEL_SCALE_X;</span>
+<span class="new">  51     static final float RDR_OFFSET_Y = 0.5f / SUBPIXEL_SCALE_Y;</span>
+<span class="new">  52 </span>
+  53     // number of subpixels corresponding to a tile line
+  54     private static final int SUBPIXEL_TILE
+  55         = TILE_H &lt;&lt; SUBPIXEL_LG_POSITIONS_Y;
+  56 
+  57     // 2048 (pixelSize) pixels (height) x 8 subpixels = 64K
+  58     static final int INITIAL_BUCKET_ARRAY
+  59         = INITIAL_PIXEL_DIM * SUBPIXEL_POSITIONS_Y;
+  60 
+  61     // crossing capacity = edges count / 4 ~ 1024
+  62     static final int INITIAL_CROSSING_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 2;
+  63 
+
+
+
+  64     // common to all types of input path segments.
+  65     // OFFSET as bytes
+  66     // only integer values:
+  67     public static final long OFF_CURX_OR  = 0;
+  68     public static final long OFF_ERROR    = OFF_CURX_OR  + SIZE_INT;
+  69     public static final long OFF_BUMP_X   = OFF_ERROR    + SIZE_INT;
+  70     public static final long OFF_BUMP_ERR = OFF_BUMP_X   + SIZE_INT;
+  71     public static final long OFF_NEXT     = OFF_BUMP_ERR + SIZE_INT;
+  72     public static final long OFF_YMAX     = OFF_NEXT     + SIZE_INT;
+  73 
+  74     // size of one edge in bytes
+  75     public static final int SIZEOF_EDGE_BYTES = (int)(OFF_YMAX + SIZE_INT);
+  76 
+  77     // curve break into lines
+  78     // cubic error in subpixels to decrement step
+  79     private static final float CUB_DEC_ERR_SUBPIX
+  80         = MarlinProperties.getCubicDecD2() * (NORM_SUBPIXELS / 8.0f); // 1 pixel
+  81     // cubic error in subpixels to increment step
+  82     private static final float CUB_INC_ERR_SUBPIX
+  83         = MarlinProperties.getCubicIncD1() * (NORM_SUBPIXELS / 8.0f); // 0.4 pixel
+
+</pre><hr></hr><pre>
+ 509     // dirty curve
+ 510     private final Curve curve;
+ 511 
+ 512     // clean alpha array (zero filled)
+ 513     private int[] alphaLine;
+ 514 
+ 515     // alphaLine ref (clean)
+ 516     private final IntArrayCache.Reference alphaLine_ref;
+ 517 
+ 518     private boolean enableBlkFlags = false;
+ 519     private boolean prevUseBlkFlags = false;
+ 520 
+ 521     /* block flags (0|1) */
+ 522     private int[] blkFlags;
+ 523 
+ 524     // blkFlags ref (clean)
+ 525     private final IntArrayCache.Reference blkFlags_ref;
+ 526 
+ 527     Renderer(final RendererContext rdrCtx) {
+ 528         this.rdrCtx = rdrCtx;
+<span class="new"> 529         this.curve = rdrCtx.curve;</span>
+<span class="new"> 530         this.cache = rdrCtx.cache;</span>
+ 531 
+ 532         this.edges = rdrCtx.newOffHeapArray(INITIAL_EDGES_CAPACITY); // 96K
+ 533 
+
+
+ 534         edgeBuckets_ref      = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+ 535         edgeBucketCounts_ref = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+ 536 
+ 537         edgeBuckets      = edgeBuckets_ref.initial;
+ 538         edgeBucketCounts = edgeBucketCounts_ref.initial;
+ 539 
+ 540         // 2048 (pixelsize) pixel large
+ 541         alphaLine_ref = rdrCtx.newCleanIntArrayRef(INITIAL_AA_ARRAY); // 8K
+ 542         alphaLine     = alphaLine_ref.initial;
+ 543 
+
+
+ 544         crossings_ref     = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 545         aux_crossings_ref = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 546         edgePtrs_ref      = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 547         aux_edgePtrs_ref  = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 548 
+ 549         crossings     = crossings_ref.initial;
+ 550         aux_crossings = aux_crossings_ref.initial;
+ 551         edgePtrs      = edgePtrs_ref.initial;
+ 552         aux_edgePtrs  = aux_edgePtrs_ref.initial;
+ 553 
+ 554         blkFlags_ref = rdrCtx.newCleanIntArrayRef(INITIAL_ARRAY); // 1K = 1 tile line
+ 555         blkFlags     = blkFlags_ref.initial;
+ 556     }
+ 557 
+ 558     Renderer init(final int pix_boundsX, final int pix_boundsY,
+ 559                   final int pix_boundsWidth, final int pix_boundsHeight,
+ 560                   final int windingRule)
+ 561     {
+ 562         this.windingRule = windingRule;
+ 563 
+
+</pre><hr></hr><pre>
+ 653             // Force zero-fill dirty arrays:
+ 654             edges.fill(BYTE_0);
+ 655         }
+ 656         if (DO_MONITORS) {
+ 657             rdrCtx.stats.mon_rdr_endRendering.stop();
+ 658         }
+ 659         // recycle the RendererContext instance
+ 660         MarlinRenderingEngine.returnRendererContext(rdrCtx);
+ 661     }
+ 662 
+ 663     private static float tosubpixx(final float pix_x) {
+ 664         return SUBPIXEL_SCALE_X * pix_x;
+ 665     }
+ 666 
+ 667     private static float tosubpixy(final float pix_y) {
+ 668         // shift y by -0.5 for fast ceil(y - 0.5):
+ 669         return SUBPIXEL_SCALE_Y * pix_y - 0.5f;
+ 670     }
+ 671 
+ 672     @Override
+<span class="changed"> 673     public void moveTo(final float pix_x0, final float pix_y0) {</span>
+ 674         closePath();
+ 675         final float sx = tosubpixx(pix_x0);
+ 676         final float sy = tosubpixy(pix_y0);
+ 677         this.sx0 = sx;
+ 678         this.sy0 = sy;
+ 679         this.x0 = sx;
+ 680         this.y0 = sy;
+ 681     }
+ 682 
+ 683     @Override
+<span class="changed"> 684     public void lineTo(final float pix_x1, final float pix_y1) {</span>
+ 685         final float x1 = tosubpixx(pix_x1);
+ 686         final float y1 = tosubpixy(pix_y1);
+ 687         addLine(x0, y0, x1, y1);
+ 688         x0 = x1;
+ 689         y0 = y1;
+ 690     }
+ 691 
+ 692     @Override
+<span class="changed"> 693     public void curveTo(final float pix_x1, final float pix_y1,</span>
+<span class="changed"> 694                         final float pix_x2, final float pix_y2,</span>
+<span class="changed"> 695                         final float pix_x3, final float pix_y3)</span>
+ 696     {
+<span class="changed"> 697         final float xe = tosubpixx(pix_x3);</span>
+<span class="changed"> 698         final float ye = tosubpixy(pix_y3);</span>
+<span class="changed"> 699         curve.set(x0, y0, tosubpixx(pix_x1), tosubpixy(pix_y1),</span>
+<span class="changed"> 700                   tosubpixx(pix_x2), tosubpixy(pix_y2), xe, ye);</span>
+ 701         curveBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 702         x0 = xe;
+ 703         y0 = ye;
+ 704     }
+ 705 
+ 706     @Override
+<span class="changed"> 707     public void quadTo(final float pix_x1, final float pix_y1,</span>
+<span class="changed"> 708                        final float pix_x2, final float pix_y2)</span>
+<span class="changed"> 709     {</span>
+<span class="changed"> 710         final float xe = tosubpixx(pix_x2);</span>
+<span class="changed"> 711         final float ye = tosubpixy(pix_y2);</span>
+<span class="changed"> 712         curve.set(x0, y0, tosubpixx(pix_x1), tosubpixy(pix_y1), xe, ye);</span>
+ 713         quadBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 714         x0 = xe;
+ 715         y0 = ye;
+ 716     }
+ 717 
+ 718     @Override
+ 719     public void closePath() {
+<span class="new"> 720         if (x0 != sx0 || y0 != sy0) {</span>
+ 721             addLine(x0, y0, sx0, sy0);
+ 722             x0 = sx0;
+ 723             y0 = sy0;
+ 724         }
+<span class="new"> 725     }</span>
+ 726 
+ 727     @Override
+ 728     public void pathDone() {
+ 729         closePath();
+ 730     }
+ 731 
+ 732     @Override
+ 733     public long getNativeConsumer() {
+ 734         throw new InternalError("Renderer does not use a native consumer.");
+ 735     }
+ 736 
+ 737     private void _endRendering(final int ymin, final int ymax) {
+ 738         if (DISABLE_RENDER) {
+ 739             return;
+ 740         }
+ 741 
+ 742         // Get X bounds as true pixel boundaries to compute correct pixel coverage:
+ 743         final int bboxx0 = bbox_spminX;
+ 744         final int bboxx1 = bbox_spmaxX;
+ 745 
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

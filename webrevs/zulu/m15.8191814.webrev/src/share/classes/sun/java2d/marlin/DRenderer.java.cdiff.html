@@ -1,0 +1,301 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Cdiff src/share/classes/sun/java2d/marlin/DRenderer.java</title>
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DRendererContext.java.cdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/DRenderer.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13694">13694</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8191814">8191814</a>: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
+Summary: upgrade to Marlin 0.8.2 providing efficient path clipping (Stroker and Filler)
+Reviewed-by: prr, serb</pre>
+        <pre>
+<hr /><span class="oldmarker">*** 45,54 ****</span>
+<span class="newmarker">--- 45,57 ----</span>
+      static final double SUBPIXEL_SCALE_X = SUBPIXEL_POSITIONS_X;
+      static final double SUBPIXEL_SCALE_Y = SUBPIXEL_POSITIONS_Y;
+      static final int SUBPIXEL_MASK_X = SUBPIXEL_POSITIONS_X - 1;
+      static final int SUBPIXEL_MASK_Y = SUBPIXEL_POSITIONS_Y - 1;
+  
+<span class="new">+     static final double RDR_OFFSET_X = 0.5d / SUBPIXEL_SCALE_X;</span>
+<span class="new">+     static final double RDR_OFFSET_Y = 0.5d / SUBPIXEL_SCALE_Y;</span>
+<span class="new">+ </span>
+      // number of subpixels corresponding to a tile line
+      private static final int SUBPIXEL_TILE
+          = TILE_H &lt;&lt; SUBPIXEL_LG_POSITIONS_Y;
+  
+      // 2048 (pixelSize) pixels (height) x 8 subpixels = 64K
+<hr /><span class="oldmarker">*** 56,68 ****</span>
+          = INITIAL_PIXEL_DIM * SUBPIXEL_POSITIONS_Y;
+  
+      // crossing capacity = edges count / 4 ~ 1024
+      static final int INITIAL_CROSSING_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 2;
+  
+<span class="removed">-     public static final int WIND_EVEN_ODD = 0;</span>
+<span class="removed">-     public static final int WIND_NON_ZERO = 1;</span>
+<span class="removed">- </span>
+      // common to all types of input path segments.
+      // OFFSET as bytes
+      // only integer values:
+      public static final long OFF_CURX_OR  = 0;
+      public static final long OFF_ERROR    = OFF_CURX_OR  + SIZE_INT;
+<span class="newmarker">--- 59,68 ----</span>
+<hr /><span class="oldmarker">*** 521,547 ****</span>
+      // blkFlags ref (clean)
+      private final IntArrayCache.Reference blkFlags_ref;
+  
+      DRenderer(final DRendererContext rdrCtx) {
+          this.rdrCtx = rdrCtx;
+  
+          this.edges = rdrCtx.newOffHeapArray(INITIAL_EDGES_CAPACITY); // 96K
+  
+<span class="removed">-         this.curve = rdrCtx.curve;</span>
+<span class="removed">- </span>
+          edgeBuckets_ref      = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+          edgeBucketCounts_ref = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+  
+          edgeBuckets      = edgeBuckets_ref.initial;
+          edgeBucketCounts = edgeBucketCounts_ref.initial;
+  
+          // 2048 (pixelsize) pixel large
+          alphaLine_ref = rdrCtx.newCleanIntArrayRef(INITIAL_AA_ARRAY); // 8K
+          alphaLine     = alphaLine_ref.initial;
+  
+<span class="removed">-         this.cache = rdrCtx.cache;</span>
+<span class="removed">- </span>
+          crossings_ref     = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+          aux_crossings_ref = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+          edgePtrs_ref      = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+          aux_edgePtrs_ref  = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+  
+<span class="newmarker">--- 521,545 ----</span>
+      // blkFlags ref (clean)
+      private final IntArrayCache.Reference blkFlags_ref;
+  
+      DRenderer(final DRendererContext rdrCtx) {
+          this.rdrCtx = rdrCtx;
+<span class="new">+         this.curve = rdrCtx.curve;</span>
+<span class="new">+         this.cache = rdrCtx.cache;</span>
+  
+          this.edges = rdrCtx.newOffHeapArray(INITIAL_EDGES_CAPACITY); // 96K
+  
+          edgeBuckets_ref      = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+          edgeBucketCounts_ref = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+  
+          edgeBuckets      = edgeBuckets_ref.initial;
+          edgeBucketCounts = edgeBucketCounts_ref.initial;
+  
+          // 2048 (pixelsize) pixel large
+          alphaLine_ref = rdrCtx.newCleanIntArrayRef(INITIAL_AA_ARRAY); // 8K
+          alphaLine     = alphaLine_ref.initial;
+  
+          crossings_ref     = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+          aux_crossings_ref = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+          edgePtrs_ref      = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+          aux_edgePtrs_ref  = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+  
+<hr /><span class="oldmarker">*** 667,725 ****</span>
+          // shift y by -0.5 for fast ceil(y - 0.5):
+          return SUBPIXEL_SCALE_Y * pix_y - 0.5d;
+      }
+  
+      @Override
+<span class="changed">!     public void moveTo(double pix_x0, double pix_y0) {</span>
+          closePath();
+          final double sx = tosubpixx(pix_x0);
+          final double sy = tosubpixy(pix_y0);
+          this.sx0 = sx;
+          this.sy0 = sy;
+          this.x0 = sx;
+          this.y0 = sy;
+      }
+  
+      @Override
+<span class="changed">!     public void lineTo(double pix_x1, double pix_y1) {</span>
+          final double x1 = tosubpixx(pix_x1);
+          final double y1 = tosubpixy(pix_y1);
+          addLine(x0, y0, x1, y1);
+          x0 = x1;
+          y0 = y1;
+      }
+  
+      @Override
+<span class="changed">!     public void curveTo(double x1, double y1,</span>
+<span class="changed">!                         double x2, double y2,</span>
+<span class="changed">!                         double x3, double y3)</span>
+      {
+<span class="changed">!         final double xe = tosubpixx(x3);</span>
+<span class="changed">!         final double ye = tosubpixy(y3);</span>
+<span class="changed">!         curve.set(x0, y0, tosubpixx(x1), tosubpixy(y1),</span>
+<span class="changed">!                           tosubpixx(x2), tosubpixy(y2), xe, ye);</span>
+          curveBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+          x0 = xe;
+          y0 = ye;
+      }
+  
+      @Override
+<span class="changed">!     public void quadTo(double x1, double y1, double x2, double y2) {</span>
+<span class="changed">!         final double xe = tosubpixx(x2);</span>
+<span class="changed">!         final double ye = tosubpixy(y2);</span>
+<span class="changed">!         curve.set(x0, y0, tosubpixx(x1), tosubpixy(y1), xe, ye);</span>
+          quadBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+          x0 = xe;
+          y0 = ye;
+      }
+  
+      @Override
+      public void closePath() {
+          addLine(x0, y0, sx0, sy0);
+          x0 = sx0;
+          y0 = sy0;
+      }
+  
+      @Override
+      public void pathDone() {
+          closePath();
+      }
+<span class="newmarker">--- 665,727 ----</span>
+          // shift y by -0.5 for fast ceil(y - 0.5):
+          return SUBPIXEL_SCALE_Y * pix_y - 0.5d;
+      }
+  
+      @Override
+<span class="changed">!     public void moveTo(final double pix_x0, final double pix_y0) {</span>
+          closePath();
+          final double sx = tosubpixx(pix_x0);
+          final double sy = tosubpixy(pix_y0);
+          this.sx0 = sx;
+          this.sy0 = sy;
+          this.x0 = sx;
+          this.y0 = sy;
+      }
+  
+      @Override
+<span class="changed">!     public void lineTo(final double pix_x1, final double pix_y1) {</span>
+          final double x1 = tosubpixx(pix_x1);
+          final double y1 = tosubpixy(pix_y1);
+          addLine(x0, y0, x1, y1);
+          x0 = x1;
+          y0 = y1;
+      }
+  
+      @Override
+<span class="changed">!     public void curveTo(final double pix_x1, final double pix_y1,</span>
+<span class="changed">!                         final double pix_x2, final double pix_y2,</span>
+<span class="changed">!                         final double pix_x3, final double pix_y3)</span>
+      {
+<span class="changed">!         final double xe = tosubpixx(pix_x3);</span>
+<span class="changed">!         final double ye = tosubpixy(pix_y3);</span>
+<span class="changed">!         curve.set(x0, y0, tosubpixx(pix_x1), tosubpixy(pix_y1),</span>
+<span class="changed">!                   tosubpixx(pix_x2), tosubpixy(pix_y2), xe, ye);</span>
+          curveBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+          x0 = xe;
+          y0 = ye;
+      }
+  
+      @Override
+<span class="changed">!     public void quadTo(final double pix_x1, final double pix_y1,</span>
+<span class="changed">!                        final double pix_x2, final double pix_y2)</span>
+<span class="changed">!     {</span>
+<span class="changed">!         final double xe = tosubpixx(pix_x2);</span>
+<span class="changed">!         final double ye = tosubpixy(pix_y2);</span>
+<span class="changed">!         curve.set(x0, y0, tosubpixx(pix_x1), tosubpixy(pix_y1), xe, ye);</span>
+          quadBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+          x0 = xe;
+          y0 = ye;
+      }
+  
+      @Override
+      public void closePath() {
+<span class="new">+         if (x0 != sx0 || y0 != sy0) {</span>
+              addLine(x0, y0, sx0, sy0);
+              x0 = sx0;
+              y0 = sy0;
+          }
+<span class="new">+     }</span>
+  
+      @Override
+      public void pathDone() {
+          closePath();
+      }
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DMarlinRenderingEngine.java.cdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/DRendererContext.java.cdiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

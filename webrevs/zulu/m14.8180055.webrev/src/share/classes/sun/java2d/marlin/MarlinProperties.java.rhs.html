@@ -1,0 +1,425 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13693">13693</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8180055">8180055</a>: Upgrade the Marlin renderer in Java2D
+Summary: added the double-precision variant + MarlinFX backports + Improved MarlinTileGenerator + higher precision of the cubic / quadratic curve
+Reviewed-by: flar, pnarayanan</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.security.AccessController;
+  29 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  30 import sun.security.action.GetPropertyAction;
+  31 
+  32 public final class MarlinProperties {
+  33 
+  34     private MarlinProperties() {
+  35         // no-op
+  36     }
+  37 
+  38     // marlin system properties
+  39 
+  40     public static boolean isUseThreadLocal() {
+  41         return getBoolean("sun.java2d.renderer.useThreadLocal", "true");
+  42     }
+  43 
+  44     /**
+  45      * Return the initial edge capacity used to define initial arrays
+  46      * (edges, polystack, crossings)
+  47      *
+  48      * @return 256 &lt; initial edges &lt; 65536 (4096 by default)
+  49      */
+  50     public static int getInitialEdges() {
+  51         return align(
+  52             getInteger("sun.java2d.renderer.edges", 4096, 64, 64 * 1024),
+  53             64);
+  54     }
+  55 
+  56     /**
+  57      * Return the initial pixel size used to define initial arrays
+  58      * (tile AA chunk, alpha line, buckets)
+  59      *
+  60      * @return 64 &lt; initial pixel size &lt; 32768 (2048 by default)
+  61      */
+  62     public static int getInitialImageSize() {
+  63         return align(
+  64             getInteger("sun.java2d.renderer.pixelsize", 2048, 64, 32 * 1024),
+  65             64);
+  66     }
+  67 
+  68     /**
+  69      * Return the log(2) corresponding to subpixel on x-axis (
+  70      *
+<a name="2" id="anc2"></a><span class="changed">  71      * @return 0 (1 subpixels) &lt; initial pixel size &lt; 8 (256 subpixels)</span>
+  72      * (3 by default ie 8 subpixels)
+  73      */
+  74     public static int getSubPixel_Log2_X() {
+<a name="3" id="anc3"></a><span class="changed">  75         return getInteger("sun.java2d.renderer.subPixel_log2_X", 3, 0, 8);</span>
+  76     }
+  77 
+  78     /**
+  79      * Return the log(2) corresponding to subpixel on y-axis (
+  80      *
+<a name="4" id="anc4"></a><span class="changed">  81      * @return 0 (1 subpixels) &lt; initial pixel size &lt; 8 (256 subpixels)</span>
+  82      * (3 by default ie 8 subpixels)
+  83      */
+  84     public static int getSubPixel_Log2_Y() {
+<a name="5" id="anc5"></a><span class="changed">  85         return getInteger("sun.java2d.renderer.subPixel_log2_Y", 3, 0, 8);</span>
+  86     }
+  87 
+  88     /**
+  89      * Return the log(2) corresponding to the square tile size in pixels
+  90      *
+  91      * @return 3 (8x8 pixels) &lt; tile size &lt; 8 (256x256 pixels)
+  92      * (5 by default ie 32x32 pixels)
+  93      */
+  94     public static int getTileSize_Log2() {
+<a name="6" id="anc6"></a><span class="changed">  95         return getInteger("sun.java2d.renderer.tileSize_log2", 5, 3, 10);</span>
+<span class="changed">  96     }</span>
+<span class="changed">  97 </span>
+<span class="changed">  98     /**</span>
+<span class="changed">  99      * Return the log(2) corresponding to the tile width in pixels</span>
+<span class="changed"> 100      *</span>
+<span class="changed"> 101      * @return 3 (8 pixels) &lt; tile with &lt; 8 (256 pixels)</span>
+<span class="changed"> 102      * (by default is given by the square tile size)</span>
+<span class="changed"> 103      */</span>
+<span class="changed"> 104     public static int getTileWidth_Log2() {</span>
+<span class="changed"> 105         final int tileSize = getTileSize_Log2();</span>
+<span class="changed"> 106         return getInteger("sun.java2d.renderer.tileWidth_log2", tileSize, 3, 10);</span>
+ 107     }
+ 108 
+ 109     /**
+ 110      * Return the log(2) corresponding to the block size in pixels
+ 111      *
+ 112      * @return 3 (8 pixels) &lt; block size &lt; 8 (256 pixels)
+ 113      * (5 by default ie 32 pixels)
+ 114      */
+ 115     public static int getBlockSize_Log2() {
+ 116         return getInteger("sun.java2d.renderer.blockSize_log2", 5, 3, 8);
+ 117     }
+ 118 
+ 119     // RLE / blockFlags settings
+ 120 
+ 121     public static boolean isForceRLE() {
+ 122         return getBoolean("sun.java2d.renderer.forceRLE", "false");
+ 123     }
+ 124 
+ 125     public static boolean isForceNoRLE() {
+ 126         return getBoolean("sun.java2d.renderer.forceNoRLE", "false");
+ 127     }
+ 128 
+ 129     public static boolean isUseTileFlags() {
+ 130         return getBoolean("sun.java2d.renderer.useTileFlags", "true");
+ 131     }
+ 132 
+ 133     public static boolean isUseTileFlagsWithHeuristics() {
+ 134         return isUseTileFlags()
+ 135         &amp;&amp; getBoolean("sun.java2d.renderer.useTileFlags.useHeuristics", "true");
+ 136     }
+ 137 
+ 138     public static int getRLEMinWidth() {
+ 139         return getInteger("sun.java2d.renderer.rleMinWidth", 64, 0, Integer.MAX_VALUE);
+ 140     }
+ 141 
+ 142     // optimisation parameters
+ 143 
+ 144     public static boolean isUseSimplifier() {
+ 145         return getBoolean("sun.java2d.renderer.useSimplifier", "false");
+ 146     }
+ 147 
+ 148     // debugging parameters
+ 149 
+ 150     public static boolean isDoStats() {
+ 151         return getBoolean("sun.java2d.renderer.doStats", "false");
+ 152     }
+ 153 
+ 154     public static boolean isDoMonitors() {
+ 155         return getBoolean("sun.java2d.renderer.doMonitors", "false");
+ 156     }
+ 157 
+ 158     public static boolean isDoChecks() {
+ 159         return getBoolean("sun.java2d.renderer.doChecks", "false");
+ 160     }
+ 161 
+ 162     // logging parameters
+ 163 
+ 164     public static boolean isLoggingEnabled() {
+ 165         return getBoolean("sun.java2d.renderer.log", "false");
+ 166     }
+ 167 
+ 168     public static boolean isUseLogger() {
+ 169         return getBoolean("sun.java2d.renderer.useLogger", "false");
+ 170     }
+ 171 
+ 172     public static boolean isLogCreateContext() {
+ 173         return getBoolean("sun.java2d.renderer.logCreateContext", "false");
+ 174     }
+ 175 
+ 176     public static boolean isLogUnsafeMalloc() {
+ 177         return getBoolean("sun.java2d.renderer.logUnsafeMalloc", "false");
+ 178     }
+ 179 
+<a name="7" id="anc7"></a><span class="new"> 180     // quality settings</span>
+<span class="new"> 181 </span>
+<span class="new"> 182     public static float getCubicDecD2() {</span>
+<span class="new"> 183         return getFloat("sun.java2d.renderer.cubic_dec_d2", 1.0f, 0.01f, 4.0f);</span>
+<span class="new"> 184     }</span>
+<span class="new"> 185 </span>
+<span class="new"> 186     public static float getCubicIncD1() {</span>
+<span class="new"> 187         return getFloat("sun.java2d.renderer.cubic_inc_d1", 0.4f, 0.01f, 2.0f);</span>
+<span class="new"> 188     }</span>
+<span class="new"> 189 </span>
+<span class="new"> 190     public static float getQuadDecD2() {</span>
+<span class="new"> 191         return getFloat("sun.java2d.renderer.quad_dec_d2", 0.5f, 0.01f, 4.0f);</span>
+<span class="new"> 192     }</span>
+<span class="new"> 193 </span>
+ 194     // system property utilities
+ 195     static boolean getBoolean(final String key, final String def) {
+ 196         return Boolean.valueOf(AccessController.doPrivileged(
+ 197                   new GetPropertyAction(key, def)));
+ 198     }
+ 199 
+ 200     static int getInteger(final String key, final int def,
+ 201                                  final int min, final int max)
+ 202     {
+ 203         final String property = AccessController.doPrivileged(
+ 204                                     new GetPropertyAction(key));
+ 205 
+ 206         int value = def;
+ 207         if (property != null) {
+ 208             try {
+ 209                 value = Integer.decode(property);
+ 210             } catch (NumberFormatException e) {
+ 211                 logInfo("Invalid integer value for " + key + " = " + property);
+ 212             }
+ 213         }
+ 214 
+ 215         // check for invalid values
+ 216         if ((value &lt; min) || (value &gt; max)) {
+ 217             logInfo("Invalid value for " + key + " = " + value
+ 218                     + "; expected value in range[" + min + ", " + max + "] !");
+ 219             value = def;
+ 220         }
+ 221         return value;
+ 222     }
+ 223 
+ 224     static int align(final int val, final int norm) {
+<a name="8" id="anc8"></a><span class="changed"> 225         final int ceil = FloatMath.ceil_int( ((float) val) / norm);</span>
+ 226         return ceil * norm;
+ 227     }
+<a name="9" id="anc9"></a><span class="new"> 228 </span>
+<span class="new"> 229     public static double getDouble(final String key, final double def,</span>
+<span class="new"> 230                                    final double min, final double max)</span>
+<span class="new"> 231     {</span>
+<span class="new"> 232         double value = def;</span>
+<span class="new"> 233         final String property = AccessController.doPrivileged(</span>
+<span class="new"> 234                                     new GetPropertyAction(key));</span>
+<span class="new"> 235 </span>
+<span class="new"> 236         if (property != null) {</span>
+<span class="new"> 237             try {</span>
+<span class="new"> 238                 value = Double.parseDouble(property);</span>
+<span class="new"> 239             } catch (NumberFormatException nfe) {</span>
+<span class="new"> 240                 logInfo("Invalid value for " + key + " = " + property + " !");</span>
+<span class="new"> 241             }</span>
+<span class="new"> 242         }</span>
+<span class="new"> 243         // check for invalid values</span>
+<span class="new"> 244         if (value &lt; min || value &gt; max) {</span>
+<span class="new"> 245             logInfo("Invalid value for " + key + " = " + value</span>
+<span class="new"> 246                     + "; expect value in range[" + min + ", " + max + "] !");</span>
+<span class="new"> 247             value = def;</span>
+<span class="new"> 248         }</span>
+<span class="new"> 249         return value;</span>
+<span class="new"> 250     }</span>
+<span class="new"> 251 </span>
+<span class="new"> 252     public static float getFloat(final String key, final float def,</span>
+<span class="new"> 253                                  final float min, final float max)</span>
+<span class="new"> 254     {</span>
+<span class="new"> 255         return (float)getDouble(key, def, min, max);</span>
+<span class="new"> 256     }</span>
+ 257 }
+<a name="10" id="anc10"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="10" type="hidden" /></form></body></html>

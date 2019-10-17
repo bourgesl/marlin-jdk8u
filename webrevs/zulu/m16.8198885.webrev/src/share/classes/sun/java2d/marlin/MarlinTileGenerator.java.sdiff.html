@@ -1,0 +1,333 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinUtils.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/MarlinTileGenerator.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.util.Arrays;
+  29 import sun.java2d.pipe.AATileGenerator;
+  30 import sun.misc.Unsafe;
+  31 
+  32 final class MarlinTileGenerator implements AATileGenerator, MarlinConst {
+  33 
+
+
+  34     private static final int MAX_TILE_ALPHA_SUM = TILE_W * TILE_H * MAX_AA_ALPHA;
+  35 
+  36     private static final int TH_AA_ALPHA_FILL_EMPTY = ((MAX_AA_ALPHA + 1) / 3); // 33%
+  37     private static final int TH_AA_ALPHA_FILL_FULL  = ((MAX_AA_ALPHA + 1) * 2 / 3); // 66%
+  38 
+  39     private static final int FILL_TILE_W = TILE_W &gt;&gt; 1; // half tile width
+  40 
+  41     static {
+  42         if (MAX_TILE_ALPHA_SUM &lt;= 0) {
+  43             throw new IllegalStateException("Invalid MAX_TILE_ALPHA_SUM: " + MAX_TILE_ALPHA_SUM);
+  44         }
+  45         if (DO_TRACE) {
+<span class="changed">  46             System.out.println("MAX_AA_ALPHA           : " + MAX_AA_ALPHA);</span>
+<span class="changed">  47             System.out.println("TH_AA_ALPHA_FILL_EMPTY : " + TH_AA_ALPHA_FILL_EMPTY);</span>
+<span class="changed">  48             System.out.println("TH_AA_ALPHA_FILL_FULL  : " + TH_AA_ALPHA_FILL_FULL);</span>
+<span class="changed">  49             System.out.println("FILL_TILE_W            : " + FILL_TILE_W);</span>
+  50         }
+  51     }
+  52 
+  53     private final Renderer rdrF;
+  54     private final DRenderer rdrD;
+  55     private final MarlinCache cache;
+  56     private int x, y;
+  57 
+  58     // per-thread renderer stats
+  59     final RendererStats rdrStats;
+  60 
+  61     MarlinTileGenerator(final RendererStats stats, final MarlinRenderer r,
+  62                         final MarlinCache cache)
+  63     {
+  64         this.rdrStats = stats;
+  65         if (r instanceof Renderer) {
+  66             this.rdrF = (Renderer)r;
+  67             this.rdrD = null;
+  68         } else {
+  69             this.rdrF = null;
+
+</pre><hr></hr><pre>
+ 124      * Gets the height of the tiles that the generator batches output into.
+ 125      * @return the height of the standard alpha tile
+ 126      */
+ 127     @Override
+ 128     public int getTileHeight() {
+ 129         return TILE_H;
+ 130     }
+ 131 
+ 132     /**
+ 133      * Gets the typical alpha value that will characterize the current
+ 134      * tile.
+ 135      * The answer may be 0x00 to indicate that the current tile has
+ 136      * no coverage in any of its pixels, or it may be 0xff to indicate
+ 137      * that the current tile is completely covered by the path, or any
+ 138      * other value to indicate non-trivial coverage cases.
+ 139      * @return 0x00 for no coverage, 0xff for total coverage, or any other
+ 140      *         value for partial coverage of the tile
+ 141      */
+ 142     @Override
+ 143     public int getTypicalAlpha() {
+
+
+
+
+ 144         int al = cache.alphaSumInTile(x);
+ 145         // Note: if we have a filled rectangle that doesn't end on a tile
+ 146         // border, we could still return 0xff, even though al!=maxTileAlphaSum
+ 147         // This is because if we return 0xff, our users will fill a rectangle
+ 148         // starting at x,y that has width = Math.min(TILE_SIZE, bboxX1-x),
+ 149         // and height min(TILE_SIZE,bboxY1-y), which is what should happen.
+ 150         // However, to support this, we would have to use 2 Math.min's
+ 151         // and 2 multiplications per tile, instead of just 2 multiplications
+ 152         // to compute maxTileAlphaSum. The savings offered would probably
+ 153         // not be worth it, considering how rare this case is.
+ 154         // Note: I have not tested this, so in the future if it is determined
+ 155         // that it is worth it, it should be implemented. Perhaps this method's
+ 156         // interface should be changed to take arguments the width and height
+ 157         // of the current tile. This would eliminate the 2 Math.min calls that
+ 158         // would be needed here, since our caller needs to compute these 2
+ 159         // values anyway.
+ 160         final int alpha = (al == 0x00 ? 0x00
+ 161                               : (al == MAX_TILE_ALPHA_SUM ? 0xff : 0x80));
+ 162         if (DO_STATS) {
+ 163             rdrStats.hist_tile_generator_alpha.add(alpha);
+
+</pre><hr></hr>
+</pre></td><td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2018, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.util.Arrays;
+  29 import sun.java2d.pipe.AATileGenerator;
+  30 import sun.misc.Unsafe;
+  31 
+  32 final class MarlinTileGenerator implements AATileGenerator, MarlinConst {
+  33 
+<span class="new">  34     private static final boolean DISABLE_BLEND = false;</span>
+<span class="new">  35 </span>
+  36     private static final int MAX_TILE_ALPHA_SUM = TILE_W * TILE_H * MAX_AA_ALPHA;
+  37 
+  38     private static final int TH_AA_ALPHA_FILL_EMPTY = ((MAX_AA_ALPHA + 1) / 3); // 33%
+  39     private static final int TH_AA_ALPHA_FILL_FULL  = ((MAX_AA_ALPHA + 1) * 2 / 3); // 66%
+  40 
+  41     private static final int FILL_TILE_W = TILE_W &gt;&gt; 1; // half tile width
+  42 
+  43     static {
+  44         if (MAX_TILE_ALPHA_SUM &lt;= 0) {
+  45             throw new IllegalStateException("Invalid MAX_TILE_ALPHA_SUM: " + MAX_TILE_ALPHA_SUM);
+  46         }
+  47         if (DO_TRACE) {
+<span class="changed">  48             MarlinUtils.logInfo("MAX_AA_ALPHA           : " + MAX_AA_ALPHA);</span>
+<span class="changed">  49             MarlinUtils.logInfo("TH_AA_ALPHA_FILL_EMPTY : " + TH_AA_ALPHA_FILL_EMPTY);</span>
+<span class="changed">  50             MarlinUtils.logInfo("TH_AA_ALPHA_FILL_FULL  : " + TH_AA_ALPHA_FILL_FULL);</span>
+<span class="changed">  51             MarlinUtils.logInfo("FILL_TILE_W            : " + FILL_TILE_W);</span>
+  52         }
+  53     }
+  54 
+  55     private final Renderer rdrF;
+  56     private final DRenderer rdrD;
+  57     private final MarlinCache cache;
+  58     private int x, y;
+  59 
+  60     // per-thread renderer stats
+  61     final RendererStats rdrStats;
+  62 
+  63     MarlinTileGenerator(final RendererStats stats, final MarlinRenderer r,
+  64                         final MarlinCache cache)
+  65     {
+  66         this.rdrStats = stats;
+  67         if (r instanceof Renderer) {
+  68             this.rdrF = (Renderer)r;
+  69             this.rdrD = null;
+  70         } else {
+  71             this.rdrF = null;
+
+</pre><hr></hr><pre>
+ 126      * Gets the height of the tiles that the generator batches output into.
+ 127      * @return the height of the standard alpha tile
+ 128      */
+ 129     @Override
+ 130     public int getTileHeight() {
+ 131         return TILE_H;
+ 132     }
+ 133 
+ 134     /**
+ 135      * Gets the typical alpha value that will characterize the current
+ 136      * tile.
+ 137      * The answer may be 0x00 to indicate that the current tile has
+ 138      * no coverage in any of its pixels, or it may be 0xff to indicate
+ 139      * that the current tile is completely covered by the path, or any
+ 140      * other value to indicate non-trivial coverage cases.
+ 141      * @return 0x00 for no coverage, 0xff for total coverage, or any other
+ 142      *         value for partial coverage of the tile
+ 143      */
+ 144     @Override
+ 145     public int getTypicalAlpha() {
+<span class="new"> 146         if (DISABLE_BLEND) {</span>
+<span class="new"> 147             // always return empty tiles to disable blending operations</span>
+<span class="new"> 148             return 0x00;</span>
+<span class="new"> 149         }</span>
+ 150         int al = cache.alphaSumInTile(x);
+ 151         // Note: if we have a filled rectangle that doesn't end on a tile
+ 152         // border, we could still return 0xff, even though al!=maxTileAlphaSum
+ 153         // This is because if we return 0xff, our users will fill a rectangle
+ 154         // starting at x,y that has width = Math.min(TILE_SIZE, bboxX1-x),
+ 155         // and height min(TILE_SIZE,bboxY1-y), which is what should happen.
+ 156         // However, to support this, we would have to use 2 Math.min's
+ 157         // and 2 multiplications per tile, instead of just 2 multiplications
+ 158         // to compute maxTileAlphaSum. The savings offered would probably
+ 159         // not be worth it, considering how rare this case is.
+ 160         // Note: I have not tested this, so in the future if it is determined
+ 161         // that it is worth it, it should be implemented. Perhaps this method's
+ 162         // interface should be changed to take arguments the width and height
+ 163         // of the current tile. This would eliminate the 2 Math.min calls that
+ 164         // would be needed here, since our caller needs to compute these 2
+ 165         // values anyway.
+ 166         final int alpha = (al == 0x00 ? 0x00
+ 167                               : (al == MAX_TILE_ALPHA_SUM ? 0xff : 0x80));
+ 168         if (DO_STATS) {
+ 169             rdrStats.hist_tile_generator_alpha.add(alpha);
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinRenderingEngine.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/MarlinUtils.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

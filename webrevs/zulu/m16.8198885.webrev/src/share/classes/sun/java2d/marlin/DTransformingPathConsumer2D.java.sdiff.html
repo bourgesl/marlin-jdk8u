@@ -1,0 +1,1695 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DStroker.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Dasher.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.geom.AffineTransform;
+  29 import java.awt.geom.Path2D;
+
+  30 import sun.java2d.marlin.DHelpers.IndexStack;
+  31 import sun.java2d.marlin.DHelpers.PolyStack;
+  32 
+  33 final class DTransformingPathConsumer2D {
+  34 
+
+
+
+  35     private final DRendererContext rdrCtx;
+  36 
+  37     // recycled ClosedPathDetector instance from detectClosedPath()
+  38     private final ClosedPathDetector   cpDetector;
+  39 
+  40     // recycled PathClipFilter instance from pathClipper()
+  41     private final PathClipFilter       pathClipper;
+  42 
+  43     // recycled DPathConsumer2D instance from wrapPath2D()
+  44     private final Path2DWrapper        wp_Path2DWrapper        = new Path2DWrapper();
+  45 
+  46     // recycled DPathConsumer2D instances from deltaTransformConsumer()
+  47     private final DeltaScaleFilter     dt_DeltaScaleFilter     = new DeltaScaleFilter();
+  48     private final DeltaTransformFilter dt_DeltaTransformFilter = new DeltaTransformFilter();
+  49 
+  50     // recycled DPathConsumer2D instances from inverseDeltaTransformConsumer()
+  51     private final DeltaScaleFilter     iv_DeltaScaleFilter     = new DeltaScaleFilter();
+  52     private final DeltaTransformFilter iv_DeltaTransformFilter = new DeltaTransformFilter();
+  53 
+  54     // recycled PathTracer instances from tracer...() methods
+  55     private final PathTracer tracerInput      = new PathTracer("[Input]");
+  56     private final PathTracer tracerCPDetector = new PathTracer("ClosedPathDetector");
+  57     private final PathTracer tracerFiller     = new PathTracer("Filler");
+  58     private final PathTracer tracerStroker    = new PathTracer("Stroker");
+
+  59 
+  60     DTransformingPathConsumer2D(final DRendererContext rdrCtx) {
+  61         // used by RendererContext
+  62         this.rdrCtx = rdrCtx;
+  63         this.cpDetector = new ClosedPathDetector(rdrCtx);
+  64         this.pathClipper = new PathClipFilter(rdrCtx);
+  65     }
+  66 
+  67     DPathConsumer2D wrapPath2D(Path2D.Double p2d) {
+  68         return wp_Path2DWrapper.init(p2d);
+  69     }
+  70 
+  71     DPathConsumer2D traceInput(DPathConsumer2D out) {
+  72         return tracerInput.init(out);
+  73     }
+  74 
+  75     DPathConsumer2D traceClosedPathDetector(DPathConsumer2D out) {
+  76         return tracerCPDetector.init(out);
+  77     }
+  78 
+  79     DPathConsumer2D traceFiller(DPathConsumer2D out) {
+  80         return tracerFiller.init(out);
+  81     }
+  82 
+  83     DPathConsumer2D traceStroker(DPathConsumer2D out) {
+  84         return tracerStroker.init(out);
+  85     }
+  86 
+
+
+
+
+  87     DPathConsumer2D detectClosedPath(DPathConsumer2D out) {
+  88         return cpDetector.init(out);
+  89     }
+  90 
+  91     DPathConsumer2D pathClipper(DPathConsumer2D out) {
+  92         return pathClipper.init(out);
+  93     }
+  94 
+  95     DPathConsumer2D deltaTransformConsumer(DPathConsumer2D out,
+  96                                           AffineTransform at)
+  97     {
+  98         if (at == null) {
+  99             return out;
+ 100         }
+ 101         final double mxx = at.getScaleX();
+ 102         final double mxy = at.getShearX();
+ 103         final double myx = at.getShearY();
+ 104         final double myy = at.getScaleY();
+ 105 
+ 106         if (mxy == 0.0d &amp;&amp; myx == 0.0d) {
+
+</pre><hr></hr><pre>
+ 482     static final class PathClipFilter implements DPathConsumer2D {
+ 483 
+ 484         private DPathConsumer2D out;
+ 485 
+ 486         // Bounds of the drawing region, at pixel precision.
+ 487         private final double[] clipRect;
+ 488 
+ 489         private final double[] corners = new double[8];
+ 490         private boolean init_corners = false;
+ 491 
+ 492         private final IndexStack stack;
+ 493 
+ 494         // the current outcode of the current sub path
+ 495         private int cOutCode = 0;
+ 496 
+ 497         // the cumulated (and) outcode of the complete path
+ 498         private int gOutCode = MarlinConst.OUTCODE_MASK_T_B_L_R;
+ 499 
+ 500         private boolean outside = false;
+ 501 
+<span class="changed"> 502         // The current point OUTSIDE</span>
+ 503         private double cx0, cy0;
+ 504 
+
+
+
+
+
+
+ 505         PathClipFilter(final DRendererContext rdrCtx) {
+ 506             this.clipRect = rdrCtx.clipRect;
+
+
+ 507             this.stack = (rdrCtx.stats != null) ?
+ 508                 new IndexStack(rdrCtx,
+ 509                         rdrCtx.stats.stat_pcf_idxstack_indices,
+ 510                         rdrCtx.stats.hist_pcf_idxstack_indices,
+ 511                         rdrCtx.stats.stat_array_pcf_idxstack_indices)
+ 512                 : new IndexStack(rdrCtx);
+ 513         }
+ 514 
+ 515         PathClipFilter init(final DPathConsumer2D out) {
+ 516             this.out = out;
+ 517 
+ 518             // Adjust the clipping rectangle with the renderer offsets
+ 519             final double rdrOffX = DRenderer.RDR_OFFSET_X;
+ 520             final double rdrOffY = DRenderer.RDR_OFFSET_Y;
+ 521 
+ 522             // add a small rounding error:
+ 523             final double margin = 1e-3d;
+ 524 
+ 525             final double[] _clipRect = this.clipRect;
+ 526             _clipRect[0] -= margin - rdrOffY;
+ 527             _clipRect[1] += margin + rdrOffY;
+ 528             _clipRect[2] -= margin - rdrOffX;
+ 529             _clipRect[3] += margin + rdrOffX;
+ 530 
+
+
+
+
+
+ 531             this.init_corners = true;
+ 532             this.gOutCode = MarlinConst.OUTCODE_MASK_T_B_L_R;
+ 533 
+ 534             return this; // fluent API
+ 535         }
+ 536 
+ 537         /**
+ 538          * Disposes this instance:
+ 539          * clean up before reusing this instance
+ 540          */
+ 541         void dispose() {
+ 542             stack.dispose();
+ 543         }
+ 544 
+ 545         private void finishPath() {
+ 546             if (outside) {
+ 547                 // criteria: inside or totally outside ?
+ 548                 if (gOutCode == 0) {
+ 549                     finish();
+ 550                 } else {
+
+</pre><hr></hr><pre>
+ 561                 if (init_corners) {
+ 562                     init_corners = false;
+ 563 
+ 564                     final double[] _corners = corners;
+ 565                     final double[] _clipRect = clipRect;
+ 566                     // Top Left (0):
+ 567                     _corners[0] = _clipRect[2];
+ 568                     _corners[1] = _clipRect[0];
+ 569                     // Bottom Left (1):
+ 570                     _corners[2] = _clipRect[2];
+ 571                     _corners[3] = _clipRect[1];
+ 572                     // Top right (2):
+ 573                     _corners[4] = _clipRect[3];
+ 574                     _corners[5] = _clipRect[0];
+ 575                     // Bottom Right (3):
+ 576                     _corners[6] = _clipRect[3];
+ 577                     _corners[7] = _clipRect[1];
+ 578                 }
+ 579                 stack.pullAll(corners, out);
+ 580             }
+<span class="changed"> 581             out.lineTo(cx0, cy0);</span>
+
+
+ 582         }
+ 583 
+ 584         @Override
+ 585         public void pathDone() {
+ 586             finishPath();
+ 587 
+ 588             out.pathDone();
+ 589 
+ 590             // TODO: fix possible leak if exception happened
+ 591             // Dispose this instance:
+ 592             dispose();
+ 593         }
+ 594 
+ 595         @Override
+ 596         public void closePath() {
+ 597             finishPath();
+ 598 
+ 599             out.closePath();
+ 600         }
+ 601 
+ 602         @Override
+ 603         public void moveTo(final double x0, final double y0) {
+ 604             finishPath();
+ 605 
+<span class="changed"> 606             final int outcode = DHelpers.outcode(x0, y0, clipRect);</span>
+<span class="changed"> 607             this.cOutCode = outcode;</span>
+ 608             this.outside = false;
+ 609             out.moveTo(x0, y0);
+
+
+ 610         }
+ 611 
+ 612         @Override
+ 613         public void lineTo(final double xe, final double ye) {
+ 614             final int outcode0 = this.cOutCode;
+ 615             final int outcode1 = DHelpers.outcode(xe, ye, clipRect);
+<span class="removed"> 616             this.cOutCode = outcode1;</span>
+ 617 
+
+
+
+ 618             final int sideCode = (outcode0 &amp; outcode1);
+ 619 
+ 620             // basic rejection criteria:
+ 621             if (sideCode == 0) {
+<span class="changed"> 622                 this.gOutCode = 0;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 623             } else {
+
+ 624                 this.gOutCode &amp;= sideCode;
+ 625                 // keep last point coordinate before entering the clip again:
+ 626                 this.outside = true;
+<span class="changed"> 627                 this.cx0 = xe;</span>
+<span class="changed"> 628                 this.cy0 = ye;</span>
+ 629 
+ 630                 clip(sideCode, outcode0, outcode1);
+ 631                 return;
+ 632             }
+
+
+
+
+
+ 633             if (outside) {
+ 634                 finish();
+ 635             }
+ 636             // clipping disabled:
+ 637             out.lineTo(xe, ye);
+
+
+ 638         }
+ 639 
+ 640         private void clip(final int sideCode,
+ 641                           final int outcode0,
+ 642                           final int outcode1)
+ 643         {
+ 644             // corner or cross-boundary on left or right side:
+ 645             if ((outcode0 != outcode1)
+ 646                     &amp;&amp; ((sideCode &amp; MarlinConst.OUTCODE_MASK_L_R) != 0))
+ 647             {
+ 648                 // combine outcodes:
+ 649                 final int mergeCode = (outcode0 | outcode1);
+ 650                 final int tbCode = mergeCode &amp; MarlinConst.OUTCODE_MASK_T_B;
+ 651                 final int lrCode = mergeCode &amp; MarlinConst.OUTCODE_MASK_L_R;
+ 652                 final int off = (lrCode == MarlinConst.OUTCODE_LEFT) ? 0 : 2;
+ 653 
+ 654                 // add corners to outside stack:
+ 655                 switch (tbCode) {
+ 656                     case MarlinConst.OUTCODE_TOP:
+<span class="removed"> 657 // System.out.println("TOP "+ ((off == 0) ? "LEFT" : "RIGHT"));</span>
+ 658                         stack.push(off); // top
+ 659                         return;
+ 660                     case MarlinConst.OUTCODE_BOTTOM:
+<span class="removed"> 661 // System.out.println("BOTTOM "+ ((off == 0) ? "LEFT" : "RIGHT"));</span>
+ 662                         stack.push(off + 1); // bottom
+ 663                         return;
+ 664                     default:
+ 665                         // both TOP / BOTTOM:
+ 666                         if ((outcode0 &amp; MarlinConst.OUTCODE_TOP) != 0) {
+<span class="removed"> 667 // System.out.println("TOP + BOTTOM "+ ((off == 0) ? "LEFT" : "RIGHT"));</span>
+ 668                             // top to bottom
+ 669                             stack.push(off); // top
+ 670                             stack.push(off + 1); // bottom
+ 671                         } else {
+<span class="removed"> 672 // System.out.println("BOTTOM + TOP "+ ((off == 0) ? "LEFT" : "RIGHT"));</span>
+ 673                             // bottom to top
+ 674                             stack.push(off + 1); // bottom
+ 675                             stack.push(off); // top
+ 676                         }
+ 677                 }
+ 678             }
+ 679         }
+ 680 
+ 681         @Override
+ 682         public void curveTo(final double x1, final double y1,
+ 683                             final double x2, final double y2,
+ 684                             final double xe, final double ye)
+ 685         {
+ 686             final int outcode0 = this.cOutCode;
+
+
+ 687             final int outcode3 = DHelpers.outcode(xe, ye, clipRect);
+<span class="removed"> 688             this.cOutCode = outcode3;</span>
+ 689 
+<span class="changed"> 690             int sideCode = outcode0 &amp; outcode3;</span>
+
+
+
+ 691 
+
+ 692             if (sideCode == 0) {
+<span class="changed"> 693                 this.gOutCode = 0;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 694             } else {
+<span class="changed"> 695                 sideCode &amp;= DHelpers.outcode(x1, y1, clipRect);</span>
+<span class="changed"> 696                 sideCode &amp;= DHelpers.outcode(x2, y2, clipRect);</span>
+ 697                 this.gOutCode &amp;= sideCode;
+<span class="removed"> 698 </span>
+<span class="removed"> 699                 // basic rejection criteria:</span>
+<span class="removed"> 700                 if (sideCode != 0) {</span>
+ 701                     // keep last point coordinate before entering the clip again:
+ 702                     this.outside = true;
+<span class="changed"> 703                     this.cx0 = xe;</span>
+<span class="changed"> 704                     this.cy0 = ye;</span>
+ 705 
+ 706                     clip(sideCode, outcode0, outcode3);
+ 707                     return;
+ 708                 }
+ 709             }
+
+
+
+
+ 710             if (outside) {
+ 711                 finish();
+ 712             }
+ 713             // clipping disabled:
+ 714             out.curveTo(x1, y1, x2, y2, xe, ye);
+
+
+ 715         }
+ 716 
+ 717         @Override
+ 718         public void quadTo(final double x1, final double y1,
+ 719                            final double xe, final double ye)
+ 720         {
+ 721             final int outcode0 = this.cOutCode;
+
+ 722             final int outcode2 = DHelpers.outcode(xe, ye, clipRect);
+<span class="removed"> 723             this.cOutCode = outcode2;</span>
+ 724 
+<span class="changed"> 725             int sideCode = outcode0 &amp; outcode2;</span>
+
+
+
+ 726 
+
+ 727             if (sideCode == 0) {
+<span class="changed"> 728                 this.gOutCode = 0;</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 729             } else {
+<span class="changed"> 730                 sideCode &amp;= DHelpers.outcode(x1, y1, clipRect);</span>
+ 731                 this.gOutCode &amp;= sideCode;
+<span class="removed"> 732 </span>
+<span class="removed"> 733                 // basic rejection criteria:</span>
+<span class="removed"> 734                 if (sideCode != 0) {</span>
+ 735                     // keep last point coordinate before entering the clip again:
+ 736                     this.outside = true;
+<span class="changed"> 737                     this.cx0 = xe;</span>
+<span class="changed"> 738                     this.cy0 = ye;</span>
+ 739 
+ 740                     clip(sideCode, outcode0, outcode2);
+ 741                     return;
+ 742                 }
+ 743             }
+
+
+
+
+ 744             if (outside) {
+ 745                 finish();
+ 746             }
+ 747             // clipping disabled:
+ 748             out.quadTo(x1, y1, xe, ye);
+
+
+ 749         }
+ 750 
+ 751         @Override
+ 752         public long getNativeConsumer() {
+ 753             throw new InternalError("Not using a native peer");
+ 754         }
+ 755     }
+ 756 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 757     static final class PathTracer implements DPathConsumer2D {
+ 758         private final String prefix;
+ 759         private DPathConsumer2D out;
+ 760 
+ 761         PathTracer(String name) {
+ 762             this.prefix = name + ": ";
+ 763         }
+ 764 
+ 765         PathTracer init(DPathConsumer2D out) {
+ 766             this.out = out;
+ 767             return this; // fluent API
+ 768         }
+ 769 
+ 770         @Override
+ 771         public void moveTo(double x0, double y0) {
+ 772             log("moveTo (" + x0 + ", " + y0 + ')');
+ 773             out.moveTo(x0, y0);
+ 774         }
+ 775 
+ 776         @Override
+
+</pre><hr></hr><pre>
+ 790 
+ 791         @Override
+ 792         public void quadTo(double x1, double y1, double x2, double y2) {
+ 793             log("quadTo P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2  + ')');
+ 794             out.quadTo(x1, y1, x2, y2);
+ 795         }
+ 796 
+ 797         @Override
+ 798         public void closePath() {
+ 799             log("closePath");
+ 800             out.closePath();
+ 801         }
+ 802 
+ 803         @Override
+ 804         public void pathDone() {
+ 805             log("pathDone");
+ 806             out.pathDone();
+ 807         }
+ 808 
+ 809         private void log(final String message) {
+<span class="changed"> 810             System.out.println(prefix + message);</span>
+ 811         }
+ 812 
+ 813         @Override
+ 814         public long getNativeConsumer() {
+ 815             throw new InternalError("Not using a native peer");
+ 816         }
+ 817     }
+ 818 }
+</pre></td><td><pre>
+   1 /*
+<span class="changed">   2  * Copyright (c) 2007, 2018, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.awt.geom.AffineTransform;
+  29 import java.awt.geom.Path2D;
+<span class="new">  30 import java.util.Arrays;</span>
+  31 import sun.java2d.marlin.DHelpers.IndexStack;
+  32 import sun.java2d.marlin.DHelpers.PolyStack;
+  33 
+  34 final class DTransformingPathConsumer2D {
+  35 
+<span class="new">  36     // smaller uncertainty in double variant</span>
+<span class="new">  37     static final double CLIP_RECT_PADDING = 0.25d;</span>
+<span class="new">  38 </span>
+  39     private final DRendererContext rdrCtx;
+  40 
+  41     // recycled ClosedPathDetector instance from detectClosedPath()
+  42     private final ClosedPathDetector   cpDetector;
+  43 
+  44     // recycled PathClipFilter instance from pathClipper()
+  45     private final PathClipFilter       pathClipper;
+  46 
+  47     // recycled DPathConsumer2D instance from wrapPath2D()
+  48     private final Path2DWrapper        wp_Path2DWrapper        = new Path2DWrapper();
+  49 
+  50     // recycled DPathConsumer2D instances from deltaTransformConsumer()
+  51     private final DeltaScaleFilter     dt_DeltaScaleFilter     = new DeltaScaleFilter();
+  52     private final DeltaTransformFilter dt_DeltaTransformFilter = new DeltaTransformFilter();
+  53 
+  54     // recycled DPathConsumer2D instances from inverseDeltaTransformConsumer()
+  55     private final DeltaScaleFilter     iv_DeltaScaleFilter     = new DeltaScaleFilter();
+  56     private final DeltaTransformFilter iv_DeltaTransformFilter = new DeltaTransformFilter();
+  57 
+  58     // recycled PathTracer instances from tracer...() methods
+  59     private final PathTracer tracerInput      = new PathTracer("[Input]");
+  60     private final PathTracer tracerCPDetector = new PathTracer("ClosedPathDetector");
+  61     private final PathTracer tracerFiller     = new PathTracer("Filler");
+  62     private final PathTracer tracerStroker    = new PathTracer("Stroker");
+<span class="new">  63     private final PathTracer tracerDasher     = new PathTracer("Dasher");</span>
+  64 
+  65     DTransformingPathConsumer2D(final DRendererContext rdrCtx) {
+  66         // used by RendererContext
+  67         this.rdrCtx = rdrCtx;
+  68         this.cpDetector = new ClosedPathDetector(rdrCtx);
+  69         this.pathClipper = new PathClipFilter(rdrCtx);
+  70     }
+  71 
+  72     DPathConsumer2D wrapPath2D(Path2D.Double p2d) {
+  73         return wp_Path2DWrapper.init(p2d);
+  74     }
+  75 
+  76     DPathConsumer2D traceInput(DPathConsumer2D out) {
+  77         return tracerInput.init(out);
+  78     }
+  79 
+  80     DPathConsumer2D traceClosedPathDetector(DPathConsumer2D out) {
+  81         return tracerCPDetector.init(out);
+  82     }
+  83 
+  84     DPathConsumer2D traceFiller(DPathConsumer2D out) {
+  85         return tracerFiller.init(out);
+  86     }
+  87 
+  88     DPathConsumer2D traceStroker(DPathConsumer2D out) {
+  89         return tracerStroker.init(out);
+  90     }
+  91 
+<span class="new">  92     DPathConsumer2D traceDasher(DPathConsumer2D out) {</span>
+<span class="new">  93         return tracerDasher.init(out);</span>
+<span class="new">  94     }</span>
+<span class="new">  95 </span>
+  96     DPathConsumer2D detectClosedPath(DPathConsumer2D out) {
+  97         return cpDetector.init(out);
+  98     }
+  99 
+ 100     DPathConsumer2D pathClipper(DPathConsumer2D out) {
+ 101         return pathClipper.init(out);
+ 102     }
+ 103 
+ 104     DPathConsumer2D deltaTransformConsumer(DPathConsumer2D out,
+ 105                                           AffineTransform at)
+ 106     {
+ 107         if (at == null) {
+ 108             return out;
+ 109         }
+ 110         final double mxx = at.getScaleX();
+ 111         final double mxy = at.getShearX();
+ 112         final double myx = at.getShearY();
+ 113         final double myy = at.getScaleY();
+ 114 
+ 115         if (mxy == 0.0d &amp;&amp; myx == 0.0d) {
+
+</pre><hr></hr><pre>
+ 491     static final class PathClipFilter implements DPathConsumer2D {
+ 492 
+ 493         private DPathConsumer2D out;
+ 494 
+ 495         // Bounds of the drawing region, at pixel precision.
+ 496         private final double[] clipRect;
+ 497 
+ 498         private final double[] corners = new double[8];
+ 499         private boolean init_corners = false;
+ 500 
+ 501         private final IndexStack stack;
+ 502 
+ 503         // the current outcode of the current sub path
+ 504         private int cOutCode = 0;
+ 505 
+ 506         // the cumulated (and) outcode of the complete path
+ 507         private int gOutCode = MarlinConst.OUTCODE_MASK_T_B_L_R;
+ 508 
+ 509         private boolean outside = false;
+ 510 
+<span class="changed"> 511         // The current point (TODO stupid repeated info)</span>
+ 512         private double cx0, cy0;
+ 513 
+<span class="new"> 514         // The current point OUTSIDE</span>
+<span class="new"> 515         private double cox0, coy0;</span>
+<span class="new"> 516 </span>
+<span class="new"> 517         private boolean subdivide = MarlinConst.DO_CLIP_SUBDIVIDER;</span>
+<span class="new"> 518         private final CurveClipSplitter curveSplitter;</span>
+<span class="new"> 519 </span>
+ 520         PathClipFilter(final DRendererContext rdrCtx) {
+ 521             this.clipRect = rdrCtx.clipRect;
+<span class="new"> 522             this.curveSplitter = rdrCtx.curveClipSplitter;</span>
+<span class="new"> 523 </span>
+ 524             this.stack = (rdrCtx.stats != null) ?
+ 525                 new IndexStack(rdrCtx,
+ 526                         rdrCtx.stats.stat_pcf_idxstack_indices,
+ 527                         rdrCtx.stats.hist_pcf_idxstack_indices,
+ 528                         rdrCtx.stats.stat_array_pcf_idxstack_indices)
+ 529                 : new IndexStack(rdrCtx);
+ 530         }
+ 531 
+ 532         PathClipFilter init(final DPathConsumer2D out) {
+ 533             this.out = out;
+ 534 
+ 535             // Adjust the clipping rectangle with the renderer offsets
+ 536             final double rdrOffX = DRenderer.RDR_OFFSET_X;
+ 537             final double rdrOffY = DRenderer.RDR_OFFSET_Y;
+ 538 
+ 539             // add a small rounding error:
+ 540             final double margin = 1e-3d;
+ 541 
+ 542             final double[] _clipRect = this.clipRect;
+ 543             _clipRect[0] -= margin - rdrOffY;
+ 544             _clipRect[1] += margin + rdrOffY;
+ 545             _clipRect[2] -= margin - rdrOffX;
+ 546             _clipRect[3] += margin + rdrOffX;
+ 547 
+<span class="new"> 548             if (MarlinConst.DO_CLIP_SUBDIVIDER) {</span>
+<span class="new"> 549                 // adjust padded clip rectangle:</span>
+<span class="new"> 550                 curveSplitter.init();</span>
+<span class="new"> 551             }</span>
+<span class="new"> 552 </span>
+ 553             this.init_corners = true;
+ 554             this.gOutCode = MarlinConst.OUTCODE_MASK_T_B_L_R;
+ 555 
+ 556             return this; // fluent API
+ 557         }
+ 558 
+ 559         /**
+ 560          * Disposes this instance:
+ 561          * clean up before reusing this instance
+ 562          */
+ 563         void dispose() {
+ 564             stack.dispose();
+ 565         }
+ 566 
+ 567         private void finishPath() {
+ 568             if (outside) {
+ 569                 // criteria: inside or totally outside ?
+ 570                 if (gOutCode == 0) {
+ 571                     finish();
+ 572                 } else {
+
+</pre><hr></hr><pre>
+ 583                 if (init_corners) {
+ 584                     init_corners = false;
+ 585 
+ 586                     final double[] _corners = corners;
+ 587                     final double[] _clipRect = clipRect;
+ 588                     // Top Left (0):
+ 589                     _corners[0] = _clipRect[2];
+ 590                     _corners[1] = _clipRect[0];
+ 591                     // Bottom Left (1):
+ 592                     _corners[2] = _clipRect[2];
+ 593                     _corners[3] = _clipRect[1];
+ 594                     // Top right (2):
+ 595                     _corners[4] = _clipRect[3];
+ 596                     _corners[5] = _clipRect[0];
+ 597                     // Bottom Right (3):
+ 598                     _corners[6] = _clipRect[3];
+ 599                     _corners[7] = _clipRect[1];
+ 600                 }
+ 601                 stack.pullAll(corners, out);
+ 602             }
+<span class="changed"> 603             out.lineTo(cox0, coy0);</span>
+<span class="changed"> 604             this.cx0 = cox0;</span>
+<span class="changed"> 605             this.cy0 = coy0;</span>
+ 606         }
+ 607 
+ 608         @Override
+ 609         public void pathDone() {
+ 610             finishPath();
+ 611 
+ 612             out.pathDone();
+ 613 
+ 614             // TODO: fix possible leak if exception happened
+ 615             // Dispose this instance:
+ 616             dispose();
+ 617         }
+ 618 
+ 619         @Override
+ 620         public void closePath() {
+ 621             finishPath();
+ 622 
+ 623             out.closePath();
+ 624         }
+ 625 
+ 626         @Override
+ 627         public void moveTo(final double x0, final double y0) {
+ 628             finishPath();
+ 629 
+<span class="changed"> 630             this.cOutCode = DHelpers.outcode(x0, y0, clipRect);</span>
+
+ 631             this.outside = false;
+ 632             out.moveTo(x0, y0);
+<span class="new"> 633             this.cx0 = x0;</span>
+<span class="new"> 634             this.cy0 = y0;</span>
+ 635         }
+ 636 
+ 637         @Override
+ 638         public void lineTo(final double xe, final double ye) {
+ 639             final int outcode0 = this.cOutCode;
+ 640             final int outcode1 = DHelpers.outcode(xe, ye, clipRect);
+
+ 641 
+<span class="new"> 642             // Should clip</span>
+<span class="new"> 643             final int orCode = (outcode0 | outcode1);</span>
+<span class="new"> 644             if (orCode != 0) {</span>
+ 645                 final int sideCode = (outcode0 &amp; outcode1);
+ 646 
+ 647                 // basic rejection criteria:
+ 648                 if (sideCode == 0) {
+<span class="changed"> 649                     // ovelap clip:</span>
+<span class="changed"> 650                     if (subdivide) {</span>
+<span class="changed"> 651                         // avoid reentrance</span>
+<span class="changed"> 652                         subdivide = false;</span>
+<span class="changed"> 653                         boolean ret;</span>
+<span class="changed"> 654                         // subdivide curve =&gt; callback with subdivided parts:</span>
+<span class="changed"> 655                         if (outside) {</span>
+<span class="changed"> 656                             ret = curveSplitter.splitLine(cox0, coy0, xe, ye,</span>
+<span class="changed"> 657                                                           orCode, this);</span>
+<span class="changed"> 658                         } else {</span>
+<span class="changed"> 659                             ret = curveSplitter.splitLine(cx0, cy0, xe, ye,</span>
+<span class="changed"> 660                                                           orCode, this);</span>
+<span class="changed"> 661                         }</span>
+<span class="changed"> 662                         // reentrance is done:</span>
+<span class="changed"> 663                         subdivide = true;</span>
+<span class="changed"> 664                         if (ret) {</span>
+<span class="changed"> 665                             return;</span>
+<span class="changed"> 666                         }</span>
+<span class="changed"> 667                     }</span>
+<span class="changed"> 668                     // already subdivided so render it</span>
+ 669                 } else {
+<span class="new"> 670                     this.cOutCode = outcode1;</span>
+ 671                     this.gOutCode &amp;= sideCode;
+ 672                     // keep last point coordinate before entering the clip again:
+ 673                     this.outside = true;
+<span class="changed"> 674                     this.cox0 = xe;</span>
+<span class="changed"> 675                     this.coy0 = ye;</span>
+ 676 
+ 677                     clip(sideCode, outcode0, outcode1);
+ 678                     return;
+ 679                 }
+<span class="new"> 680             }</span>
+<span class="new"> 681 </span>
+<span class="new"> 682             this.cOutCode = outcode1;</span>
+<span class="new"> 683             this.gOutCode = 0;</span>
+<span class="new"> 684 </span>
+ 685             if (outside) {
+ 686                 finish();
+ 687             }
+ 688             // clipping disabled:
+ 689             out.lineTo(xe, ye);
+<span class="new"> 690             this.cx0 = xe;</span>
+<span class="new"> 691             this.cy0 = ye;</span>
+ 692         }
+ 693 
+ 694         private void clip(final int sideCode,
+ 695                           final int outcode0,
+ 696                           final int outcode1)
+ 697         {
+ 698             // corner or cross-boundary on left or right side:
+ 699             if ((outcode0 != outcode1)
+ 700                     &amp;&amp; ((sideCode &amp; MarlinConst.OUTCODE_MASK_L_R) != 0))
+ 701             {
+ 702                 // combine outcodes:
+ 703                 final int mergeCode = (outcode0 | outcode1);
+ 704                 final int tbCode = mergeCode &amp; MarlinConst.OUTCODE_MASK_T_B;
+ 705                 final int lrCode = mergeCode &amp; MarlinConst.OUTCODE_MASK_L_R;
+ 706                 final int off = (lrCode == MarlinConst.OUTCODE_LEFT) ? 0 : 2;
+ 707 
+ 708                 // add corners to outside stack:
+ 709                 switch (tbCode) {
+ 710                     case MarlinConst.OUTCODE_TOP:
+
+ 711                         stack.push(off); // top
+ 712                         return;
+ 713                     case MarlinConst.OUTCODE_BOTTOM:
+
+ 714                         stack.push(off + 1); // bottom
+ 715                         return;
+ 716                     default:
+ 717                         // both TOP / BOTTOM:
+ 718                         if ((outcode0 &amp; MarlinConst.OUTCODE_TOP) != 0) {
+
+ 719                             // top to bottom
+ 720                             stack.push(off); // top
+ 721                             stack.push(off + 1); // bottom
+ 722                         } else {
+
+ 723                             // bottom to top
+ 724                             stack.push(off + 1); // bottom
+ 725                             stack.push(off); // top
+ 726                         }
+ 727                 }
+ 728             }
+ 729         }
+ 730 
+ 731         @Override
+ 732         public void curveTo(final double x1, final double y1,
+ 733                             final double x2, final double y2,
+ 734                             final double xe, final double ye)
+ 735         {
+ 736             final int outcode0 = this.cOutCode;
+<span class="new"> 737             final int outcode1 = DHelpers.outcode(x1, y1, clipRect);</span>
+<span class="new"> 738             final int outcode2 = DHelpers.outcode(x2, y2, clipRect);</span>
+ 739             final int outcode3 = DHelpers.outcode(xe, ye, clipRect);
+
+ 740 
+<span class="changed"> 741             // Should clip</span>
+<span class="changed"> 742             final int orCode = (outcode0 | outcode1 | outcode2 | outcode3);</span>
+<span class="changed"> 743             if (orCode != 0) {</span>
+<span class="changed"> 744                 final int sideCode = outcode0 &amp; outcode1 &amp; outcode2 &amp; outcode3;</span>
+ 745 
+<span class="new"> 746                 // basic rejection criteria:</span>
+ 747                 if (sideCode == 0) {
+<span class="changed"> 748                     // ovelap clip:</span>
+<span class="changed"> 749                     if (subdivide) {</span>
+<span class="changed"> 750                         // avoid reentrance</span>
+<span class="changed"> 751                         subdivide = false;</span>
+<span class="changed"> 752                         // subdivide curve =&gt; callback with subdivided parts:</span>
+<span class="changed"> 753                         boolean ret;</span>
+<span class="changed"> 754                         if (outside) {</span>
+<span class="changed"> 755                             ret = curveSplitter.splitCurve(cox0, coy0, x1, y1,</span>
+<span class="changed"> 756                                                            x2, y2, xe, ye,</span>
+<span class="changed"> 757                                                            orCode, this);</span>
+<span class="changed"> 758                         } else {</span>
+<span class="changed"> 759                             ret = curveSplitter.splitCurve(cx0, cy0, x1, y1,</span>
+<span class="changed"> 760                                                            x2, y2, xe, ye,</span>
+<span class="changed"> 761                                                            orCode, this);</span>
+<span class="changed"> 762                         }</span>
+<span class="changed"> 763                         // reentrance is done:</span>
+<span class="changed"> 764                         subdivide = true;</span>
+<span class="changed"> 765                         if (ret) {</span>
+<span class="changed"> 766                             return;</span>
+<span class="changed"> 767                         }</span>
+<span class="changed"> 768                     }</span>
+<span class="changed"> 769                     // already subdivided so render it</span>
+ 770                 } else {
+<span class="changed"> 771                     this.cOutCode = outcode3;</span>
+
+ 772                     this.gOutCode &amp;= sideCode;
+
+
+
+ 773                     // keep last point coordinate before entering the clip again:
+ 774                     this.outside = true;
+<span class="changed"> 775                     this.cox0 = xe;</span>
+<span class="changed"> 776                     this.coy0 = ye;</span>
+ 777 
+ 778                     clip(sideCode, outcode0, outcode3);
+ 779                     return;
+ 780                 }
+ 781             }
+<span class="new"> 782 </span>
+<span class="new"> 783             this.cOutCode = outcode3;</span>
+<span class="new"> 784             this.gOutCode = 0;</span>
+<span class="new"> 785 </span>
+ 786             if (outside) {
+ 787                 finish();
+ 788             }
+ 789             // clipping disabled:
+ 790             out.curveTo(x1, y1, x2, y2, xe, ye);
+<span class="new"> 791             this.cx0 = xe;</span>
+<span class="new"> 792             this.cy0 = ye;</span>
+ 793         }
+ 794 
+ 795         @Override
+ 796         public void quadTo(final double x1, final double y1,
+ 797                            final double xe, final double ye)
+ 798         {
+ 799             final int outcode0 = this.cOutCode;
+<span class="new"> 800             final int outcode1 = DHelpers.outcode(x1, y1, clipRect);</span>
+ 801             final int outcode2 = DHelpers.outcode(xe, ye, clipRect);
+
+ 802 
+<span class="changed"> 803             // Should clip</span>
+<span class="changed"> 804             final int orCode = (outcode0 | outcode1 | outcode2);</span>
+<span class="changed"> 805             if (orCode != 0) {</span>
+<span class="changed"> 806                 final int sideCode = outcode0 &amp; outcode1 &amp; outcode2;</span>
+ 807 
+<span class="new"> 808                 // basic rejection criteria:</span>
+ 809                 if (sideCode == 0) {
+<span class="changed"> 810                     // ovelap clip:</span>
+<span class="changed"> 811                     if (subdivide) {</span>
+<span class="changed"> 812                         // avoid reentrance</span>
+<span class="changed"> 813                         subdivide = false;</span>
+<span class="changed"> 814                         // subdivide curve =&gt; callback with subdivided parts:</span>
+<span class="changed"> 815                         boolean ret;</span>
+<span class="changed"> 816                         if (outside) {</span>
+<span class="changed"> 817                             ret = curveSplitter.splitQuad(cox0, coy0, x1, y1,</span>
+<span class="changed"> 818                                                           xe, ye, orCode, this);</span>
+<span class="changed"> 819                         } else {</span>
+<span class="changed"> 820                             ret = curveSplitter.splitQuad(cx0, cy0, x1, y1,</span>
+<span class="changed"> 821                                                           xe, ye, orCode, this);</span>
+<span class="changed"> 822                         }</span>
+<span class="changed"> 823                         // reentrance is done:</span>
+<span class="changed"> 824                         subdivide = true;</span>
+<span class="changed"> 825                         if (ret) {</span>
+<span class="changed"> 826                             return;</span>
+<span class="changed"> 827                         }</span>
+<span class="changed"> 828                     }</span>
+<span class="changed"> 829                     // already subdivided so render it</span>
+ 830                 } else {
+<span class="changed"> 831                     this.cOutCode = outcode2;</span>
+ 832                     this.gOutCode &amp;= sideCode;
+
+
+
+ 833                     // keep last point coordinate before entering the clip again:
+ 834                     this.outside = true;
+<span class="changed"> 835                     this.cox0 = xe;</span>
+<span class="changed"> 836                     this.coy0 = ye;</span>
+ 837 
+ 838                     clip(sideCode, outcode0, outcode2);
+ 839                     return;
+ 840                 }
+ 841             }
+<span class="new"> 842 </span>
+<span class="new"> 843             this.cOutCode = outcode2;</span>
+<span class="new"> 844             this.gOutCode = 0;</span>
+<span class="new"> 845 </span>
+ 846             if (outside) {
+ 847                 finish();
+ 848             }
+ 849             // clipping disabled:
+ 850             out.quadTo(x1, y1, xe, ye);
+<span class="new"> 851             this.cx0 = xe;</span>
+<span class="new"> 852             this.cy0 = ye;</span>
+ 853         }
+ 854 
+ 855         @Override
+ 856         public long getNativeConsumer() {
+ 857             throw new InternalError("Not using a native peer");
+ 858         }
+ 859     }
+ 860 
+<span class="new"> 861     static final class CurveClipSplitter {</span>
+<span class="new"> 862 </span>
+<span class="new"> 863         static final double LEN_TH = MarlinProperties.getSubdividerMinLength();</span>
+<span class="new"> 864         static final boolean DO_CHECK_LENGTH = (LEN_TH &gt; 0.0d);</span>
+<span class="new"> 865 </span>
+<span class="new"> 866         private static final boolean TRACE = false;</span>
+<span class="new"> 867 </span>
+<span class="new"> 868         private static final int MAX_N_CURVES = 3 * 4;</span>
+<span class="new"> 869 </span>
+<span class="new"> 870         // clip rectangle (ymin, ymax, xmin, xmax):</span>
+<span class="new"> 871         final double[] clipRect;</span>
+<span class="new"> 872 </span>
+<span class="new"> 873         // clip rectangle (ymin, ymax, xmin, xmax) including padding:</span>
+<span class="new"> 874         final double[] clipRectPad = new double[4];</span>
+<span class="new"> 875         private boolean init_clipRectPad = false;</span>
+<span class="new"> 876 </span>
+<span class="new"> 877         // This is where the curve to be processed is put. We give it</span>
+<span class="new"> 878         // enough room to store all curves.</span>
+<span class="new"> 879         final double[] middle = new double[MAX_N_CURVES * 8 + 2];</span>
+<span class="new"> 880         // t values at subdivision points</span>
+<span class="new"> 881         private final double[] subdivTs = new double[MAX_N_CURVES];</span>
+<span class="new"> 882 </span>
+<span class="new"> 883         // dirty curve</span>
+<span class="new"> 884         private final DCurve curve;</span>
+<span class="new"> 885 </span>
+<span class="new"> 886         CurveClipSplitter(final DRendererContext rdrCtx) {</span>
+<span class="new"> 887             this.clipRect = rdrCtx.clipRect;</span>
+<span class="new"> 888             this.curve = rdrCtx.curve;</span>
+<span class="new"> 889         }</span>
+<span class="new"> 890 </span>
+<span class="new"> 891         void init() {</span>
+<span class="new"> 892             this.init_clipRectPad = true;</span>
+<span class="new"> 893         }</span>
+<span class="new"> 894 </span>
+<span class="new"> 895         private void initPaddedClip() {</span>
+<span class="new"> 896             // bounds as half-open intervals: minX &lt;= x &lt; maxX and minY &lt;= y &lt; maxY</span>
+<span class="new"> 897             // adjust padded clip rectangle (ymin, ymax, xmin, xmax):</span>
+<span class="new"> 898             // add a rounding error (curve subdivision ~ 0.1px):</span>
+<span class="new"> 899             final double[] _clipRect = clipRect;</span>
+<span class="new"> 900             final double[] _clipRectPad = clipRectPad;</span>
+<span class="new"> 901 </span>
+<span class="new"> 902             _clipRectPad[0] = _clipRect[0] - CLIP_RECT_PADDING;</span>
+<span class="new"> 903             _clipRectPad[1] = _clipRect[1] + CLIP_RECT_PADDING;</span>
+<span class="new"> 904             _clipRectPad[2] = _clipRect[2] - CLIP_RECT_PADDING;</span>
+<span class="new"> 905             _clipRectPad[3] = _clipRect[3] + CLIP_RECT_PADDING;</span>
+<span class="new"> 906 </span>
+<span class="new"> 907             if (TRACE) {</span>
+<span class="new"> 908                 MarlinUtils.logInfo("clip: X [" + _clipRectPad[2] + " .. " + _clipRectPad[3] +"] "</span>
+<span class="new"> 909                                         + "Y ["+ _clipRectPad[0] + " .. " + _clipRectPad[1] +"]");</span>
+<span class="new"> 910             }</span>
+<span class="new"> 911         }</span>
+<span class="new"> 912 </span>
+<span class="new"> 913         boolean splitLine(final double x0, final double y0,</span>
+<span class="new"> 914                           final double x1, final double y1,</span>
+<span class="new"> 915                           final int outCodeOR,</span>
+<span class="new"> 916                           final DPathConsumer2D out)</span>
+<span class="new"> 917         {</span>
+<span class="new"> 918             if (TRACE) {</span>
+<span class="new"> 919                 MarlinUtils.logInfo("divLine P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ")");</span>
+<span class="new"> 920             }</span>
+<span class="new"> 921 </span>
+<span class="new"> 922             if (DO_CHECK_LENGTH &amp;&amp; DHelpers.fastLineLen(x0, y0, x1, y1) &lt;= LEN_TH) {</span>
+<span class="new"> 923                 return false;</span>
+<span class="new"> 924             }</span>
+<span class="new"> 925 </span>
+<span class="new"> 926             final double[] mid = middle;</span>
+<span class="new"> 927             mid[0] = x0;  mid[1] = y0;</span>
+<span class="new"> 928             mid[2] = x1;  mid[3] = y1;</span>
+<span class="new"> 929 </span>
+<span class="new"> 930             return subdivideAtIntersections(4, outCodeOR, out);</span>
+<span class="new"> 931         }</span>
+<span class="new"> 932 </span>
+<span class="new"> 933         boolean splitQuad(final double x0, final double y0,</span>
+<span class="new"> 934                           final double x1, final double y1,</span>
+<span class="new"> 935                           final double x2, final double y2,</span>
+<span class="new"> 936                           final int outCodeOR,</span>
+<span class="new"> 937                           final DPathConsumer2D out)</span>
+<span class="new"> 938         {</span>
+<span class="new"> 939             if (TRACE) {</span>
+<span class="new"> 940                 MarlinUtils.logInfo("divQuad P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ")");</span>
+<span class="new"> 941             }</span>
+<span class="new"> 942 </span>
+<span class="new"> 943             if (DO_CHECK_LENGTH &amp;&amp; DHelpers.fastQuadLen(x0, y0, x1, y1, x2, y2) &lt;= LEN_TH) {</span>
+<span class="new"> 944                 return false;</span>
+<span class="new"> 945             }</span>
+<span class="new"> 946 </span>
+<span class="new"> 947             final double[] mid = middle;</span>
+<span class="new"> 948             mid[0] = x0;  mid[1] = y0;</span>
+<span class="new"> 949             mid[2] = x1;  mid[3] = y1;</span>
+<span class="new"> 950             mid[4] = x2;  mid[5] = y2;</span>
+<span class="new"> 951 </span>
+<span class="new"> 952             return subdivideAtIntersections(6, outCodeOR, out);</span>
+<span class="new"> 953         }</span>
+<span class="new"> 954 </span>
+<span class="new"> 955         boolean splitCurve(final double x0, final double y0,</span>
+<span class="new"> 956                            final double x1, final double y1,</span>
+<span class="new"> 957                            final double x2, final double y2,</span>
+<span class="new"> 958                            final double x3, final double y3,</span>
+<span class="new"> 959                            final int outCodeOR,</span>
+<span class="new"> 960                            final DPathConsumer2D out)</span>
+<span class="new"> 961         {</span>
+<span class="new"> 962             if (TRACE) {</span>
+<span class="new"> 963                 MarlinUtils.logInfo("divCurve P0(" + x0 + ", " + y0 + ") P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2 + ") P3(" + x3 + ", " + y3 + ")");</span>
+<span class="new"> 964             }</span>
+<span class="new"> 965 </span>
+<span class="new"> 966             if (DO_CHECK_LENGTH &amp;&amp; DHelpers.fastCurvelen(x0, y0, x1, y1, x2, y2, x3, y3) &lt;= LEN_TH) {</span>
+<span class="new"> 967                 return false;</span>
+<span class="new"> 968             }</span>
+<span class="new"> 969 </span>
+<span class="new"> 970             final double[] mid = middle;</span>
+<span class="new"> 971             mid[0] = x0;  mid[1] = y0;</span>
+<span class="new"> 972             mid[2] = x1;  mid[3] = y1;</span>
+<span class="new"> 973             mid[4] = x2;  mid[5] = y2;</span>
+<span class="new"> 974             mid[6] = x3;  mid[7] = y3;</span>
+<span class="new"> 975 </span>
+<span class="new"> 976             return subdivideAtIntersections(8, outCodeOR, out);</span>
+<span class="new"> 977         }</span>
+<span class="new"> 978 </span>
+<span class="new"> 979         private boolean subdivideAtIntersections(final int type, final int outCodeOR,</span>
+<span class="new"> 980                                                  final DPathConsumer2D out)</span>
+<span class="new"> 981         {</span>
+<span class="new"> 982             final double[] mid = middle;</span>
+<span class="new"> 983             final double[] subTs = subdivTs;</span>
+<span class="new"> 984 </span>
+<span class="new"> 985             if (init_clipRectPad) {</span>
+<span class="new"> 986                 init_clipRectPad = false;</span>
+<span class="new"> 987                 initPaddedClip();</span>
+<span class="new"> 988             }</span>
+<span class="new"> 989 </span>
+<span class="new"> 990             final int nSplits = DHelpers.findClipPoints(curve, mid, subTs, type,</span>
+<span class="new"> 991                                                         outCodeOR, clipRectPad);</span>
+<span class="new"> 992 </span>
+<span class="new"> 993             if (TRACE) {</span>
+<span class="new"> 994                 MarlinUtils.logInfo("nSplits: "+ nSplits);</span>
+<span class="new"> 995                 MarlinUtils.logInfo("subTs: "+Arrays.toString(Arrays.copyOfRange(subTs, 0, nSplits)));</span>
+<span class="new"> 996             }</span>
+<span class="new"> 997             if (nSplits == 0) {</span>
+<span class="new"> 998                 // only curve support shortcut</span>
+<span class="new"> 999                 return false;</span>
+<span class="new">1000             }</span>
+<span class="new">1001             double prevT = 0.0d;</span>
+<span class="new">1002 </span>
+<span class="new">1003             for (int i = 0, off = 0; i &lt; nSplits; i++, off += type) {</span>
+<span class="new">1004                 final double t = subTs[i];</span>
+<span class="new">1005 </span>
+<span class="new">1006                 DHelpers.subdivideAt((t - prevT) / (1.0d - prevT),</span>
+<span class="new">1007                                      mid, off, mid, off, type);</span>
+<span class="new">1008                 prevT = t;</span>
+<span class="new">1009             }</span>
+<span class="new">1010 </span>
+<span class="new">1011             for (int i = 0, off = 0; i &lt;= nSplits; i++, off += type) {</span>
+<span class="new">1012                 if (TRACE) {</span>
+<span class="new">1013                     MarlinUtils.logInfo("Part Curve "+Arrays.toString(Arrays.copyOfRange(mid, off, off + type)));</span>
+<span class="new">1014                 }</span>
+<span class="new">1015                 emitCurrent(type, mid, off, out);</span>
+<span class="new">1016             }</span>
+<span class="new">1017             return true;</span>
+<span class="new">1018         }</span>
+<span class="new">1019 </span>
+<span class="new">1020         static void emitCurrent(final int type, final double[] pts,</span>
+<span class="new">1021                                 final int off, final DPathConsumer2D out)</span>
+<span class="new">1022         {</span>
+<span class="new">1023             // if instead of switch (perf + most probable cases first)</span>
+<span class="new">1024             if (type == 8) {</span>
+<span class="new">1025                 out.curveTo(pts[off + 2], pts[off + 3],</span>
+<span class="new">1026                             pts[off + 4], pts[off + 5],</span>
+<span class="new">1027                             pts[off + 6], pts[off + 7]);</span>
+<span class="new">1028             } else if (type == 4) {</span>
+<span class="new">1029                 out.lineTo(pts[off + 2], pts[off + 3]);</span>
+<span class="new">1030             } else {</span>
+<span class="new">1031                 out.quadTo(pts[off + 2], pts[off + 3],</span>
+<span class="new">1032                            pts[off + 4], pts[off + 5]);</span>
+<span class="new">1033             }</span>
+<span class="new">1034         }</span>
+<span class="new">1035     }</span>
+<span class="new">1036 </span>
+<span class="new">1037     static final class CurveBasicMonotonizer {</span>
+<span class="new">1038 </span>
+<span class="new">1039         private static final int MAX_N_CURVES = 11;</span>
+<span class="new">1040 </span>
+<span class="new">1041         // squared half line width (for stroker)</span>
+<span class="new">1042         private double lw2;</span>
+<span class="new">1043 </span>
+<span class="new">1044         // number of splitted curves</span>
+<span class="new">1045         int nbSplits;</span>
+<span class="new">1046 </span>
+<span class="new">1047         // This is where the curve to be processed is put. We give it</span>
+<span class="new">1048         // enough room to store all curves.</span>
+<span class="new">1049         final double[] middle = new double[MAX_N_CURVES * 6 + 2];</span>
+<span class="new">1050         // t values at subdivision points</span>
+<span class="new">1051         private final double[] subdivTs = new double[MAX_N_CURVES - 1];</span>
+<span class="new">1052 </span>
+<span class="new">1053         // dirty curve</span>
+<span class="new">1054         private final DCurve curve;</span>
+<span class="new">1055 </span>
+<span class="new">1056         CurveBasicMonotonizer(final DRendererContext rdrCtx) {</span>
+<span class="new">1057             this.curve = rdrCtx.curve;</span>
+<span class="new">1058         }</span>
+<span class="new">1059 </span>
+<span class="new">1060         void init(final double lineWidth) {</span>
+<span class="new">1061             this.lw2 = (lineWidth * lineWidth) / 4.0d;</span>
+<span class="new">1062         }</span>
+<span class="new">1063 </span>
+<span class="new">1064         CurveBasicMonotonizer curve(final double x0, final double y0,</span>
+<span class="new">1065                                     final double x1, final double y1,</span>
+<span class="new">1066                                     final double x2, final double y2,</span>
+<span class="new">1067                                     final double x3, final double y3)</span>
+<span class="new">1068         {</span>
+<span class="new">1069             final double[] mid = middle;</span>
+<span class="new">1070             mid[0] = x0;  mid[1] = y0;</span>
+<span class="new">1071             mid[2] = x1;  mid[3] = y1;</span>
+<span class="new">1072             mid[4] = x2;  mid[5] = y2;</span>
+<span class="new">1073             mid[6] = x3;  mid[7] = y3;</span>
+<span class="new">1074 </span>
+<span class="new">1075             final double[] subTs = subdivTs;</span>
+<span class="new">1076             final int nSplits = DHelpers.findSubdivPoints(curve, mid, subTs, 8, lw2);</span>
+<span class="new">1077 </span>
+<span class="new">1078             double prevT = 0.0d;</span>
+<span class="new">1079             for (int i = 0, off = 0; i &lt; nSplits; i++, off += 6) {</span>
+<span class="new">1080                 final double t = subTs[i];</span>
+<span class="new">1081 </span>
+<span class="new">1082                 DHelpers.subdivideCubicAt((t - prevT) / (1.0d - prevT),</span>
+<span class="new">1083                                           mid, off, mid, off, off + 6);</span>
+<span class="new">1084                 prevT = t;</span>
+<span class="new">1085             }</span>
+<span class="new">1086 </span>
+<span class="new">1087             this.nbSplits = nSplits;</span>
+<span class="new">1088             return this;</span>
+<span class="new">1089         }</span>
+<span class="new">1090 </span>
+<span class="new">1091         CurveBasicMonotonizer quad(final double x0, final double y0,</span>
+<span class="new">1092                                    final double x1, final double y1,</span>
+<span class="new">1093                                    final double x2, final double y2)</span>
+<span class="new">1094         {</span>
+<span class="new">1095             final double[] mid = middle;</span>
+<span class="new">1096             mid[0] = x0;  mid[1] = y0;</span>
+<span class="new">1097             mid[2] = x1;  mid[3] = y1;</span>
+<span class="new">1098             mid[4] = x2;  mid[5] = y2;</span>
+<span class="new">1099 </span>
+<span class="new">1100             final double[] subTs = subdivTs;</span>
+<span class="new">1101             final int nSplits = DHelpers.findSubdivPoints(curve, mid, subTs, 6, lw2);</span>
+<span class="new">1102 </span>
+<span class="new">1103             double prevt = 0.0d;</span>
+<span class="new">1104             for (int i = 0, off = 0; i &lt; nSplits; i++, off += 4) {</span>
+<span class="new">1105                 final double t = subTs[i];</span>
+<span class="new">1106                 DHelpers.subdivideQuadAt((t - prevt) / (1.0d - prevt),</span>
+<span class="new">1107                                          mid, off, mid, off, off + 4);</span>
+<span class="new">1108                 prevt = t;</span>
+<span class="new">1109             }</span>
+<span class="new">1110 </span>
+<span class="new">1111             this.nbSplits = nSplits;</span>
+<span class="new">1112             return this;</span>
+<span class="new">1113         }</span>
+<span class="new">1114     }</span>
+<span class="new">1115 </span>
+1116     static final class PathTracer implements DPathConsumer2D {
+1117         private final String prefix;
+1118         private DPathConsumer2D out;
+1119 
+1120         PathTracer(String name) {
+1121             this.prefix = name + ": ";
+1122         }
+1123 
+1124         PathTracer init(DPathConsumer2D out) {
+1125             this.out = out;
+1126             return this; // fluent API
+1127         }
+1128 
+1129         @Override
+1130         public void moveTo(double x0, double y0) {
+1131             log("moveTo (" + x0 + ", " + y0 + ')');
+1132             out.moveTo(x0, y0);
+1133         }
+1134 
+1135         @Override
+
+</pre><hr></hr><pre>
+1149 
+1150         @Override
+1151         public void quadTo(double x1, double y1, double x2, double y2) {
+1152             log("quadTo P1(" + x1 + ", " + y1 + ") P2(" + x2 + ", " + y2  + ')');
+1153             out.quadTo(x1, y1, x2, y2);
+1154         }
+1155 
+1156         @Override
+1157         public void closePath() {
+1158             log("closePath");
+1159             out.closePath();
+1160         }
+1161 
+1162         @Override
+1163         public void pathDone() {
+1164             log("pathDone");
+1165             out.pathDone();
+1166         }
+1167 
+1168         private void log(final String message) {
+<span class="changed">1169             MarlinUtils.logInfo(prefix + message);</span>
+1170         }
+1171 
+1172         @Override
+1173         public long getNativeConsumer() {
+1174             throw new InternalError("Not using a native peer");
+1175         }
+1176     }
+1177 }
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DStroker.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Dasher.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

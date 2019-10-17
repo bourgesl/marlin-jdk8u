@@ -1,0 +1,1564 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13691">13691</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8159093">8159093</a>: Fix coding conventions in Marlin renderer
+Summary: capital letters for constants and use rdrCtx.stats (field)
+Reviewed-by: flar, prr</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2007, 2015, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.util.Arrays;
+  29 import static java.lang.Math.ulp;
+  30 import static java.lang.Math.sqrt;
+  31 
+  32 import sun.awt.geom.PathConsumer2D;
+  33 import sun.java2d.marlin.Curve.BreakPtrIterator;
+  34 
+  35 
+  36 // TODO: some of the arithmetic here is too verbose and prone to hard to
+  37 // debug typos. We should consider making a small Point/Vector class that
+  38 // has methods like plus(Point), minus(Point), dot(Point), cross(Point)and such
+  39 final class Stroker implements PathConsumer2D, MarlinConst {
+  40 
+  41     private static final int MOVE_TO = 0;
+  42     private static final int DRAWING_OP_TO = 1; // ie. curve, line, or quad
+  43     private static final int CLOSE = 2;
+  44 
+  45     /**
+  46      * Constant value for join style.
+  47      */
+  48     public static final int JOIN_MITER = 0;
+  49 
+  50     /**
+  51      * Constant value for join style.
+  52      */
+  53     public static final int JOIN_ROUND = 1;
+  54 
+  55     /**
+  56      * Constant value for join style.
+  57      */
+  58     public static final int JOIN_BEVEL = 2;
+  59 
+  60     /**
+  61      * Constant value for end cap style.
+  62      */
+  63     public static final int CAP_BUTT = 0;
+  64 
+  65     /**
+  66      * Constant value for end cap style.
+  67      */
+  68     public static final int CAP_ROUND = 1;
+  69 
+  70     /**
+  71      * Constant value for end cap style.
+  72      */
+  73     public static final int CAP_SQUARE = 2;
+  74 
+  75     // pisces used to use fixed point arithmetic with 16 decimal digits. I
+  76     // didn't want to change the values of the constant below when I converted
+  77     // it to floating point, so that's why the divisions by 2^16 are there.
+  78     private static final float ROUND_JOIN_THRESHOLD = 1000/65536f;
+  79 
+  80     private static final float C = 0.5522847498307933f;
+  81 
+  82     private static final int MAX_N_CURVES = 11;
+  83 
+  84     private PathConsumer2D out;
+  85 
+  86     private int capStyle;
+  87     private int joinStyle;
+  88 
+  89     private float lineWidth2;
+  90     private float invHalfLineWidth2Sq;
+  91 
+  92     private final float[] offset0 = new float[2];
+  93     private final float[] offset1 = new float[2];
+  94     private final float[] offset2 = new float[2];
+  95     private final float[] miter = new float[2];
+  96     private float miterLimitSq;
+  97 
+  98     private int prev;
+  99 
+ 100     // The starting point of the path, and the slope there.
+ 101     private float sx0, sy0, sdx, sdy;
+ 102     // the current point and the slope there.
+ 103     private float cx0, cy0, cdx, cdy; // c stands for current
+ 104     // vectors that when added to (sx0,sy0) and (cx0,cy0) respectively yield the
+ 105     // first and last points on the left parallel path. Since this path is
+ 106     // parallel, it's slope at any point is parallel to the slope of the
+ 107     // original path (thought they may have different directions), so these
+ 108     // could be computed from sdx,sdy and cdx,cdy (and vice versa), but that
+ 109     // would be error prone and hard to read, so we keep these anyway.
+ 110     private float smx, smy, cmx, cmy;
+ 111 
+ 112     private final PolyStack reverse;
+ 113 
+ 114     // This is where the curve to be processed is put. We give it
+ 115     // enough room to store 2 curves: one for the current subdivision, the
+ 116     // other for the rest of the curve.
+ 117     private final float[] middle = new float[2 * 8];
+ 118     private final float[] lp = new float[8];
+ 119     private final float[] rp = new float[8];
+ 120     private final float[] subdivTs = new float[MAX_N_CURVES - 1];
+ 121 
+ 122     // per-thread renderer context
+ 123     final RendererContext rdrCtx;
+ 124 
+ 125     // dirty curve
+ 126     final Curve curve;
+ 127 
+ 128     /**
+ 129      * Constructs a &lt;code&gt;Stroker&lt;/code&gt;.
+ 130      * @param rdrCtx per-thread renderer context
+ 131      */
+ 132     Stroker(final RendererContext rdrCtx) {
+ 133         this.rdrCtx = rdrCtx;
+ 134 
+ 135         this.reverse = new PolyStack(rdrCtx);
+ 136         this.curve = rdrCtx.curve;
+ 137     }
+ 138 
+ 139     /**
+ 140      * Inits the &lt;code&gt;Stroker&lt;/code&gt;.
+ 141      *
+ 142      * @param pc2d an output &lt;code&gt;PathConsumer2D&lt;/code&gt;.
+ 143      * @param lineWidth the desired line width in pixels
+ 144      * @param capStyle the desired end cap style, one of
+ 145      * &lt;code&gt;CAP_BUTT&lt;/code&gt;, &lt;code&gt;CAP_ROUND&lt;/code&gt; or
+ 146      * &lt;code&gt;CAP_SQUARE&lt;/code&gt;.
+ 147      * @param joinStyle the desired line join style, one of
+ 148      * &lt;code&gt;JOIN_MITER&lt;/code&gt;, &lt;code&gt;JOIN_ROUND&lt;/code&gt; or
+ 149      * &lt;code&gt;JOIN_BEVEL&lt;/code&gt;.
+ 150      * @param miterLimit the desired miter limit
+ 151      * @return this instance
+ 152      */
+ 153     Stroker init(PathConsumer2D pc2d,
+ 154               float lineWidth,
+ 155               int capStyle,
+ 156               int joinStyle,
+ 157               float miterLimit)
+ 158     {
+ 159         this.out = pc2d;
+ 160 
+ 161         this.lineWidth2 = lineWidth / 2f;
+ 162         this.invHalfLineWidth2Sq = 1f / (2f * lineWidth2 * lineWidth2);
+ 163         this.capStyle = capStyle;
+ 164         this.joinStyle = joinStyle;
+ 165 
+ 166         float limit = miterLimit * lineWidth2;
+ 167         this.miterLimitSq = limit * limit;
+ 168 
+ 169         this.prev = CLOSE;
+ 170 
+ 171         rdrCtx.stroking = 1;
+ 172 
+ 173         return this; // fluent API
+ 174     }
+ 175 
+ 176     /**
+ 177      * Disposes this stroker:
+ 178      * clean up before reusing this instance
+ 179      */
+ 180     void dispose() {
+ 181         reverse.dispose();
+ 182 
+<a name="2" id="anc2"></a><span class="changed"> 183         if (doCleanDirty) {</span>
+ 184             // Force zero-fill dirty arrays:
+ 185             Arrays.fill(offset0, 0f);
+ 186             Arrays.fill(offset1, 0f);
+ 187             Arrays.fill(offset2, 0f);
+ 188             Arrays.fill(miter, 0f);
+ 189             Arrays.fill(middle, 0f);
+ 190             Arrays.fill(lp, 0f);
+ 191             Arrays.fill(rp, 0f);
+ 192             Arrays.fill(subdivTs, 0f);
+ 193         }
+ 194     }
+ 195 
+ 196     private static void computeOffset(final float lx, final float ly,
+ 197                                       final float w, final float[] m)
+ 198     {
+ 199         float len = lx*lx + ly*ly;
+ 200         if (len == 0f) {
+ 201             m[0] = 0f;
+ 202             m[1] = 0f;
+ 203         } else {
+ 204             len = (float) sqrt(len);
+ 205             m[0] =  (ly * w) / len;
+ 206             m[1] = -(lx * w) / len;
+ 207         }
+ 208     }
+ 209 
+ 210     // Returns true if the vectors (dx1, dy1) and (dx2, dy2) are
+ 211     // clockwise (if dx1,dy1 needs to be rotated clockwise to close
+ 212     // the smallest angle between it and dx2,dy2).
+ 213     // This is equivalent to detecting whether a point q is on the right side
+ 214     // of a line passing through points p1, p2 where p2 = p1+(dx1,dy1) and
+ 215     // q = p2+(dx2,dy2), which is the same as saying p1, p2, q are in a
+ 216     // clockwise order.
+ 217     // NOTE: "clockwise" here assumes coordinates with 0,0 at the bottom left.
+ 218     private static boolean isCW(final float dx1, final float dy1,
+ 219                                 final float dx2, final float dy2)
+ 220     {
+ 221         return dx1 * dy2 &lt;= dy1 * dx2;
+ 222     }
+ 223 
+ 224     private void drawRoundJoin(float x, float y,
+ 225                                float omx, float omy, float mx, float my,
+ 226                                boolean rev,
+ 227                                float threshold)
+ 228     {
+<a name="3" id="anc3"></a><span class="changed"> 229         if ((omx == 0 &amp;&amp; omy == 0) || (mx == 0 &amp;&amp; my == 0)) {</span>
+ 230             return;
+ 231         }
+ 232 
+ 233         float domx = omx - mx;
+ 234         float domy = omy - my;
+ 235         float len = domx*domx + domy*domy;
+ 236         if (len &lt; threshold) {
+ 237             return;
+ 238         }
+ 239 
+ 240         if (rev) {
+ 241             omx = -omx;
+ 242             omy = -omy;
+ 243             mx  = -mx;
+ 244             my  = -my;
+ 245         }
+ 246         drawRoundJoin(x, y, omx, omy, mx, my, rev);
+ 247     }
+ 248 
+ 249     private void drawRoundJoin(float cx, float cy,
+ 250                                float omx, float omy,
+ 251                                float mx, float my,
+ 252                                boolean rev)
+ 253     {
+ 254         // The sign of the dot product of mx,my and omx,omy is equal to the
+ 255         // the sign of the cosine of ext
+ 256         // (ext is the angle between omx,omy and mx,my).
+ 257         final float cosext = omx * mx + omy * my;
+ 258         // If it is &gt;=0, we know that abs(ext) is &lt;= 90 degrees, so we only
+ 259         // need 1 curve to approximate the circle section that joins omx,omy
+ 260         // and mx,my.
+ 261         final int numCurves = (cosext &gt;= 0f) ? 1 : 2;
+ 262 
+ 263         switch (numCurves) {
+ 264         case 1:
+ 265             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+ 266             break;
+ 267         case 2:
+ 268             // we need to split the arc into 2 arcs spanning the same angle.
+ 269             // The point we want will be one of the 2 intersections of the
+ 270             // perpendicular bisector of the chord (omx,omy)-&gt;(mx,my) and the
+ 271             // circle. We could find this by scaling the vector
+ 272             // (omx+mx, omy+my)/2 so that it has length=lineWidth2 (and thus lies
+ 273             // on the circle), but that can have numerical problems when the angle
+ 274             // between omx,omy and mx,my is close to 180 degrees. So we compute a
+ 275             // normal of (omx,omy)-(mx,my). This will be the direction of the
+ 276             // perpendicular bisector. To get one of the intersections, we just scale
+ 277             // this vector that its length is lineWidth2 (this works because the
+ 278             // perpendicular bisector goes through the origin). This scaling doesn't
+ 279             // have numerical problems because we know that lineWidth2 divided by
+ 280             // this normal's length is at least 0.5 and at most sqrt(2)/2 (because
+ 281             // we know the angle of the arc is &gt; 90 degrees).
+ 282             float nx = my - omy, ny = omx - mx;
+ 283             float nlen = (float) sqrt(nx*nx + ny*ny);
+ 284             float scale = lineWidth2/nlen;
+ 285             float mmx = nx * scale, mmy = ny * scale;
+ 286 
+ 287             // if (isCW(omx, omy, mx, my) != isCW(mmx, mmy, mx, my)) then we've
+ 288             // computed the wrong intersection so we get the other one.
+ 289             // The test above is equivalent to if (rev).
+ 290             if (rev) {
+ 291                 mmx = -mmx;
+ 292                 mmy = -mmy;
+ 293             }
+ 294             drawBezApproxForArc(cx, cy, omx, omy, mmx, mmy, rev);
+ 295             drawBezApproxForArc(cx, cy, mmx, mmy, mx, my, rev);
+ 296             break;
+ 297         default:
+ 298         }
+ 299     }
+ 300 
+ 301     // the input arc defined by omx,omy and mx,my must span &lt;= 90 degrees.
+ 302     private void drawBezApproxForArc(final float cx, final float cy,
+ 303                                      final float omx, final float omy,
+ 304                                      final float mx, final float my,
+ 305                                      boolean rev)
+ 306     {
+ 307         final float cosext2 = (omx * mx + omy * my) * invHalfLineWidth2Sq;
+ 308 
+ 309         // check round off errors producing cos(ext) &gt; 1 and a NaN below
+ 310         // cos(ext) == 1 implies colinear segments and an empty join anyway
+ 311         if (cosext2 &gt;= 0.5f) {
+ 312             // just return to avoid generating a flat curve:
+ 313             return;
+ 314         }
+ 315 
+ 316         // cv is the length of P1-P0 and P2-P3 divided by the radius of the arc
+ 317         // (so, cv assumes the arc has radius 1). P0, P1, P2, P3 are the points that
+ 318         // define the bezier curve we're computing.
+ 319         // It is computed using the constraints that P1-P0 and P3-P2 are parallel
+ 320         // to the arc tangents at the endpoints, and that |P1-P0|=|P3-P2|.
+ 321         float cv = (float) ((4.0 / 3.0) * sqrt(0.5 - cosext2) /
+ 322                             (1.0 + sqrt(cosext2 + 0.5)));
+ 323         // if clockwise, we need to negate cv.
+ 324         if (rev) { // rev is equivalent to isCW(omx, omy, mx, my)
+ 325             cv = -cv;
+ 326         }
+ 327         final float x1 = cx + omx;
+ 328         final float y1 = cy + omy;
+ 329         final float x2 = x1 - cv * omy;
+ 330         final float y2 = y1 + cv * omx;
+ 331 
+ 332         final float x4 = cx + mx;
+ 333         final float y4 = cy + my;
+ 334         final float x3 = x4 + cv * my;
+ 335         final float y3 = y4 - cv * mx;
+ 336 
+ 337         emitCurveTo(x1, y1, x2, y2, x3, y3, x4, y4, rev);
+ 338     }
+ 339 
+ 340     private void drawRoundCap(float cx, float cy, float mx, float my) {
+<a name="4" id="anc4"></a><span class="changed"> 341         emitCurveTo(cx+mx-C*my, cy+my+C*mx,</span>
+<span class="changed"> 342                     cx-my+C*mx, cy+mx+C*my,</span>
+<span class="changed"> 343                     cx-my,      cy+mx);</span>
+<span class="changed"> 344         emitCurveTo(cx-my-C*mx, cy+mx-C*my,</span>
+<span class="changed"> 345                     cx-mx-C*my, cy-my+C*mx,</span>
+<span class="changed"> 346                     cx-mx,      cy-my);</span>
+
+
+ 347     }
+ 348 
+ 349     // Put the intersection point of the lines (x0, y0) -&gt; (x1, y1)
+ 350     // and (x0p, y0p) -&gt; (x1p, y1p) in m[off] and m[off+1].
+ 351     // If the lines are parallel, it will put a non finite number in m.
+ 352     private static void computeIntersection(final float x0, final float y0,
+ 353                                             final float x1, final float y1,
+ 354                                             final float x0p, final float y0p,
+ 355                                             final float x1p, final float y1p,
+ 356                                             final float[] m, int off)
+ 357     {
+ 358         float x10 = x1 - x0;
+ 359         float y10 = y1 - y0;
+ 360         float x10p = x1p - x0p;
+ 361         float y10p = y1p - y0p;
+ 362 
+ 363         float den = x10*y10p - x10p*y10;
+ 364         float t = x10p*(y0-y0p) - y10p*(x0-x0p);
+ 365         t /= den;
+ 366         m[off++] = x0 + t*x10;
+ 367         m[off]   = y0 + t*y10;
+ 368     }
+ 369 
+ 370     private void drawMiter(final float pdx, final float pdy,
+ 371                            final float x0, final float y0,
+ 372                            final float dx, final float dy,
+ 373                            float omx, float omy, float mx, float my,
+ 374                            boolean rev)
+ 375     {
+ 376         if ((mx == omx &amp;&amp; my == omy) ||
+ 377             (pdx == 0f &amp;&amp; pdy == 0f) ||
+ 378             (dx == 0f &amp;&amp; dy == 0f))
+ 379         {
+ 380             return;
+ 381         }
+ 382 
+ 383         if (rev) {
+ 384             omx = -omx;
+ 385             omy = -omy;
+ 386             mx  = -mx;
+ 387             my  = -my;
+ 388         }
+ 389 
+ 390         computeIntersection((x0 - pdx) + omx, (y0 - pdy) + omy, x0 + omx, y0 + omy,
+ 391                             (dx + x0) + mx, (dy + y0) + my, x0 + mx, y0 + my,
+ 392                             miter, 0);
+ 393 
+ 394         final float miterX = miter[0];
+ 395         final float miterY = miter[1];
+ 396         float lenSq = (miterX-x0)*(miterX-x0) + (miterY-y0)*(miterY-y0);
+ 397 
+ 398         // If the lines are parallel, lenSq will be either NaN or +inf
+ 399         // (actually, I'm not sure if the latter is possible. The important
+ 400         // thing is that -inf is not possible, because lenSq is a square).
+ 401         // For both of those values, the comparison below will fail and
+ 402         // no miter will be drawn, which is correct.
+ 403         if (lenSq &lt; miterLimitSq) {
+ 404             emitLineTo(miterX, miterY, rev);
+ 405         }
+ 406     }
+ 407 
+ 408     @Override
+ 409     public void moveTo(float x0, float y0) {
+ 410         if (prev == DRAWING_OP_TO) {
+ 411             finish();
+ 412         }
+ 413         this.sx0 = this.cx0 = x0;
+ 414         this.sy0 = this.cy0 = y0;
+<a name="5" id="anc5"></a><span class="changed"> 415         this.cdx = this.sdx = 1;</span>
+<span class="changed"> 416         this.cdy = this.sdy = 0;</span>
+ 417         this.prev = MOVE_TO;
+ 418     }
+ 419 
+ 420     @Override
+ 421     public void lineTo(float x1, float y1) {
+ 422         float dx = x1 - cx0;
+ 423         float dy = y1 - cy0;
+ 424         if (dx == 0f &amp;&amp; dy == 0f) {
+ 425             dx = 1f;
+ 426         }
+ 427         computeOffset(dx, dy, lineWidth2, offset0);
+ 428         final float mx = offset0[0];
+ 429         final float my = offset0[1];
+ 430 
+ 431         drawJoin(cdx, cdy, cx0, cy0, dx, dy, cmx, cmy, mx, my);
+ 432 
+ 433         emitLineTo(cx0 + mx, cy0 + my);
+ 434         emitLineTo( x1 + mx,  y1 + my);
+ 435 
+ 436         emitLineToRev(cx0 - mx, cy0 - my);
+ 437         emitLineToRev( x1 - mx,  y1 - my);
+ 438 
+ 439         this.cmx = mx;
+ 440         this.cmy = my;
+ 441         this.cdx = dx;
+ 442         this.cdy = dy;
+ 443         this.cx0 = x1;
+ 444         this.cy0 = y1;
+ 445         this.prev = DRAWING_OP_TO;
+ 446     }
+ 447 
+ 448     @Override
+ 449     public void closePath() {
+ 450         if (prev != DRAWING_OP_TO) {
+ 451             if (prev == CLOSE) {
+ 452                 return;
+ 453             }
+ 454             emitMoveTo(cx0, cy0 - lineWidth2);
+<a name="6" id="anc6"></a><span class="changed"> 455             this.cmx = this.smx = 0;</span>
+ 456             this.cmy = this.smy = -lineWidth2;
+<a name="7" id="anc7"></a><span class="changed"> 457             this.cdx = this.sdx = 1;</span>
+<span class="changed"> 458             this.cdy = this.sdy = 0;</span>
+ 459             finish();
+ 460             return;
+ 461         }
+ 462 
+ 463         if (cx0 != sx0 || cy0 != sy0) {
+ 464             lineTo(sx0, sy0);
+ 465         }
+ 466 
+ 467         drawJoin(cdx, cdy, cx0, cy0, sdx, sdy, cmx, cmy, smx, smy);
+ 468 
+ 469         emitLineTo(sx0 + smx, sy0 + smy);
+ 470 
+ 471         emitMoveTo(sx0 - smx, sy0 - smy);
+ 472         emitReverse();
+ 473 
+ 474         this.prev = CLOSE;
+ 475         emitClose();
+ 476     }
+ 477 
+ 478     private void emitReverse() {
+ 479         reverse.popAll(out);
+ 480     }
+ 481 
+ 482     @Override
+ 483     public void pathDone() {
+ 484         if (prev == DRAWING_OP_TO) {
+ 485             finish();
+ 486         }
+ 487 
+ 488         out.pathDone();
+ 489 
+ 490         // this shouldn't matter since this object won't be used
+ 491         // after the call to this method.
+ 492         this.prev = CLOSE;
+ 493 
+ 494         // Dispose this instance:
+ 495         dispose();
+ 496     }
+ 497 
+ 498     private void finish() {
+ 499         if (capStyle == CAP_ROUND) {
+ 500             drawRoundCap(cx0, cy0, cmx, cmy);
+ 501         } else if (capStyle == CAP_SQUARE) {
+ 502             emitLineTo(cx0 - cmy + cmx, cy0 + cmx + cmy);
+ 503             emitLineTo(cx0 - cmy - cmx, cy0 + cmx - cmy);
+ 504         }
+ 505 
+ 506         emitReverse();
+ 507 
+ 508         if (capStyle == CAP_ROUND) {
+ 509             drawRoundCap(sx0, sy0, -smx, -smy);
+ 510         } else if (capStyle == CAP_SQUARE) {
+ 511             emitLineTo(sx0 + smy - smx, sy0 - smx - smy);
+ 512             emitLineTo(sx0 + smy + smx, sy0 - smx + smy);
+ 513         }
+ 514 
+ 515         emitClose();
+ 516     }
+ 517 
+ 518     private void emitMoveTo(final float x0, final float y0) {
+ 519         out.moveTo(x0, y0);
+ 520     }
+ 521 
+ 522     private void emitLineTo(final float x1, final float y1) {
+ 523         out.lineTo(x1, y1);
+ 524     }
+ 525 
+ 526     private void emitLineToRev(final float x1, final float y1) {
+ 527         reverse.pushLine(x1, y1);
+ 528     }
+ 529 
+ 530     private void emitLineTo(final float x1, final float y1,
+ 531                             final boolean rev)
+ 532     {
+ 533         if (rev) {
+ 534             emitLineToRev(x1, y1);
+ 535         } else {
+ 536             emitLineTo(x1, y1);
+ 537         }
+ 538     }
+ 539 
+ 540     private void emitQuadTo(final float x1, final float y1,
+ 541                             final float x2, final float y2)
+ 542     {
+ 543         out.quadTo(x1, y1, x2, y2);
+ 544     }
+ 545 
+ 546     private void emitQuadToRev(final float x0, final float y0,
+ 547                                final float x1, final float y1)
+ 548     {
+ 549         reverse.pushQuad(x0, y0, x1, y1);
+ 550     }
+ 551 
+ 552     private void emitCurveTo(final float x1, final float y1,
+ 553                              final float x2, final float y2,
+ 554                              final float x3, final float y3)
+ 555     {
+ 556         out.curveTo(x1, y1, x2, y2, x3, y3);
+ 557     }
+ 558 
+ 559     private void emitCurveToRev(final float x0, final float y0,
+ 560                                 final float x1, final float y1,
+ 561                                 final float x2, final float y2)
+ 562     {
+ 563         reverse.pushCubic(x0, y0, x1, y1, x2, y2);
+ 564     }
+ 565 
+ 566     private void emitCurveTo(final float x0, final float y0,
+ 567                              final float x1, final float y1,
+ 568                              final float x2, final float y2,
+ 569                              final float x3, final float y3, final boolean rev)
+ 570     {
+ 571         if (rev) {
+ 572             reverse.pushCubic(x0, y0, x1, y1, x2, y2);
+ 573         } else {
+ 574             out.curveTo(x1, y1, x2, y2, x3, y3);
+ 575         }
+ 576     }
+ 577 
+ 578     private void emitClose() {
+ 579         out.closePath();
+ 580     }
+ 581 
+ 582     private void drawJoin(float pdx, float pdy,
+ 583                           float x0, float y0,
+ 584                           float dx, float dy,
+ 585                           float omx, float omy,
+ 586                           float mx, float my)
+ 587     {
+ 588         if (prev != DRAWING_OP_TO) {
+ 589             emitMoveTo(x0 + mx, y0 + my);
+ 590             this.sdx = dx;
+ 591             this.sdy = dy;
+ 592             this.smx = mx;
+ 593             this.smy = my;
+ 594         } else {
+ 595             boolean cw = isCW(pdx, pdy, dx, dy);
+ 596             if (joinStyle == JOIN_MITER) {
+ 597                 drawMiter(pdx, pdy, x0, y0, dx, dy, omx, omy, mx, my, cw);
+ 598             } else if (joinStyle == JOIN_ROUND) {
+ 599                 drawRoundJoin(x0, y0,
+ 600                               omx, omy,
+ 601                               mx, my, cw,
+ 602                               ROUND_JOIN_THRESHOLD);
+ 603             }
+ 604             emitLineTo(x0, y0, !cw);
+ 605         }
+ 606         prev = DRAWING_OP_TO;
+ 607     }
+ 608 
+ 609     private static boolean within(final float x1, final float y1,
+ 610                                   final float x2, final float y2,
+ 611                                   final float ERR)
+ 612     {
+ 613         assert ERR &gt; 0 : "";
+ 614         // compare taxicab distance. ERR will always be small, so using
+ 615         // true distance won't give much benefit
+ 616         return (Helpers.within(x1, x2, ERR) &amp;&amp;  // we want to avoid calling Math.abs
+ 617                 Helpers.within(y1, y2, ERR)); // this is just as good.
+ 618     }
+ 619 
+ 620     private void getLineOffsets(float x1, float y1,
+ 621                                 float x2, float y2,
+ 622                                 float[] left, float[] right) {
+ 623         computeOffset(x2 - x1, y2 - y1, lineWidth2, offset0);
+ 624         final float mx = offset0[0];
+ 625         final float my = offset0[1];
+ 626         left[0] = x1 + mx;
+ 627         left[1] = y1 + my;
+ 628         left[2] = x2 + mx;
+ 629         left[3] = y2 + my;
+ 630         right[0] = x1 - mx;
+ 631         right[1] = y1 - my;
+ 632         right[2] = x2 - mx;
+ 633         right[3] = y2 - my;
+ 634     }
+ 635 
+ 636     private int computeOffsetCubic(float[] pts, final int off,
+ 637                                    float[] leftOff, float[] rightOff)
+ 638     {
+ 639         // if p1=p2 or p3=p4 it means that the derivative at the endpoint
+ 640         // vanishes, which creates problems with computeOffset. Usually
+ 641         // this happens when this stroker object is trying to winden
+ 642         // a curve with a cusp. What happens is that curveTo splits
+ 643         // the input curve at the cusp, and passes it to this function.
+ 644         // because of inaccuracies in the splitting, we consider points
+ 645         // equal if they're very close to each other.
+ 646         final float x1 = pts[off + 0], y1 = pts[off + 1];
+ 647         final float x2 = pts[off + 2], y2 = pts[off + 3];
+ 648         final float x3 = pts[off + 4], y3 = pts[off + 5];
+ 649         final float x4 = pts[off + 6], y4 = pts[off + 7];
+ 650 
+ 651         float dx4 = x4 - x3;
+ 652         float dy4 = y4 - y3;
+ 653         float dx1 = x2 - x1;
+ 654         float dy1 = y2 - y1;
+ 655 
+ 656         // if p1 == p2 &amp;&amp; p3 == p4: draw line from p1-&gt;p4, unless p1 == p4,
+ 657         // in which case ignore if p1 == p2
+ 658         final boolean p1eqp2 = within(x1,y1,x2,y2, 6f * ulp(y2));
+ 659         final boolean p3eqp4 = within(x3,y3,x4,y4, 6f * ulp(y4));
+ 660         if (p1eqp2 &amp;&amp; p3eqp4) {
+ 661             getLineOffsets(x1, y1, x4, y4, leftOff, rightOff);
+ 662             return 4;
+ 663         } else if (p1eqp2) {
+ 664             dx1 = x3 - x1;
+ 665             dy1 = y3 - y1;
+ 666         } else if (p3eqp4) {
+ 667             dx4 = x4 - x2;
+ 668             dy4 = y4 - y2;
+ 669         }
+ 670 
+ 671         // if p2-p1 and p4-p3 are parallel, that must mean this curve is a line
+ 672         float dotsq = (dx1 * dx4 + dy1 * dy4);
+ 673         dotsq *= dotsq;
+ 674         float l1sq = dx1 * dx1 + dy1 * dy1, l4sq = dx4 * dx4 + dy4 * dy4;
+ 675         if (Helpers.within(dotsq, l1sq * l4sq, 4f * ulp(dotsq))) {
+ 676             getLineOffsets(x1, y1, x4, y4, leftOff, rightOff);
+ 677             return 4;
+ 678         }
+ 679 
+ 680 //      What we're trying to do in this function is to approximate an ideal
+ 681 //      offset curve (call it I) of the input curve B using a bezier curve Bp.
+ 682 //      The constraints I use to get the equations are:
+ 683 //
+ 684 //      1. The computed curve Bp should go through I(0) and I(1). These are
+ 685 //      x1p, y1p, x4p, y4p, which are p1p and p4p. We still need to find
+ 686 //      4 variables: the x and y components of p2p and p3p (i.e. x2p, y2p, x3p, y3p).
+ 687 //
+ 688 //      2. Bp should have slope equal in absolute value to I at the endpoints. So,
+ 689 //      (by the way, the operator || in the comments below means "aligned with".
+ 690 //      It is defined on vectors, so when we say I'(0) || Bp'(0) we mean that
+ 691 //      vectors I'(0) and Bp'(0) are aligned, which is the same as saying
+ 692 //      that the tangent lines of I and Bp at 0 are parallel. Mathematically
+ 693 //      this means (I'(t) || Bp'(t)) &lt;==&gt; (I'(t) = c * Bp'(t)) where c is some
+ 694 //      nonzero constant.)
+ 695 //      I'(0) || Bp'(0) and I'(1) || Bp'(1). Obviously, I'(0) || B'(0) and
+ 696 //      I'(1) || B'(1); therefore, Bp'(0) || B'(0) and Bp'(1) || B'(1).
+ 697 //      We know that Bp'(0) || (p2p-p1p) and Bp'(1) || (p4p-p3p) and the same
+ 698 //      is true for any bezier curve; therefore, we get the equations
+ 699 //          (1) p2p = c1 * (p2-p1) + p1p
+ 700 //          (2) p3p = c2 * (p4-p3) + p4p
+ 701 //      We know p1p, p4p, p2, p1, p3, and p4; therefore, this reduces the number
+ 702 //      of unknowns from 4 to 2 (i.e. just c1 and c2).
+ 703 //      To eliminate these 2 unknowns we use the following constraint:
+ 704 //
+ 705 //      3. Bp(0.5) == I(0.5). Bp(0.5)=(x,y) and I(0.5)=(xi,yi), and I should note
+ 706 //      that I(0.5) is *the only* reason for computing dxm,dym. This gives us
+ 707 //          (3) Bp(0.5) = (p1p + 3 * (p2p + p3p) + p4p)/8, which is equivalent to
+ 708 //          (4) p2p + p3p = (Bp(0.5)*8 - p1p - p4p) / 3
+ 709 //      We can substitute (1) and (2) from above into (4) and we get:
+ 710 //          (5) c1*(p2-p1) + c2*(p4-p3) = (Bp(0.5)*8 - p1p - p4p)/3 - p1p - p4p
+ 711 //      which is equivalent to
+ 712 //          (6) c1*(p2-p1) + c2*(p4-p3) = (4/3) * (Bp(0.5) * 2 - p1p - p4p)
+ 713 //
+ 714 //      The right side of this is a 2D vector, and we know I(0.5), which gives us
+ 715 //      Bp(0.5), which gives us the value of the right side.
+ 716 //      The left side is just a matrix vector multiplication in disguise. It is
+ 717 //
+ 718 //      [x2-x1, x4-x3][c1]
+ 719 //      [y2-y1, y4-y3][c2]
+ 720 //      which, is equal to
+ 721 //      [dx1, dx4][c1]
+ 722 //      [dy1, dy4][c2]
+ 723 //      At this point we are left with a simple linear system and we solve it by
+ 724 //      getting the inverse of the matrix above. Then we use [c1,c2] to compute
+ 725 //      p2p and p3p.
+ 726 
+ 727         float x = (x1 + 3f * (x2 + x3) + x4) / 8f;
+ 728         float y = (y1 + 3f * (y2 + y3) + y4) / 8f;
+ 729         // (dxm,dym) is some tangent of B at t=0.5. This means it's equal to
+ 730         // c*B'(0.5) for some constant c.
+ 731         float dxm = x3 + x4 - x1 - x2, dym = y3 + y4 - y1 - y2;
+ 732 
+ 733         // this computes the offsets at t=0, 0.5, 1, using the property that
+ 734         // for any bezier curve the vectors p2-p1 and p4-p3 are parallel to
+ 735         // the (dx/dt, dy/dt) vectors at the endpoints.
+ 736         computeOffset(dx1, dy1, lineWidth2, offset0);
+ 737         computeOffset(dxm, dym, lineWidth2, offset1);
+ 738         computeOffset(dx4, dy4, lineWidth2, offset2);
+ 739         float x1p = x1 + offset0[0]; // start
+ 740         float y1p = y1 + offset0[1]; // point
+ 741         float xi  = x  + offset1[0]; // interpolation
+ 742         float yi  = y  + offset1[1]; // point
+ 743         float x4p = x4 + offset2[0]; // end
+ 744         float y4p = y4 + offset2[1]; // point
+ 745 
+ 746         float invdet43 = 4f / (3f * (dx1 * dy4 - dy1 * dx4));
+ 747 
+ 748         float two_pi_m_p1_m_p4x = 2f * xi - x1p - x4p;
+ 749         float two_pi_m_p1_m_p4y = 2f * yi - y1p - y4p;
+ 750         float c1 = invdet43 * (dy4 * two_pi_m_p1_m_p4x - dx4 * two_pi_m_p1_m_p4y);
+ 751         float c2 = invdet43 * (dx1 * two_pi_m_p1_m_p4y - dy1 * two_pi_m_p1_m_p4x);
+ 752 
+ 753         float x2p, y2p, x3p, y3p;
+ 754         x2p = x1p + c1*dx1;
+ 755         y2p = y1p + c1*dy1;
+ 756         x3p = x4p + c2*dx4;
+ 757         y3p = y4p + c2*dy4;
+ 758 
+ 759         leftOff[0] = x1p; leftOff[1] = y1p;
+ 760         leftOff[2] = x2p; leftOff[3] = y2p;
+ 761         leftOff[4] = x3p; leftOff[5] = y3p;
+ 762         leftOff[6] = x4p; leftOff[7] = y4p;
+ 763 
+ 764         x1p = x1 - offset0[0]; y1p = y1 - offset0[1];
+ 765         xi = xi - 2f * offset1[0]; yi = yi - 2f * offset1[1];
+ 766         x4p = x4 - offset2[0]; y4p = y4 - offset2[1];
+ 767 
+ 768         two_pi_m_p1_m_p4x = 2f * xi - x1p - x4p;
+ 769         two_pi_m_p1_m_p4y = 2f * yi - y1p - y4p;
+ 770         c1 = invdet43 * (dy4 * two_pi_m_p1_m_p4x - dx4 * two_pi_m_p1_m_p4y);
+ 771         c2 = invdet43 * (dx1 * two_pi_m_p1_m_p4y - dy1 * two_pi_m_p1_m_p4x);
+ 772 
+ 773         x2p = x1p + c1*dx1;
+ 774         y2p = y1p + c1*dy1;
+ 775         x3p = x4p + c2*dx4;
+ 776         y3p = y4p + c2*dy4;
+ 777 
+ 778         rightOff[0] = x1p; rightOff[1] = y1p;
+ 779         rightOff[2] = x2p; rightOff[3] = y2p;
+ 780         rightOff[4] = x3p; rightOff[5] = y3p;
+ 781         rightOff[6] = x4p; rightOff[7] = y4p;
+ 782         return 8;
+ 783     }
+ 784 
+ 785     // return the kind of curve in the right and left arrays.
+ 786     private int computeOffsetQuad(float[] pts, final int off,
+ 787                                   float[] leftOff, float[] rightOff)
+ 788     {
+ 789         final float x1 = pts[off + 0], y1 = pts[off + 1];
+ 790         final float x2 = pts[off + 2], y2 = pts[off + 3];
+ 791         final float x3 = pts[off + 4], y3 = pts[off + 5];
+ 792 
+ 793         final float dx3 = x3 - x2;
+ 794         final float dy3 = y3 - y2;
+ 795         final float dx1 = x2 - x1;
+ 796         final float dy1 = y2 - y1;
+ 797 
+ 798         // this computes the offsets at t = 0, 1
+ 799         computeOffset(dx1, dy1, lineWidth2, offset0);
+ 800         computeOffset(dx3, dy3, lineWidth2, offset1);
+ 801 
+ 802         leftOff[0]  = x1 + offset0[0]; leftOff[1]  = y1 + offset0[1];
+ 803         leftOff[4]  = x3 + offset1[0]; leftOff[5]  = y3 + offset1[1];
+ 804         rightOff[0] = x1 - offset0[0]; rightOff[1] = y1 - offset0[1];
+ 805         rightOff[4] = x3 - offset1[0]; rightOff[5] = y3 - offset1[1];
+ 806 
+ 807         float x1p = leftOff[0]; // start
+ 808         float y1p = leftOff[1]; // point
+ 809         float x3p = leftOff[4]; // end
+ 810         float y3p = leftOff[5]; // point
+ 811 
+ 812         // Corner cases:
+ 813         // 1. If the two control vectors are parallel, we'll end up with NaN's
+ 814         //    in leftOff (and rightOff in the body of the if below), so we'll
+ 815         //    do getLineOffsets, which is right.
+ 816         // 2. If the first or second two points are equal, then (dx1,dy1)==(0,0)
+ 817         //    or (dx3,dy3)==(0,0), so (x1p, y1p)==(x1p+dx1, y1p+dy1)
+ 818         //    or (x3p, y3p)==(x3p-dx3, y3p-dy3), which means that
+ 819         //    computeIntersection will put NaN's in leftOff and right off, and
+ 820         //    we will do getLineOffsets, which is right.
+ 821         computeIntersection(x1p, y1p, x1p+dx1, y1p+dy1, x3p, y3p, x3p-dx3, y3p-dy3, leftOff, 2);
+ 822         float cx = leftOff[2];
+ 823         float cy = leftOff[3];
+ 824 
+ 825         if (!(isFinite(cx) &amp;&amp; isFinite(cy))) {
+ 826             // maybe the right path is not degenerate.
+ 827             x1p = rightOff[0];
+ 828             y1p = rightOff[1];
+ 829             x3p = rightOff[4];
+ 830             y3p = rightOff[5];
+ 831             computeIntersection(x1p, y1p, x1p+dx1, y1p+dy1, x3p, y3p, x3p-dx3, y3p-dy3, rightOff, 2);
+ 832             cx = rightOff[2];
+ 833             cy = rightOff[3];
+ 834             if (!(isFinite(cx) &amp;&amp; isFinite(cy))) {
+ 835                 // both are degenerate. This curve is a line.
+ 836                 getLineOffsets(x1, y1, x3, y3, leftOff, rightOff);
+ 837                 return 4;
+ 838             }
+ 839             // {left,right}Off[0,1,4,5] are already set to the correct values.
+ 840             leftOff[2] = 2f * x2 - cx;
+ 841             leftOff[3] = 2f * y2 - cy;
+ 842             return 6;
+ 843         }
+ 844 
+ 845         // rightOff[2,3] = (x2,y2) - ((left_x2, left_y2) - (x2, y2))
+ 846         // == 2*(x2, y2) - (left_x2, left_y2)
+ 847         rightOff[2] = 2f * x2 - cx;
+ 848         rightOff[3] = 2f * y2 - cy;
+ 849         return 6;
+ 850     }
+ 851 
+ 852     private static boolean isFinite(float x) {
+ 853         return (Float.NEGATIVE_INFINITY &lt; x &amp;&amp; x &lt; Float.POSITIVE_INFINITY);
+ 854     }
+ 855 
+ 856     // If this class is compiled with ecj, then Hotspot crashes when OSR
+ 857     // compiling this function. See bugs 7004570 and 6675699
+ 858     // TODO: until those are fixed, we should work around that by
+ 859     // manually inlining this into curveTo and quadTo.
+ 860 /******************************* WORKAROUND **********************************
+ 861     private void somethingTo(final int type) {
+ 862         // need these so we can update the state at the end of this method
+ 863         final float xf = middle[type-2], yf = middle[type-1];
+ 864         float dxs = middle[2] - middle[0];
+ 865         float dys = middle[3] - middle[1];
+ 866         float dxf = middle[type - 2] - middle[type - 4];
+ 867         float dyf = middle[type - 1] - middle[type - 3];
+ 868         switch(type) {
+ 869         case 6:
+ 870             if ((dxs == 0f &amp;&amp; dys == 0f) ||
+ 871                 (dxf == 0f &amp;&amp; dyf == 0f)) {
+ 872                dxs = dxf = middle[4] - middle[0];
+ 873                dys = dyf = middle[5] - middle[1];
+ 874             }
+ 875             break;
+ 876         case 8:
+ 877             boolean p1eqp2 = (dxs == 0f &amp;&amp; dys == 0f);
+ 878             boolean p3eqp4 = (dxf == 0f &amp;&amp; dyf == 0f);
+ 879             if (p1eqp2) {
+ 880                 dxs = middle[4] - middle[0];
+ 881                 dys = middle[5] - middle[1];
+ 882                 if (dxs == 0f &amp;&amp; dys == 0f) {
+ 883                     dxs = middle[6] - middle[0];
+ 884                     dys = middle[7] - middle[1];
+ 885                 }
+ 886             }
+ 887             if (p3eqp4) {
+ 888                 dxf = middle[6] - middle[2];
+ 889                 dyf = middle[7] - middle[3];
+ 890                 if (dxf == 0f &amp;&amp; dyf == 0f) {
+ 891                     dxf = middle[6] - middle[0];
+ 892                     dyf = middle[7] - middle[1];
+ 893                 }
+ 894             }
+ 895         }
+ 896         if (dxs == 0f &amp;&amp; dys == 0f) {
+ 897             // this happens iff the "curve" is just a point
+ 898             lineTo(middle[0], middle[1]);
+ 899             return;
+ 900         }
+ 901         // if these vectors are too small, normalize them, to avoid future
+ 902         // precision problems.
+ 903         if (Math.abs(dxs) &lt; 0.1f &amp;&amp; Math.abs(dys) &lt; 0.1f) {
+ 904             float len = (float) sqrt(dxs*dxs + dys*dys);
+ 905             dxs /= len;
+ 906             dys /= len;
+ 907         }
+ 908         if (Math.abs(dxf) &lt; 0.1f &amp;&amp; Math.abs(dyf) &lt; 0.1f) {
+ 909             float len = (float) sqrt(dxf*dxf + dyf*dyf);
+ 910             dxf /= len;
+ 911             dyf /= len;
+ 912         }
+ 913 
+ 914         computeOffset(dxs, dys, lineWidth2, offset0);
+ 915         final float mx = offset0[0];
+ 916         final float my = offset0[1];
+ 917         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, mx, my);
+ 918 
+ 919         int nSplits = findSubdivPoints(curve, middle, subdivTs, type, lineWidth2);
+ 920 
+ 921         int kind = 0;
+ 922         BreakPtrIterator it = curve.breakPtsAtTs(middle, type, subdivTs, nSplits);
+ 923         while(it.hasNext()) {
+ 924             int curCurveOff = it.next();
+ 925 
+ 926             switch (type) {
+ 927             case 8:
+ 928                 kind = computeOffsetCubic(middle, curCurveOff, lp, rp);
+ 929                 break;
+ 930             case 6:
+ 931                 kind = computeOffsetQuad(middle, curCurveOff, lp, rp);
+ 932                 break;
+ 933             }
+ 934             emitLineTo(lp[0], lp[1]);
+ 935             switch(kind) {
+ 936             case 8:
+ 937                 emitCurveTo(lp[2], lp[3], lp[4], lp[5], lp[6], lp[7]);
+ 938                 emitCurveToRev(rp[0], rp[1], rp[2], rp[3], rp[4], rp[5]);
+ 939                 break;
+ 940             case 6:
+ 941                 emitQuadTo(lp[2], lp[3], lp[4], lp[5]);
+ 942                 emitQuadToRev(rp[0], rp[1], rp[2], rp[3]);
+ 943                 break;
+ 944             case 4:
+ 945                 emitLineTo(lp[2], lp[3]);
+ 946                 emitLineTo(rp[0], rp[1], true);
+ 947                 break;
+ 948             }
+ 949             emitLineTo(rp[kind - 2], rp[kind - 1], true);
+ 950         }
+ 951 
+ 952         this.cmx = (lp[kind - 2] - rp[kind - 2]) / 2;
+ 953         this.cmy = (lp[kind - 1] - rp[kind - 1]) / 2;
+ 954         this.cdx = dxf;
+ 955         this.cdy = dyf;
+ 956         this.cx0 = xf;
+ 957         this.cy0 = yf;
+ 958         this.prev = DRAWING_OP_TO;
+ 959     }
+ 960 ****************************** END WORKAROUND *******************************/
+ 961 
+ 962     // finds values of t where the curve in pts should be subdivided in order
+ 963     // to get good offset curves a distance of w away from the middle curve.
+ 964     // Stores the points in ts, and returns how many of them there were.
+ 965     private static int findSubdivPoints(final Curve c, float[] pts, float[] ts,
+ 966                                         final int type, final float w)
+ 967     {
+ 968         final float x12 = pts[2] - pts[0];
+ 969         final float y12 = pts[3] - pts[1];
+ 970         // if the curve is already parallel to either axis we gain nothing
+ 971         // from rotating it.
+ 972         if (y12 != 0f &amp;&amp; x12 != 0f) {
+ 973             // we rotate it so that the first vector in the control polygon is
+ 974             // parallel to the x-axis. This will ensure that rotated quarter
+ 975             // circles won't be subdivided.
+ 976             final float hypot = (float) sqrt(x12 * x12 + y12 * y12);
+ 977             final float cos = x12 / hypot;
+ 978             final float sin = y12 / hypot;
+ 979             final float x1 = cos * pts[0] + sin * pts[1];
+ 980             final float y1 = cos * pts[1] - sin * pts[0];
+ 981             final float x2 = cos * pts[2] + sin * pts[3];
+ 982             final float y2 = cos * pts[3] - sin * pts[2];
+ 983             final float x3 = cos * pts[4] + sin * pts[5];
+ 984             final float y3 = cos * pts[5] - sin * pts[4];
+ 985 
+ 986             switch(type) {
+ 987             case 8:
+ 988                 final float x4 = cos * pts[6] + sin * pts[7];
+ 989                 final float y4 = cos * pts[7] - sin * pts[6];
+ 990                 c.set(x1, y1, x2, y2, x3, y3, x4, y4);
+ 991                 break;
+ 992             case 6:
+ 993                 c.set(x1, y1, x2, y2, x3, y3);
+ 994                 break;
+ 995             default:
+ 996             }
+ 997         } else {
+ 998             c.set(pts, type);
+ 999         }
+1000 
+1001         int ret = 0;
+1002         // we subdivide at values of t such that the remaining rotated
+1003         // curves are monotonic in x and y.
+1004         ret += c.dxRoots(ts, ret);
+1005         ret += c.dyRoots(ts, ret);
+1006         // subdivide at inflection points.
+1007         if (type == 8) {
+1008             // quadratic curves can't have inflection points
+1009             ret += c.infPoints(ts, ret);
+1010         }
+1011 
+1012         // now we must subdivide at points where one of the offset curves will have
+1013         // a cusp. This happens at ts where the radius of curvature is equal to w.
+1014         ret += c.rootsOfROCMinusW(ts, ret, w, 0.0001f);
+1015 
+1016         ret = Helpers.filterOutNotInAB(ts, 0, ret, 0.0001f, 0.9999f);
+1017         Helpers.isort(ts, 0, ret);
+1018         return ret;
+1019     }
+1020 
+1021     @Override public void curveTo(float x1, float y1,
+1022                                   float x2, float y2,
+1023                                   float x3, float y3)
+1024     {
+1025         final float[] mid = middle;
+1026 
+1027         mid[0] = cx0; mid[1] = cy0;
+1028         mid[2] = x1;  mid[3] = y1;
+1029         mid[4] = x2;  mid[5] = y2;
+1030         mid[6] = x3;  mid[7] = y3;
+1031 
+1032         // inlined version of somethingTo(8);
+1033         // See the TODO on somethingTo
+1034 
+1035         // need these so we can update the state at the end of this method
+1036         final float xf = mid[6], yf = mid[7];
+1037         float dxs = mid[2] - mid[0];
+1038         float dys = mid[3] - mid[1];
+1039         float dxf = mid[6] - mid[4];
+1040         float dyf = mid[7] - mid[5];
+1041 
+1042         boolean p1eqp2 = (dxs == 0f &amp;&amp; dys == 0f);
+1043         boolean p3eqp4 = (dxf == 0f &amp;&amp; dyf == 0f);
+1044         if (p1eqp2) {
+1045             dxs = mid[4] - mid[0];
+1046             dys = mid[5] - mid[1];
+1047             if (dxs == 0f &amp;&amp; dys == 0f) {
+1048                 dxs = mid[6] - mid[0];
+1049                 dys = mid[7] - mid[1];
+1050             }
+1051         }
+1052         if (p3eqp4) {
+1053             dxf = mid[6] - mid[2];
+1054             dyf = mid[7] - mid[3];
+1055             if (dxf == 0f &amp;&amp; dyf == 0f) {
+1056                 dxf = mid[6] - mid[0];
+1057                 dyf = mid[7] - mid[1];
+1058             }
+1059         }
+1060         if (dxs == 0f &amp;&amp; dys == 0f) {
+1061             // this happens if the "curve" is just a point
+1062             lineTo(mid[0], mid[1]);
+1063             return;
+1064         }
+1065 
+1066         // if these vectors are too small, normalize them, to avoid future
+1067         // precision problems.
+1068         if (Math.abs(dxs) &lt; 0.1f &amp;&amp; Math.abs(dys) &lt; 0.1f) {
+1069             float len = (float) sqrt(dxs*dxs + dys*dys);
+1070             dxs /= len;
+1071             dys /= len;
+1072         }
+1073         if (Math.abs(dxf) &lt; 0.1f &amp;&amp; Math.abs(dyf) &lt; 0.1f) {
+1074             float len = (float) sqrt(dxf*dxf + dyf*dyf);
+1075             dxf /= len;
+1076             dyf /= len;
+1077         }
+1078 
+1079         computeOffset(dxs, dys, lineWidth2, offset0);
+1080         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1]);
+1081 
+1082         int nSplits = findSubdivPoints(curve, mid, subdivTs, 8, lineWidth2);
+1083 
+1084         final float[] l = lp;
+1085         final float[] r = rp;
+1086 
+1087         int kind = 0;
+1088         BreakPtrIterator it = curve.breakPtsAtTs(mid, 8, subdivTs, nSplits);
+1089         while(it.hasNext()) {
+1090             int curCurveOff = it.next();
+1091 
+1092             kind = computeOffsetCubic(mid, curCurveOff, l, r);
+1093             emitLineTo(l[0], l[1]);
+1094 
+1095             switch(kind) {
+1096             case 8:
+1097                 emitCurveTo(l[2], l[3], l[4], l[5], l[6], l[7]);
+1098                 emitCurveToRev(r[0], r[1], r[2], r[3], r[4], r[5]);
+1099                 break;
+1100             case 4:
+1101                 emitLineTo(l[2], l[3]);
+1102                 emitLineToRev(r[0], r[1]);
+1103                 break;
+1104             default:
+1105             }
+1106             emitLineToRev(r[kind - 2], r[kind - 1]);
+1107         }
+1108 
+1109         this.cmx = (l[kind - 2] - r[kind - 2]) / 2f;
+1110         this.cmy = (l[kind - 1] - r[kind - 1]) / 2f;
+1111         this.cdx = dxf;
+1112         this.cdy = dyf;
+1113         this.cx0 = xf;
+1114         this.cy0 = yf;
+1115         this.prev = DRAWING_OP_TO;
+1116     }
+1117 
+1118     @Override public void quadTo(float x1, float y1, float x2, float y2) {
+1119         final float[] mid = middle;
+1120 
+1121         mid[0] = cx0; mid[1] = cy0;
+1122         mid[2] = x1;  mid[3] = y1;
+1123         mid[4] = x2;  mid[5] = y2;
+1124 
+1125         // inlined version of somethingTo(8);
+1126         // See the TODO on somethingTo
+1127 
+1128         // need these so we can update the state at the end of this method
+1129         final float xf = mid[4], yf = mid[5];
+1130         float dxs = mid[2] - mid[0];
+1131         float dys = mid[3] - mid[1];
+1132         float dxf = mid[4] - mid[2];
+1133         float dyf = mid[5] - mid[3];
+1134         if ((dxs == 0f &amp;&amp; dys == 0f) || (dxf == 0f &amp;&amp; dyf == 0f)) {
+1135             dxs = dxf = mid[4] - mid[0];
+1136             dys = dyf = mid[5] - mid[1];
+1137         }
+1138         if (dxs == 0f &amp;&amp; dys == 0f) {
+1139             // this happens if the "curve" is just a point
+1140             lineTo(mid[0], mid[1]);
+1141             return;
+1142         }
+1143         // if these vectors are too small, normalize them, to avoid future
+1144         // precision problems.
+1145         if (Math.abs(dxs) &lt; 0.1f &amp;&amp; Math.abs(dys) &lt; 0.1f) {
+1146             float len = (float) sqrt(dxs*dxs + dys*dys);
+1147             dxs /= len;
+1148             dys /= len;
+1149         }
+1150         if (Math.abs(dxf) &lt; 0.1f &amp;&amp; Math.abs(dyf) &lt; 0.1f) {
+1151             float len = (float) sqrt(dxf*dxf + dyf*dyf);
+1152             dxf /= len;
+1153             dyf /= len;
+1154         }
+1155 
+1156         computeOffset(dxs, dys, lineWidth2, offset0);
+1157         drawJoin(cdx, cdy, cx0, cy0, dxs, dys, cmx, cmy, offset0[0], offset0[1]);
+1158 
+1159         int nSplits = findSubdivPoints(curve, mid, subdivTs, 6, lineWidth2);
+1160 
+1161         final float[] l = lp;
+1162         final float[] r = rp;
+1163 
+1164         int kind = 0;
+1165         BreakPtrIterator it = curve.breakPtsAtTs(mid, 6, subdivTs, nSplits);
+1166         while(it.hasNext()) {
+1167             int curCurveOff = it.next();
+1168 
+1169             kind = computeOffsetQuad(mid, curCurveOff, l, r);
+1170             emitLineTo(l[0], l[1]);
+1171 
+1172             switch(kind) {
+1173             case 6:
+1174                 emitQuadTo(l[2], l[3], l[4], l[5]);
+1175                 emitQuadToRev(r[0], r[1], r[2], r[3]);
+1176                 break;
+1177             case 4:
+1178                 emitLineTo(l[2], l[3]);
+1179                 emitLineToRev(r[0], r[1]);
+1180                 break;
+1181             default:
+1182             }
+1183             emitLineToRev(r[kind - 2], r[kind - 1]);
+1184         }
+1185 
+1186         this.cmx = (l[kind - 2] - r[kind - 2]) / 2f;
+1187         this.cmy = (l[kind - 1] - r[kind - 1]) / 2f;
+1188         this.cdx = dxf;
+1189         this.cdy = dyf;
+1190         this.cx0 = xf;
+1191         this.cy0 = yf;
+1192         this.prev = DRAWING_OP_TO;
+1193     }
+1194 
+1195     @Override public long getNativeConsumer() {
+1196         throw new InternalError("Stroker doesn't use a native consumer");
+1197     }
+1198 
+1199     // a stack of polynomial curves where each curve shares endpoints with
+1200     // adjacent ones.
+1201     static final class PolyStack {
+1202         private static final byte TYPE_LINETO  = (byte) 0;
+1203         private static final byte TYPE_QUADTO  = (byte) 1;
+1204         private static final byte TYPE_CUBICTO = (byte) 2;
+1205 
+1206         float[] curves;
+1207         int end;
+1208         byte[] curveTypes;
+1209         int numCurves;
+1210 
+1211         // per-thread renderer context
+1212         final RendererContext rdrCtx;
+1213 
+1214         // per-thread initial arrays (large enough to satisfy most usages: 8192)
+1215         // +1 to avoid recycling in Helpers.widenArray()
+1216         private final float[] curves_initial = new float[INITIAL_LARGE_ARRAY + 1]; // 32K
+1217         private final byte[] curveTypes_initial = new byte[INITIAL_LARGE_ARRAY + 1]; // 8K
+1218 
+1219         // used marks (stats only)
+1220         int curveTypesUseMark;
+1221         int curvesUseMark;
+1222 
+1223         /**
+1224          * Constructor
+1225          * @param rdrCtx per-thread renderer context
+1226          */
+1227         PolyStack(final RendererContext rdrCtx) {
+1228             this.rdrCtx = rdrCtx;
+1229 
+1230             curves = curves_initial;
+1231             curveTypes = curveTypes_initial;
+1232             end = 0;
+1233             numCurves = 0;
+1234 
+<a name="8" id="anc8"></a><span class="changed">1235             if (doStats) {</span>
+1236                 curveTypesUseMark = 0;
+1237                 curvesUseMark = 0;
+1238             }
+1239         }
+1240 
+1241         /**
+1242          * Disposes this PolyStack:
+1243          * clean up before reusing this instance
+1244          */
+1245         void dispose() {
+1246             end = 0;
+1247             numCurves = 0;
+1248 
+<a name="9" id="anc9"></a><span class="changed">1249             if (doStats) {</span>
+<span class="changed">1250                 RendererContext.stats.stat_rdr_poly_stack_types</span>
+1251                     .add(curveTypesUseMark);
+<a name="10" id="anc10"></a><span class="changed">1252                 RendererContext.stats.stat_rdr_poly_stack_curves</span>
+1253                     .add(curvesUseMark);
+1254                 // reset marks
+1255                 curveTypesUseMark = 0;
+1256                 curvesUseMark = 0;
+1257             }
+1258 
+1259             // Return arrays:
+1260             // curves and curveTypes are kept dirty
+1261             if (curves != curves_initial) {
+1262                 rdrCtx.putDirtyFloatArray(curves);
+1263                 curves = curves_initial;
+1264             }
+1265 
+1266             if (curveTypes != curveTypes_initial) {
+1267                 rdrCtx.putDirtyByteArray(curveTypes);
+1268                 curveTypes = curveTypes_initial;
+1269             }
+1270         }
+1271 
+1272         private void ensureSpace(final int n) {
+1273             // use substraction to avoid integer overflow:
+1274             if (curves.length - end &lt; n) {
+<a name="11" id="anc11"></a><span class="changed">1275                 if (doStats) {</span>
+<span class="changed">1276                     RendererContext.stats.stat_array_stroker_polystack_curves</span>
+1277                         .add(end + n);
+1278                 }
+1279                 curves = rdrCtx.widenDirtyFloatArray(curves, end, end + n);
+1280             }
+1281             if (curveTypes.length &lt;= numCurves) {
+<a name="12" id="anc12"></a><span class="changed">1282                 if (doStats) {</span>
+<span class="changed">1283                     RendererContext.stats.stat_array_stroker_polystack_curveTypes</span>
+1284                         .add(numCurves + 1);
+1285                 }
+1286                 curveTypes = rdrCtx.widenDirtyByteArray(curveTypes,
+1287                                                         numCurves,
+1288                                                         numCurves + 1);
+1289             }
+1290         }
+1291 
+1292         void pushCubic(float x0, float y0,
+1293                        float x1, float y1,
+1294                        float x2, float y2)
+1295         {
+1296             ensureSpace(6);
+1297             curveTypes[numCurves++] = TYPE_CUBICTO;
+1298             // we reverse the coordinate order to make popping easier
+1299             final float[] _curves = curves;
+1300             int e = end;
+1301             _curves[e++] = x2;    _curves[e++] = y2;
+1302             _curves[e++] = x1;    _curves[e++] = y1;
+1303             _curves[e++] = x0;    _curves[e++] = y0;
+1304             end = e;
+1305         }
+1306 
+1307         void pushQuad(float x0, float y0,
+1308                       float x1, float y1)
+1309         {
+1310             ensureSpace(4);
+1311             curveTypes[numCurves++] = TYPE_QUADTO;
+1312             final float[] _curves = curves;
+1313             int e = end;
+1314             _curves[e++] = x1;    _curves[e++] = y1;
+1315             _curves[e++] = x0;    _curves[e++] = y0;
+1316             end = e;
+1317         }
+1318 
+1319         void pushLine(float x, float y) {
+1320             ensureSpace(2);
+1321             curveTypes[numCurves++] = TYPE_LINETO;
+1322             curves[end++] = x;    curves[end++] = y;
+1323         }
+1324 
+1325         void popAll(PathConsumer2D io) {
+<a name="13" id="anc13"></a><span class="changed">1326             if (doStats) {</span>
+1327                 // update used marks:
+1328                 if (numCurves &gt; curveTypesUseMark) {
+1329                     curveTypesUseMark = numCurves;
+1330                 }
+1331                 if (end &gt; curvesUseMark) {
+1332                     curvesUseMark = end;
+1333                 }
+1334             }
+1335             final byte[]  _curveTypes = curveTypes;
+1336             final float[] _curves = curves;
+1337             int nc = numCurves;
+1338             int e  = end;
+1339 
+1340             while (nc != 0) {
+1341                 switch(_curveTypes[--nc]) {
+1342                 case TYPE_LINETO:
+1343                     e -= 2;
+1344                     io.lineTo(_curves[e], _curves[e+1]);
+1345                     continue;
+1346                 case TYPE_QUADTO:
+1347                     e -= 4;
+1348                     io.quadTo(_curves[e+0], _curves[e+1],
+1349                               _curves[e+2], _curves[e+3]);
+1350                     continue;
+1351                 case TYPE_CUBICTO:
+1352                     e -= 6;
+1353                     io.curveTo(_curves[e+0], _curves[e+1],
+1354                                _curves[e+2], _curves[e+3],
+1355                                _curves[e+4], _curves[e+5]);
+1356                     continue;
+1357                 default:
+1358                 }
+1359             }
+1360             numCurves = 0;
+1361             end = 0;
+1362         }
+1363 
+1364         @Override
+1365         public String toString() {
+1366             String ret = "";
+1367             int nc = numCurves;
+1368             int e  = end;
+1369             int len;
+1370             while (nc != 0) {
+1371                 switch(curveTypes[--nc]) {
+1372                 case TYPE_LINETO:
+1373                     len = 2;
+1374                     ret += "line: ";
+1375                     break;
+1376                 case TYPE_QUADTO:
+1377                     len = 4;
+1378                     ret += "quad: ";
+1379                     break;
+1380                 case TYPE_CUBICTO:
+1381                     len = 6;
+1382                     ret += "cubic: ";
+1383                     break;
+1384                 default:
+1385                     len = 0;
+1386                 }
+1387                 e -= len;
+1388                 ret += Arrays.toString(Arrays.copyOfRange(curves, e, e+len))
+1389                                        + "\n";
+1390             }
+1391             return ret;
+1392         }
+1393     }
+1394 }
+<a name="14" id="anc14"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="14" type="hidden" /></form></body></html>

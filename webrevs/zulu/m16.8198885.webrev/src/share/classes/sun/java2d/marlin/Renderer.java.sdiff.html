@@ -1,0 +1,915 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/OffHeapArray.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Renderer.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  37     static final boolean ENABLE_BLOCK_FLAGS_HEURISTICS = MarlinProperties.isUseTileFlagsWithHeuristics();
+  38 
+  39     private static final int ALL_BUT_LSB = 0xFFFFFFFE;
+  40     private static final int ERR_STEP_MAX = 0x7FFFFFFF; // = 2^31 - 1
+  41 
+  42     private static final double POWER_2_TO_32 = 0x1.0p32d;
+  43 
+  44     // use float to make tosubpix methods faster (no int to float conversion)
+  45     static final float SUBPIXEL_SCALE_X = (float) SUBPIXEL_POSITIONS_X;
+  46     static final float SUBPIXEL_SCALE_Y = (float) SUBPIXEL_POSITIONS_Y;
+  47     static final int SUBPIXEL_MASK_X = SUBPIXEL_POSITIONS_X - 1;
+  48     static final int SUBPIXEL_MASK_Y = SUBPIXEL_POSITIONS_Y - 1;
+  49 
+  50     static final float RDR_OFFSET_X = 0.5f / SUBPIXEL_SCALE_X;
+  51     static final float RDR_OFFSET_Y = 0.5f / SUBPIXEL_SCALE_Y;
+  52 
+  53     // number of subpixels corresponding to a tile line
+  54     private static final int SUBPIXEL_TILE
+  55         = TILE_H &lt;&lt; SUBPIXEL_LG_POSITIONS_Y;
+  56 
+<span class="changed">  57     // 2048 (pixelSize) pixels (height) x 8 subpixels = 64K</span>
+  58     static final int INITIAL_BUCKET_ARRAY
+<span class="changed">  59         = INITIAL_PIXEL_DIM * SUBPIXEL_POSITIONS_Y;</span>
+  60 
+  61     // crossing capacity = edges count / 4 ~ 1024
+  62     static final int INITIAL_CROSSING_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 2;
+  63 
+  64     // common to all types of input path segments.
+  65     // OFFSET as bytes
+  66     // only integer values:
+  67     public static final long OFF_CURX_OR  = 0;
+  68     public static final long OFF_ERROR    = OFF_CURX_OR  + SIZE_INT;
+  69     public static final long OFF_BUMP_X   = OFF_ERROR    + SIZE_INT;
+  70     public static final long OFF_BUMP_ERR = OFF_BUMP_X   + SIZE_INT;
+  71     public static final long OFF_NEXT     = OFF_BUMP_ERR + SIZE_INT;
+  72     public static final long OFF_YMAX     = OFF_NEXT     + SIZE_INT;
+  73 
+  74     // size of one edge in bytes
+  75     public static final int SIZEOF_EDGE_BYTES = (int)(OFF_YMAX + SIZE_INT);
+  76 
+  77     // curve break into lines
+  78     // cubic error in subpixels to decrement step
+  79     private static final float CUB_DEC_ERR_SUBPIX
+<span class="changed">  80         = MarlinProperties.getCubicDecD2() * (NORM_SUBPIXELS / 8.0f); // 1 pixel</span>
+  81     // cubic error in subpixels to increment step
+  82     private static final float CUB_INC_ERR_SUBPIX
+<span class="changed">  83         = MarlinProperties.getCubicIncD1() * (NORM_SUBPIXELS / 8.0f); // 0.4 pixel</span>
+
+
+  84 
+  85     // TestNonAARasterization (JDK-8170879): cubics
+  86     // bad paths (59294/100000 == 59,29%, 94335 bad pixels (avg = 1,59), 3966 warnings (avg = 0,07)
+
+
+  87 
+  88     // cubic bind length to decrement step
+  89     public static final float CUB_DEC_BND
+  90         = 8.0f * CUB_DEC_ERR_SUBPIX;
+  91     // cubic bind length to increment step
+  92     public static final float CUB_INC_BND
+  93         = 8.0f * CUB_INC_ERR_SUBPIX;
+  94 
+  95     // cubic countlg
+  96     public static final int CUB_COUNT_LG = 2;
+  97     // cubic count = 2^countlg
+  98     private static final int CUB_COUNT = 1 &lt;&lt; CUB_COUNT_LG;
+  99     // cubic count^2 = 4^countlg
+ 100     private static final int CUB_COUNT_2 = 1 &lt;&lt; (2 * CUB_COUNT_LG);
+ 101     // cubic count^3 = 8^countlg
+ 102     private static final int CUB_COUNT_3 = 1 &lt;&lt; (3 * CUB_COUNT_LG);
+ 103     // cubic dt = 1 / count
+ 104     private static final float CUB_INV_COUNT = 1.0f / CUB_COUNT;
+ 105     // cubic dt^2 = 1 / count^2 = 1 / 4^countlg
+ 106     private static final float CUB_INV_COUNT_2 = 1.0f / CUB_COUNT_2;
+ 107     // cubic dt^3 = 1 / count^3 = 1 / 8^countlg
+ 108     private static final float CUB_INV_COUNT_3 = 1.0f / CUB_COUNT_3;
+ 109 
+ 110     // quad break into lines
+ 111     // quadratic error in subpixels
+ 112     private static final float QUAD_DEC_ERR_SUBPIX
+<span class="changed"> 113         = MarlinProperties.getQuadDecD2() * (NORM_SUBPIXELS / 8.0f); // 0.5 pixel</span>
+ 114 
+ 115     // TestNonAARasterization (JDK-8170879): quads
+ 116     // bad paths (62916/100000 == 62,92%, 103818 bad pixels (avg = 1,65), 6514 warnings (avg = 0,10)
+
+
+ 117 
+ 118     // quadratic bind length to decrement step
+ 119     public static final float QUAD_DEC_BND
+ 120         = 8.0f * QUAD_DEC_ERR_SUBPIX;
+ 121 
+ 122 //////////////////////////////////////////////////////////////////////////////
+ 123 //  SCAN LINE
+ 124 //////////////////////////////////////////////////////////////////////////////
+ 125     // crossings ie subpixel edge x coordinates
+ 126     private int[] crossings;
+ 127     // auxiliary storage for crossings (merge sort)
+ 128     private int[] aux_crossings;
+ 129 
+ 130     // indices into the segment pointer lists. They indicate the "active"
+ 131     // sublist in the segment lists (the portion of the list that contains
+ 132     // all the segments that cross the next scan line).
+ 133     private int edgeCount;
+ 134     private int[] edgePtrs;
+ 135     // auxiliary storage for edge pointers (merge sort)
+ 136     private int[] aux_edgePtrs;
+
+</pre><hr></hr><pre>
+ 163     private int[] edgeBucketCounts; // 2*newedges + (1 if pruning needed)
+ 164     // used range for edgeBuckets / edgeBucketCounts
+ 165     private int buckets_minY;
+ 166     private int buckets_maxY;
+ 167 
+ 168     // edgeBuckets ref (clean)
+ 169     private final IntArrayCache.Reference edgeBuckets_ref;
+ 170     // edgeBucketCounts ref (clean)
+ 171     private final IntArrayCache.Reference edgeBucketCounts_ref;
+ 172 
+ 173     // Flattens using adaptive forward differencing. This only carries out
+ 174     // one iteration of the AFD loop. All it does is update AFD variables (i.e.
+ 175     // X0, Y0, D*[X|Y], COUNT; not variables used for computing scanline crossings).
+ 176     private void quadBreakIntoLinesAndAdd(float x0, float y0,
+ 177                                           final Curve c,
+ 178                                           final float x2, final float y2)
+ 179     {
+ 180         int count = 1; // dt = 1 / count
+ 181 
+ 182         // maximum(ddX|Y) = norm(dbx, dby) * dt^2 (= 1)
+<span class="changed"> 183         float maxDD = Math.abs(c.dbx) + Math.abs(c.dby);</span>
+ 184 
+ 185         final float _DEC_BND = QUAD_DEC_BND;
+ 186 
+ 187         while (maxDD &gt;= _DEC_BND) {
+ 188             // divide step by half:
+ 189             maxDD /= 4.0f; // error divided by 2^2 = 4
+ 190 
+ 191             count &lt;&lt;= 1;
+ 192             if (DO_STATS) {
+ 193                 rdrCtx.stats.stat_rdr_quadBreak_dec.add(count);
+ 194             }
+ 195         }
+ 196 
+<span class="changed"> 197         int nL = 0; // line count</span>
+
+ 198         if (count &gt; 1) {
+ 199             final float icount = 1.0f / count; // dt
+ 200             final float icount2 = icount * icount; // dt^2
+ 201 
+ 202             final float ddx = c.dbx * icount2;
+ 203             final float ddy = c.dby * icount2;
+ 204             float dx = c.bx * icount2 + c.cx * icount;
+ 205             float dy = c.by * icount2 + c.cy * icount;
+ 206 
+<span class="changed"> 207             float x1, y1;</span>
+<span class="changed"> 208 </span>
+<span class="changed"> 209             while (--count &gt; 0) {</span>
+<span class="changed"> 210                 x1 = x0 + dx;</span>
+<span class="changed"> 211                 dx += ddx;</span>
+<span class="changed"> 212                 y1 = y0 + dy;</span>
+<span class="changed"> 213                 dy += ddy;</span>
+ 214 
+ 215                 addLine(x0, y0, x1, y1);
+<span class="removed"> 216 </span>
+<span class="removed"> 217                 if (DO_STATS) { nL++; }</span>
+ 218                 x0 = x1;
+ 219                 y0 = y1;
+ 220             }
+ 221         }
+ 222         addLine(x0, y0, x2, y2);
+ 223 
+ 224         if (DO_STATS) {
+<span class="changed"> 225             rdrCtx.stats.stat_rdr_quadBreak.add(nL + 1);</span>
+ 226         }
+ 227     }
+ 228 
+ 229     // x0, y0 and x3,y3 are the endpoints of the curve. We could compute these
+ 230     // using c.xat(0),c.yat(0) and c.xat(1),c.yat(1), but this might introduce
+ 231     // numerical errors, and our callers already have the exact values.
+ 232     // Another alternative would be to pass all the control points, and call
+ 233     // c.set here, but then too many numbers are passed around.
+ 234     private void curveBreakIntoLinesAndAdd(float x0, float y0,
+ 235                                            final Curve c,
+ 236                                            final float x3, final float y3)
+ 237     {
+ 238         int count           = CUB_COUNT;
+ 239         final float icount  = CUB_INV_COUNT;   // dt
+ 240         final float icount2 = CUB_INV_COUNT_2; // dt^2
+ 241         final float icount3 = CUB_INV_COUNT_3; // dt^3
+ 242 
+ 243         // the dx and dy refer to forward differencing variables, not the last
+ 244         // coefficients of the "points" polynomial
+ 245         float dddx, dddy, ddx, ddy, dx, dy;
+ 246         dddx = 2.0f * c.dax * icount3;
+ 247         dddy = 2.0f * c.day * icount3;
+ 248         ddx = dddx + c.dbx * icount2;
+ 249         ddy = dddy + c.dby * icount2;
+ 250         dx = c.ax * icount3 + c.bx * icount2 + c.cx * icount;
+ 251         dy = c.ay * icount3 + c.by * icount2 + c.cy * icount;
+ 252 
+<span class="removed"> 253         // we use x0, y0 to walk the line</span>
+<span class="removed"> 254         float x1 = x0, y1 = y0;</span>
+ 255         int nL = 0; // line count
+ 256 
+ 257         final float _DEC_BND = CUB_DEC_BND;
+ 258         final float _INC_BND = CUB_INC_BND;
+
+ 259 
+<span class="changed"> 260         while (count &gt; 0) {</span>
+<span class="changed"> 261             // divide step by half:</span>
+<span class="changed"> 262             while (Math.abs(ddx) + Math.abs(ddy) &gt;= _DEC_BND) {</span>
+<span class="changed"> 263                 dddx /= 8.0f;</span>
+<span class="changed"> 264                 dddy /= 8.0f;</span>
+<span class="changed"> 265                 ddx = ddx / 4.0f - dddx;</span>
+<span class="changed"> 266                 ddy = ddy / 4.0f - dddy;</span>
+<span class="changed"> 267                 dx = (dx - ddx) / 2.0f;</span>
+<span class="changed"> 268                 dy = (dy - ddy) / 2.0f;</span>
+<span class="changed"> 269 </span>
+<span class="changed"> 270                 count &lt;&lt;= 1;</span>
+<span class="changed"> 271                 if (DO_STATS) {</span>
+<span class="changed"> 272                     rdrCtx.stats.stat_rdr_curveBreak_dec.add(count);</span>
+<span class="changed"> 273                 }</span>
+<span class="changed"> 274             }</span>
+ 275 
+<span class="changed"> 276             // double step:</span>
+ 277             // can only do this on even "count" values, because we must divide count by 2
+<span class="changed"> 278             while (count % 2 == 0</span>
+<span class="changed"> 279                    &amp;&amp; Math.abs(dx) + Math.abs(dy) &lt;= _INC_BND)</span>
+<span class="changed"> 280             {</span>
+ 281                 dx = 2.0f * dx + ddx;
+ 282                 dy = 2.0f * dy + ddy;
+ 283                 ddx = 4.0f * (ddx + dddx);
+ 284                 ddy = 4.0f * (ddy + dddy);
+ 285                 dddx *= 8.0f;
+ 286                 dddy *= 8.0f;
+ 287 
+ 288                 count &gt;&gt;= 1;
+ 289                 if (DO_STATS) {
+ 290                     rdrCtx.stats.stat_rdr_curveBreak_inc.add(count);
+ 291                 }
+ 292             }
+<span class="changed"> 293             if (--count &gt; 0) {</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 294                 x1 += dx;
+<span class="removed"> 295                 dx += ddx;</span>
+<span class="removed"> 296                 ddx += dddx;</span>
+ 297                 y1 += dy;
+
+ 298                 dy += ddy;
+
+ 299                 ddy += dddy;
+<span class="removed"> 300             } else {</span>
+<span class="removed"> 301                 x1 = x3;</span>
+<span class="removed"> 302                 y1 = y3;</span>
+<span class="removed"> 303             }</span>
+ 304 
+ 305             addLine(x0, y0, x1, y1);
+<span class="removed"> 306 </span>
+<span class="removed"> 307             if (DO_STATS) { nL++; }</span>
+ 308             x0 = x1;
+ 309             y0 = y1;
+ 310         }
+
+
+ 311         if (DO_STATS) {
+<span class="changed"> 312             rdrCtx.stats.stat_rdr_curveBreak.add(nL);</span>
+ 313         }
+ 314     }
+ 315 
+ 316     private void addLine(float x1, float y1, float x2, float y2) {
+ 317         if (DO_MONITORS) {
+ 318             rdrCtx.stats.mon_rdr_addLine.start();
+ 319         }
+ 320         if (DO_STATS) {
+ 321             rdrCtx.stats.stat_rdr_addLine.add(1);
+ 322         }
+ 323         int or = 1; // orientation of the line. 1 if y increases, 0 otherwise.
+ 324         if (y2 &lt; y1) {
+ 325             or = 0;
+ 326             float tmp = y2;
+ 327             y2 = y1;
+ 328             y1 = tmp;
+ 329             tmp = x2;
+ 330             x2 = x1;
+ 331             x1 = tmp;
+ 332         }
+
+</pre><hr></hr><pre>
+ 520 
+ 521     /* block flags (0|1) */
+ 522     private int[] blkFlags;
+ 523 
+ 524     // blkFlags ref (clean)
+ 525     private final IntArrayCache.Reference blkFlags_ref;
+ 526 
+ 527     Renderer(final RendererContext rdrCtx) {
+ 528         this.rdrCtx = rdrCtx;
+ 529         this.curve = rdrCtx.curve;
+ 530         this.cache = rdrCtx.cache;
+ 531 
+ 532         this.edges = rdrCtx.newOffHeapArray(INITIAL_EDGES_CAPACITY); // 96K
+ 533 
+ 534         edgeBuckets_ref      = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+ 535         edgeBucketCounts_ref = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+ 536 
+ 537         edgeBuckets      = edgeBuckets_ref.initial;
+ 538         edgeBucketCounts = edgeBucketCounts_ref.initial;
+ 539 
+<span class="changed"> 540         // 2048 (pixelsize) pixel large</span>
+<span class="changed"> 541         alphaLine_ref = rdrCtx.newCleanIntArrayRef(INITIAL_AA_ARRAY); // 8K</span>
+ 542         alphaLine     = alphaLine_ref.initial;
+ 543 
+ 544         crossings_ref     = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 545         aux_crossings_ref = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 546         edgePtrs_ref      = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 547         aux_edgePtrs_ref  = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 548 
+ 549         crossings     = crossings_ref.initial;
+ 550         aux_crossings = aux_crossings_ref.initial;
+ 551         edgePtrs      = edgePtrs_ref.initial;
+ 552         aux_edgePtrs  = aux_edgePtrs_ref.initial;
+ 553 
+ 554         blkFlags_ref = rdrCtx.newCleanIntArrayRef(INITIAL_ARRAY); // 1K = 1 tile line
+ 555         blkFlags     = blkFlags_ref.initial;
+ 556     }
+ 557 
+ 558     Renderer init(final int pix_boundsX, final int pix_boundsY,
+ 559                   final int pix_boundsWidth, final int pix_boundsHeight,
+ 560                   final int windingRule)
+ 561     {
+
+</pre><hr></hr><pre>
+ 679         this.x0 = sx;
+ 680         this.y0 = sy;
+ 681     }
+ 682 
+ 683     @Override
+ 684     public void lineTo(final float pix_x1, final float pix_y1) {
+ 685         final float x1 = tosubpixx(pix_x1);
+ 686         final float y1 = tosubpixy(pix_y1);
+ 687         addLine(x0, y0, x1, y1);
+ 688         x0 = x1;
+ 689         y0 = y1;
+ 690     }
+ 691 
+ 692     @Override
+ 693     public void curveTo(final float pix_x1, final float pix_y1,
+ 694                         final float pix_x2, final float pix_y2,
+ 695                         final float pix_x3, final float pix_y3)
+ 696     {
+ 697         final float xe = tosubpixx(pix_x3);
+ 698         final float ye = tosubpixy(pix_y3);
+<span class="changed"> 699         curve.set(x0, y0, tosubpixx(pix_x1), tosubpixy(pix_y1),</span>
+<span class="changed"> 700                   tosubpixx(pix_x2), tosubpixy(pix_y2), xe, ye);</span>
+
+
+ 701         curveBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 702         x0 = xe;
+ 703         y0 = ye;
+ 704     }
+ 705 
+ 706     @Override
+ 707     public void quadTo(final float pix_x1, final float pix_y1,
+ 708                        final float pix_x2, final float pix_y2)
+ 709     {
+ 710         final float xe = tosubpixx(pix_x2);
+ 711         final float ye = tosubpixy(pix_y2);
+<span class="changed"> 712         curve.set(x0, y0, tosubpixx(pix_x1), tosubpixy(pix_y1), xe, ye);</span>
+
+
+ 713         quadBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 714         x0 = xe;
+ 715         y0 = ye;
+ 716     }
+ 717 
+ 718     @Override
+ 719     public void closePath() {
+ 720         if (x0 != sx0 || y0 != sy0) {
+ 721             addLine(x0, y0, sx0, sy0);
+ 722             x0 = sx0;
+ 723             y0 = sy0;
+ 724         }
+ 725     }
+ 726 
+ 727     @Override
+ 728     public void pathDone() {
+ 729         closePath();
+ 730     }
+ 731 
+ 732     @Override
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  37     static final boolean ENABLE_BLOCK_FLAGS_HEURISTICS = MarlinProperties.isUseTileFlagsWithHeuristics();
+  38 
+  39     private static final int ALL_BUT_LSB = 0xFFFFFFFE;
+  40     private static final int ERR_STEP_MAX = 0x7FFFFFFF; // = 2^31 - 1
+  41 
+  42     private static final double POWER_2_TO_32 = 0x1.0p32d;
+  43 
+  44     // use float to make tosubpix methods faster (no int to float conversion)
+  45     static final float SUBPIXEL_SCALE_X = (float) SUBPIXEL_POSITIONS_X;
+  46     static final float SUBPIXEL_SCALE_Y = (float) SUBPIXEL_POSITIONS_Y;
+  47     static final int SUBPIXEL_MASK_X = SUBPIXEL_POSITIONS_X - 1;
+  48     static final int SUBPIXEL_MASK_Y = SUBPIXEL_POSITIONS_Y - 1;
+  49 
+  50     static final float RDR_OFFSET_X = 0.5f / SUBPIXEL_SCALE_X;
+  51     static final float RDR_OFFSET_Y = 0.5f / SUBPIXEL_SCALE_Y;
+  52 
+  53     // number of subpixels corresponding to a tile line
+  54     private static final int SUBPIXEL_TILE
+  55         = TILE_H &lt;&lt; SUBPIXEL_LG_POSITIONS_Y;
+  56 
+<span class="changed">  57     // 2176 pixels (height) x 8 subpixels = 68K</span>
+  58     static final int INITIAL_BUCKET_ARRAY
+<span class="changed">  59         = INITIAL_PIXEL_HEIGHT * SUBPIXEL_POSITIONS_Y;</span>
+  60 
+  61     // crossing capacity = edges count / 4 ~ 1024
+  62     static final int INITIAL_CROSSING_COUNT = INITIAL_EDGES_COUNT &gt;&gt; 2;
+  63 
+  64     // common to all types of input path segments.
+  65     // OFFSET as bytes
+  66     // only integer values:
+  67     public static final long OFF_CURX_OR  = 0;
+  68     public static final long OFF_ERROR    = OFF_CURX_OR  + SIZE_INT;
+  69     public static final long OFF_BUMP_X   = OFF_ERROR    + SIZE_INT;
+  70     public static final long OFF_BUMP_ERR = OFF_BUMP_X   + SIZE_INT;
+  71     public static final long OFF_NEXT     = OFF_BUMP_ERR + SIZE_INT;
+  72     public static final long OFF_YMAX     = OFF_NEXT     + SIZE_INT;
+  73 
+  74     // size of one edge in bytes
+  75     public static final int SIZEOF_EDGE_BYTES = (int)(OFF_YMAX + SIZE_INT);
+  76 
+  77     // curve break into lines
+  78     // cubic error in subpixels to decrement step
+  79     private static final float CUB_DEC_ERR_SUBPIX
+<span class="changed">  80         = MarlinProperties.getCubicDecD2() * (SUBPIXEL_POSITIONS_X / 8.0f); // 1.0 / 8th pixel</span>
+  81     // cubic error in subpixels to increment step
+  82     private static final float CUB_INC_ERR_SUBPIX
+<span class="changed">  83         = MarlinProperties.getCubicIncD1() * (SUBPIXEL_POSITIONS_X / 8.0f); // 0.4 / 8th pixel</span>
+<span class="changed">  84     // scale factor for Y-axis contribution to quad / cubic errors:</span>
+<span class="changed">  85     public static final float SCALE_DY = ((float) SUBPIXEL_POSITIONS_X) / SUBPIXEL_POSITIONS_Y;</span>
+  86 
+  87     // TestNonAARasterization (JDK-8170879): cubics
+  88     // bad paths (59294/100000 == 59,29%, 94335 bad pixels (avg = 1,59), 3966 warnings (avg = 0,07)
+<span class="new">  89 // 2018</span>
+<span class="new">  90     // 1.0 / 0.2: bad paths (67194/100000 == 67,19%, 117394 bad pixels (avg = 1,75 - max =  9), 4042 warnings (avg = 0,06)</span>
+  91 
+  92     // cubic bind length to decrement step
+  93     public static final float CUB_DEC_BND
+  94         = 8.0f * CUB_DEC_ERR_SUBPIX;
+  95     // cubic bind length to increment step
+  96     public static final float CUB_INC_BND
+  97         = 8.0f * CUB_INC_ERR_SUBPIX;
+  98 
+  99     // cubic countlg
+ 100     public static final int CUB_COUNT_LG = 2;
+ 101     // cubic count = 2^countlg
+ 102     private static final int CUB_COUNT = 1 &lt;&lt; CUB_COUNT_LG;
+ 103     // cubic count^2 = 4^countlg
+ 104     private static final int CUB_COUNT_2 = 1 &lt;&lt; (2 * CUB_COUNT_LG);
+ 105     // cubic count^3 = 8^countlg
+ 106     private static final int CUB_COUNT_3 = 1 &lt;&lt; (3 * CUB_COUNT_LG);
+ 107     // cubic dt = 1 / count
+ 108     private static final float CUB_INV_COUNT = 1.0f / CUB_COUNT;
+ 109     // cubic dt^2 = 1 / count^2 = 1 / 4^countlg
+ 110     private static final float CUB_INV_COUNT_2 = 1.0f / CUB_COUNT_2;
+ 111     // cubic dt^3 = 1 / count^3 = 1 / 8^countlg
+ 112     private static final float CUB_INV_COUNT_3 = 1.0f / CUB_COUNT_3;
+ 113 
+ 114     // quad break into lines
+ 115     // quadratic error in subpixels
+ 116     private static final float QUAD_DEC_ERR_SUBPIX
+<span class="changed"> 117         = MarlinProperties.getQuadDecD2() * (SUBPIXEL_POSITIONS_X / 8.0f); // 0.5 / 8th pixel</span>
+ 118 
+ 119     // TestNonAARasterization (JDK-8170879): quads
+ 120     // bad paths (62916/100000 == 62,92%, 103818 bad pixels (avg = 1,65), 6514 warnings (avg = 0,10)
+<span class="new"> 121 // 2018</span>
+<span class="new"> 122     // 0.50px  = bad paths (62915/100000 == 62,92%, 103810 bad pixels (avg = 1,65), 6512 warnings (avg = 0,10)</span>
+ 123 
+ 124     // quadratic bind length to decrement step
+ 125     public static final float QUAD_DEC_BND
+ 126         = 8.0f * QUAD_DEC_ERR_SUBPIX;
+ 127 
+ 128 //////////////////////////////////////////////////////////////////////////////
+ 129 //  SCAN LINE
+ 130 //////////////////////////////////////////////////////////////////////////////
+ 131     // crossings ie subpixel edge x coordinates
+ 132     private int[] crossings;
+ 133     // auxiliary storage for crossings (merge sort)
+ 134     private int[] aux_crossings;
+ 135 
+ 136     // indices into the segment pointer lists. They indicate the "active"
+ 137     // sublist in the segment lists (the portion of the list that contains
+ 138     // all the segments that cross the next scan line).
+ 139     private int edgeCount;
+ 140     private int[] edgePtrs;
+ 141     // auxiliary storage for edge pointers (merge sort)
+ 142     private int[] aux_edgePtrs;
+
+</pre><hr></hr><pre>
+ 169     private int[] edgeBucketCounts; // 2*newedges + (1 if pruning needed)
+ 170     // used range for edgeBuckets / edgeBucketCounts
+ 171     private int buckets_minY;
+ 172     private int buckets_maxY;
+ 173 
+ 174     // edgeBuckets ref (clean)
+ 175     private final IntArrayCache.Reference edgeBuckets_ref;
+ 176     // edgeBucketCounts ref (clean)
+ 177     private final IntArrayCache.Reference edgeBucketCounts_ref;
+ 178 
+ 179     // Flattens using adaptive forward differencing. This only carries out
+ 180     // one iteration of the AFD loop. All it does is update AFD variables (i.e.
+ 181     // X0, Y0, D*[X|Y], COUNT; not variables used for computing scanline crossings).
+ 182     private void quadBreakIntoLinesAndAdd(float x0, float y0,
+ 183                                           final Curve c,
+ 184                                           final float x2, final float y2)
+ 185     {
+ 186         int count = 1; // dt = 1 / count
+ 187 
+ 188         // maximum(ddX|Y) = norm(dbx, dby) * dt^2 (= 1)
+<span class="changed"> 189         float maxDD = Math.abs(c.dbx) + Math.abs(c.dby) * SCALE_DY;</span>
+ 190 
+ 191         final float _DEC_BND = QUAD_DEC_BND;
+ 192 
+ 193         while (maxDD &gt;= _DEC_BND) {
+ 194             // divide step by half:
+ 195             maxDD /= 4.0f; // error divided by 2^2 = 4
+ 196 
+ 197             count &lt;&lt;= 1;
+ 198             if (DO_STATS) {
+ 199                 rdrCtx.stats.stat_rdr_quadBreak_dec.add(count);
+ 200             }
+ 201         }
+ 202 
+<span class="changed"> 203         final int nL = count; // line count</span>
+<span class="changed"> 204 </span>
+ 205         if (count &gt; 1) {
+ 206             final float icount = 1.0f / count; // dt
+ 207             final float icount2 = icount * icount; // dt^2
+ 208 
+ 209             final float ddx = c.dbx * icount2;
+ 210             final float ddy = c.dby * icount2;
+ 211             float dx = c.bx * icount2 + c.cx * icount;
+ 212             float dy = c.by * icount2 + c.cy * icount;
+ 213 
+<span class="changed"> 214             // we use x0, y0 to walk the line</span>
+<span class="changed"> 215             for (float x1 = x0, y1 = y0; --count &gt; 0; dx += ddx, dy += ddy) {</span>
+<span class="changed"> 216                 x1 += dx;</span>
+<span class="changed"> 217                 y1 += dy;</span>
+
+
+
+ 218 
+ 219                 addLine(x0, y0, x1, y1);
+
+
+ 220                 x0 = x1;
+ 221                 y0 = y1;
+ 222             }
+ 223         }
+ 224         addLine(x0, y0, x2, y2);
+ 225 
+ 226         if (DO_STATS) {
+<span class="changed"> 227             rdrCtx.stats.stat_rdr_quadBreak.add(nL);</span>
+ 228         }
+ 229     }
+ 230 
+ 231     // x0, y0 and x3,y3 are the endpoints of the curve. We could compute these
+ 232     // using c.xat(0),c.yat(0) and c.xat(1),c.yat(1), but this might introduce
+ 233     // numerical errors, and our callers already have the exact values.
+ 234     // Another alternative would be to pass all the control points, and call
+ 235     // c.set here, but then too many numbers are passed around.
+ 236     private void curveBreakIntoLinesAndAdd(float x0, float y0,
+ 237                                            final Curve c,
+ 238                                            final float x3, final float y3)
+ 239     {
+ 240         int count           = CUB_COUNT;
+ 241         final float icount  = CUB_INV_COUNT;   // dt
+ 242         final float icount2 = CUB_INV_COUNT_2; // dt^2
+ 243         final float icount3 = CUB_INV_COUNT_3; // dt^3
+ 244 
+ 245         // the dx and dy refer to forward differencing variables, not the last
+ 246         // coefficients of the "points" polynomial
+ 247         float dddx, dddy, ddx, ddy, dx, dy;
+ 248         dddx = 2.0f * c.dax * icount3;
+ 249         dddy = 2.0f * c.day * icount3;
+ 250         ddx = dddx + c.dbx * icount2;
+ 251         ddy = dddy + c.dby * icount2;
+ 252         dx = c.ax * icount3 + c.bx * icount2 + c.cx * icount;
+ 253         dy = c.ay * icount3 + c.by * icount2 + c.cy * icount;
+ 254 
+
+
+ 255         int nL = 0; // line count
+ 256 
+ 257         final float _DEC_BND = CUB_DEC_BND;
+ 258         final float _INC_BND = CUB_INC_BND;
+<span class="new"> 259         final float _SCALE_DY = SCALE_DY;</span>
+ 260 
+<span class="changed"> 261         // we use x0, y0 to walk the line</span>
+<span class="changed"> 262         for (float x1 = x0, y1 = y0; count &gt; 0; ) {</span>
+<span class="changed"> 263             // inc / dec =&gt; ratio ~ 5 to minimize upscale / downscale but minimize edges</span>
+
+
+
+
+
+
+
+
+
+
+
+
+ 264 
+<span class="changed"> 265             // float step:</span>
+ 266             // can only do this on even "count" values, because we must divide count by 2
+<span class="changed"> 267             while ((count % 2 == 0)</span>
+<span class="changed"> 268                     &amp;&amp; ((Math.abs(ddx) + Math.abs(ddy) * _SCALE_DY) &lt;= _INC_BND)) {</span>
+
+ 269                 dx = 2.0f * dx + ddx;
+ 270                 dy = 2.0f * dy + ddy;
+ 271                 ddx = 4.0f * (ddx + dddx);
+ 272                 ddy = 4.0f * (ddy + dddy);
+ 273                 dddx *= 8.0f;
+ 274                 dddy *= 8.0f;
+ 275 
+ 276                 count &gt;&gt;= 1;
+ 277                 if (DO_STATS) {
+ 278                     rdrCtx.stats.stat_rdr_curveBreak_inc.add(count);
+ 279                 }
+ 280             }
+<span class="changed"> 281 </span>
+<span class="changed"> 282             // divide step by half:</span>
+<span class="changed"> 283             while ((Math.abs(ddx) + Math.abs(ddy) * _SCALE_DY) &gt;= _DEC_BND) {</span>
+<span class="changed"> 284                 dddx /= 8.0f;</span>
+<span class="changed"> 285                 dddy /= 8.0f;</span>
+<span class="changed"> 286                 ddx = ddx / 4.0f - dddx;</span>
+<span class="changed"> 287                 ddy = ddy / 4.0f - dddy;</span>
+<span class="changed"> 288                 dx = (dx - ddx) / 2.0f;</span>
+<span class="changed"> 289                 dy = (dy - ddy) / 2.0f;</span>
+<span class="changed"> 290 </span>
+<span class="changed"> 291                 count &lt;&lt;= 1;</span>
+<span class="changed"> 292                 if (DO_STATS) {</span>
+<span class="changed"> 293                     rdrCtx.stats.stat_rdr_curveBreak_dec.add(count);</span>
+<span class="changed"> 294                 }</span>
+<span class="changed"> 295             }</span>
+<span class="changed"> 296             if (--count == 0) {</span>
+<span class="changed"> 297                 break;</span>
+<span class="changed"> 298             }</span>
+<span class="changed"> 299 </span>
+ 300             x1 += dx;
+
+
+ 301             y1 += dy;
+<span class="new"> 302             dx += ddx;</span>
+ 303             dy += ddy;
+<span class="new"> 304             ddx += dddx;</span>
+ 305             ddy += dddy;
+
+
+
+
+ 306 
+ 307             addLine(x0, y0, x1, y1);
+
+
+ 308             x0 = x1;
+ 309             y0 = y1;
+ 310         }
+<span class="new"> 311         addLine(x0, y0, x3, y3);</span>
+<span class="new"> 312 </span>
+ 313         if (DO_STATS) {
+<span class="changed"> 314             rdrCtx.stats.stat_rdr_curveBreak.add(nL + 1);</span>
+ 315         }
+ 316     }
+ 317 
+ 318     private void addLine(float x1, float y1, float x2, float y2) {
+ 319         if (DO_MONITORS) {
+ 320             rdrCtx.stats.mon_rdr_addLine.start();
+ 321         }
+ 322         if (DO_STATS) {
+ 323             rdrCtx.stats.stat_rdr_addLine.add(1);
+ 324         }
+ 325         int or = 1; // orientation of the line. 1 if y increases, 0 otherwise.
+ 326         if (y2 &lt; y1) {
+ 327             or = 0;
+ 328             float tmp = y2;
+ 329             y2 = y1;
+ 330             y1 = tmp;
+ 331             tmp = x2;
+ 332             x2 = x1;
+ 333             x1 = tmp;
+ 334         }
+
+</pre><hr></hr><pre>
+ 522 
+ 523     /* block flags (0|1) */
+ 524     private int[] blkFlags;
+ 525 
+ 526     // blkFlags ref (clean)
+ 527     private final IntArrayCache.Reference blkFlags_ref;
+ 528 
+ 529     Renderer(final RendererContext rdrCtx) {
+ 530         this.rdrCtx = rdrCtx;
+ 531         this.curve = rdrCtx.curve;
+ 532         this.cache = rdrCtx.cache;
+ 533 
+ 534         this.edges = rdrCtx.newOffHeapArray(INITIAL_EDGES_CAPACITY); // 96K
+ 535 
+ 536         edgeBuckets_ref      = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+ 537         edgeBucketCounts_ref = rdrCtx.newCleanIntArrayRef(INITIAL_BUCKET_ARRAY); // 64K
+ 538 
+ 539         edgeBuckets      = edgeBuckets_ref.initial;
+ 540         edgeBucketCounts = edgeBucketCounts_ref.initial;
+ 541 
+<span class="changed"> 542         // 4096 pixels large</span>
+<span class="changed"> 543         alphaLine_ref = rdrCtx.newCleanIntArrayRef(INITIAL_AA_ARRAY); // 16K</span>
+ 544         alphaLine     = alphaLine_ref.initial;
+ 545 
+ 546         crossings_ref     = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 547         aux_crossings_ref = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 548         edgePtrs_ref      = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 549         aux_edgePtrs_ref  = rdrCtx.newDirtyIntArrayRef(INITIAL_CROSSING_COUNT); // 2K
+ 550 
+ 551         crossings     = crossings_ref.initial;
+ 552         aux_crossings = aux_crossings_ref.initial;
+ 553         edgePtrs      = edgePtrs_ref.initial;
+ 554         aux_edgePtrs  = aux_edgePtrs_ref.initial;
+ 555 
+ 556         blkFlags_ref = rdrCtx.newCleanIntArrayRef(INITIAL_ARRAY); // 1K = 1 tile line
+ 557         blkFlags     = blkFlags_ref.initial;
+ 558     }
+ 559 
+ 560     Renderer init(final int pix_boundsX, final int pix_boundsY,
+ 561                   final int pix_boundsWidth, final int pix_boundsHeight,
+ 562                   final int windingRule)
+ 563     {
+
+</pre><hr></hr><pre>
+ 681         this.x0 = sx;
+ 682         this.y0 = sy;
+ 683     }
+ 684 
+ 685     @Override
+ 686     public void lineTo(final float pix_x1, final float pix_y1) {
+ 687         final float x1 = tosubpixx(pix_x1);
+ 688         final float y1 = tosubpixy(pix_y1);
+ 689         addLine(x0, y0, x1, y1);
+ 690         x0 = x1;
+ 691         y0 = y1;
+ 692     }
+ 693 
+ 694     @Override
+ 695     public void curveTo(final float pix_x1, final float pix_y1,
+ 696                         final float pix_x2, final float pix_y2,
+ 697                         final float pix_x3, final float pix_y3)
+ 698     {
+ 699         final float xe = tosubpixx(pix_x3);
+ 700         final float ye = tosubpixy(pix_y3);
+<span class="changed"> 701         curve.set(x0, y0,</span>
+<span class="changed"> 702                 tosubpixx(pix_x1), tosubpixy(pix_y1),</span>
+<span class="changed"> 703                 tosubpixx(pix_x2), tosubpixy(pix_y2),</span>
+<span class="changed"> 704                 xe, ye);</span>
+ 705         curveBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 706         x0 = xe;
+ 707         y0 = ye;
+ 708     }
+ 709 
+ 710     @Override
+ 711     public void quadTo(final float pix_x1, final float pix_y1,
+ 712                        final float pix_x2, final float pix_y2)
+ 713     {
+ 714         final float xe = tosubpixx(pix_x2);
+ 715         final float ye = tosubpixy(pix_y2);
+<span class="changed"> 716         curve.set(x0, y0,</span>
+<span class="changed"> 717                 tosubpixx(pix_x1), tosubpixy(pix_y1),</span>
+<span class="changed"> 718                 xe, ye);</span>
+ 719         quadBreakIntoLinesAndAdd(x0, y0, curve, xe, ye);
+ 720         x0 = xe;
+ 721         y0 = ye;
+ 722     }
+ 723 
+ 724     @Override
+ 725     public void closePath() {
+ 726         if (x0 != sx0 || y0 != sy0) {
+ 727             addLine(x0, y0, sx0, sy0);
+ 728             x0 = sx0;
+ 729             y0 = sy0;
+ 730         }
+ 731     }
+ 732 
+ 733     @Override
+ 734     public void pathDone() {
+ 735         closePath();
+ 736     }
+ 737 
+ 738     @Override
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/OffHeapArray.java.sdiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/RendererContext.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>

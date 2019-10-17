@@ -1,0 +1,611 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13695">13695</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8198885">8198885</a>: upgrade Marlin (java2d) to 0.9.1
+Summary: clipping implemented in Dasher (curve subdivision at clip edges) + higher quality(curve, subpixels) + new path simplifier
+Reviewed-by: prr, serb</pre><hr></hr>
+<pre>
+   1 /*
+<a name="1" id="anc1"></a><span class="changed">   2  * Copyright (c) 2015, 2017, Oracle and/or its affiliates. All rights reserved.</span>
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.  Oracle designates this
+   8  * particular file as subject to the "Classpath" exception as provided
+   9  * by Oracle in the LICENSE file that accompanied this code.
+  10  *
+  11  * This code is distributed in the hope that it will be useful, but WITHOUT
+  12  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  13  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  14  * version 2 for more details (a copy is included in the LICENSE file that
+  15  * accompanied this code).
+  16  *
+  17  * You should have received a copy of the GNU General Public License version
+  18  * 2 along with this work; if not, write to the Free Software Foundation,
+  19  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  20  *
+  21  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  22  * or visit www.oracle.com if you need additional information or have any
+  23  * questions.
+  24  */
+  25 
+  26 package sun.java2d.marlin;
+  27 
+  28 import java.lang.ref.PhantomReference;
+  29 import java.lang.ref.ReferenceQueue;
+  30 import java.security.AccessController;
+  31 import java.security.PrivilegedAction;
+  32 import java.util.Timer;
+  33 import java.util.TimerTask;
+  34 import java.util.Vector;
+  35 import java.util.concurrent.ConcurrentLinkedQueue;
+  36 import sun.java2d.marlin.ArrayCacheConst.CacheStats;
+  37 import static sun.java2d.marlin.MarlinUtils.logInfo;
+  38 import sun.java2d.marlin.stats.Histogram;
+  39 import sun.java2d.marlin.stats.Monitor;
+  40 import sun.java2d.marlin.stats.StatLong;
+  41 import sun.misc.ThreadGroupUtils;
+  42 
+  43 /**
+  44  * This class gathers global rendering statistics for debugging purposes only
+  45  */
+  46 public final class RendererStats implements MarlinConst {
+  47 
+  48     static RendererStats createInstance(final Object parent, final String name)
+  49     {
+  50         final RendererStats stats = new RendererStats(name);
+  51 
+  52         // Keep a strong reference to dump it later:
+  53         RendererStatsHolder.getInstance().add(parent, stats);
+  54 
+  55         return stats;
+  56     }
+  57 
+  58     public static void dumpStats() {
+  59         RendererStatsHolder.dumpStats();
+  60     }
+  61 
+  62     // context name (debugging purposes)
+  63     final String name;
+  64     // stats
+  65     final StatLong stat_cache_rowAA
+  66         = new StatLong("cache.rowAA");
+  67     final StatLong stat_cache_rowAAChunk
+  68         = new StatLong("cache.rowAAChunk");
+  69     final StatLong stat_cache_tiles
+  70         = new StatLong("cache.tiles");
+  71     final StatLong stat_rdr_addLine
+  72         = new StatLong("renderer.addLine");
+  73     final StatLong stat_rdr_addLine_skip
+  74         = new StatLong("renderer.addLine.skip");
+  75     final StatLong stat_rdr_curveBreak
+  76         = new StatLong("renderer.curveBreakIntoLinesAndAdd");
+  77     final StatLong stat_rdr_curveBreak_dec
+  78         = new StatLong("renderer.curveBreakIntoLinesAndAdd.dec");
+  79     final StatLong stat_rdr_curveBreak_inc
+  80         = new StatLong("renderer.curveBreakIntoLinesAndAdd.inc");
+  81     final StatLong stat_rdr_quadBreak
+  82         = new StatLong("renderer.quadBreakIntoLinesAndAdd");
+  83     final StatLong stat_rdr_quadBreak_dec
+  84         = new StatLong("renderer.quadBreakIntoLinesAndAdd.dec");
+  85     final StatLong stat_rdr_edges
+  86         = new StatLong("renderer.edges");
+  87     final StatLong stat_rdr_edges_count
+  88         = new StatLong("renderer.edges.count");
+  89     final StatLong stat_rdr_edges_resizes
+  90         = new StatLong("renderer.edges.resize");
+  91     final StatLong stat_rdr_activeEdges
+  92         = new StatLong("renderer.activeEdges");
+  93     final StatLong stat_rdr_activeEdges_updates
+  94         = new StatLong("renderer.activeEdges.updates");
+  95     final StatLong stat_rdr_activeEdges_adds
+  96         = new StatLong("renderer.activeEdges.adds");
+  97     final StatLong stat_rdr_activeEdges_adds_high
+  98         = new StatLong("renderer.activeEdges.adds_high");
+  99     final StatLong stat_rdr_crossings_updates
+ 100         = new StatLong("renderer.crossings.updates");
+ 101     final StatLong stat_rdr_crossings_sorts
+ 102         = new StatLong("renderer.crossings.sorts");
+ 103     final StatLong stat_rdr_crossings_bsearch
+ 104         = new StatLong("renderer.crossings.bsearch");
+ 105     final StatLong stat_rdr_crossings_msorts
+ 106         = new StatLong("renderer.crossings.msorts");
+ 107     final StatLong stat_str_polystack_curves
+ 108         = new StatLong("stroker.polystack.curves");
+ 109     final StatLong stat_str_polystack_types
+ 110         = new StatLong("stroker.polystack.types");
+ 111     final StatLong stat_cpd_polystack_curves
+ 112         = new StatLong("closedPathDetector.polystack.curves");
+ 113     final StatLong stat_cpd_polystack_types
+ 114         = new StatLong("closedPathDetector.polystack.types");
+ 115     final StatLong stat_pcf_idxstack_indices
+ 116         = new StatLong("pathClipFilter.stack.indices");
+ 117     // growable arrays
+ 118     final StatLong stat_array_dasher_dasher
+ 119         = new StatLong("array.dasher.dasher.d_float");
+ 120     final StatLong stat_array_dasher_firstSegmentsBuffer
+ 121         = new StatLong("array.dasher.firstSegmentsBuffer.d_float");
+ 122     final StatLong stat_array_marlincache_rowAAChunk
+ 123         = new StatLong("array.marlincache.rowAAChunk.resize");
+ 124     final StatLong stat_array_marlincache_touchedTile
+ 125         = new StatLong("array.marlincache.touchedTile.int");
+ 126     final StatLong stat_array_renderer_alphaline
+ 127         = new StatLong("array.renderer.alphaline.int");
+ 128     final StatLong stat_array_renderer_crossings
+ 129         = new StatLong("array.renderer.crossings.int");
+ 130     final StatLong stat_array_renderer_aux_crossings
+ 131         = new StatLong("array.renderer.aux_crossings.int");
+ 132     final StatLong stat_array_renderer_edgeBuckets
+ 133         = new StatLong("array.renderer.edgeBuckets.int");
+ 134     final StatLong stat_array_renderer_edgeBucketCounts
+ 135         = new StatLong("array.renderer.edgeBucketCounts.int");
+ 136     final StatLong stat_array_renderer_edgePtrs
+ 137         = new StatLong("array.renderer.edgePtrs.int");
+ 138     final StatLong stat_array_renderer_aux_edgePtrs
+ 139         = new StatLong("array.renderer.aux_edgePtrs.int");
+ 140     final StatLong stat_array_str_polystack_curves
+ 141         = new StatLong("array.stroker.polystack.curves.d_float");
+ 142     final StatLong stat_array_str_polystack_types
+ 143         = new StatLong("array.stroker.polystack.curveTypes.d_byte");
+ 144     final StatLong stat_array_cpd_polystack_curves
+ 145         = new StatLong("array.closedPathDetector.polystack.curves.d_float");
+ 146     final StatLong stat_array_cpd_polystack_types
+ 147         = new StatLong("array.closedPathDetector.polystack.curveTypes.d_byte");
+ 148     final StatLong stat_array_pcf_idxstack_indices
+ 149         = new StatLong("array.pathClipFilter.stack.indices.d_int");
+ 150     // histograms
+ 151     final Histogram hist_rdr_edges_count
+ 152         = new Histogram("renderer.edges.count");
+ 153     final Histogram hist_rdr_crossings
+ 154         = new Histogram("renderer.crossings");
+ 155     final Histogram hist_rdr_crossings_ratio
+ 156         = new Histogram("renderer.crossings.ratio");
+ 157     final Histogram hist_rdr_crossings_adds
+ 158         = new Histogram("renderer.crossings.adds");
+ 159     final Histogram hist_rdr_crossings_msorts
+ 160         = new Histogram("renderer.crossings.msorts");
+ 161     final Histogram hist_rdr_crossings_msorts_adds
+ 162         = new Histogram("renderer.crossings.msorts.adds");
+ 163     final Histogram hist_str_polystack_curves
+ 164         = new Histogram("stroker.polystack.curves");
+ 165     final Histogram hist_tile_generator_alpha
+ 166         = new Histogram("tile_generator.alpha");
+ 167     final Histogram hist_tile_generator_encoding
+ 168         = new Histogram("tile_generator.encoding");
+ 169     final Histogram hist_tile_generator_encoding_dist
+ 170         = new Histogram("tile_generator.encoding.dist");
+ 171     final Histogram hist_tile_generator_encoding_ratio
+ 172         = new Histogram("tile_generator.encoding.ratio");
+ 173     final Histogram hist_tile_generator_encoding_runLen
+ 174         = new Histogram("tile_generator.encoding.runLen");
+ 175     final Histogram hist_cpd_polystack_curves
+ 176         = new Histogram("closedPathDetector.polystack.curves");
+ 177     final Histogram hist_pcf_idxstack_indices
+ 178         = new Histogram("pathClipFilter.stack.indices");
+ 179     // all stats
+ 180     final StatLong[] statistics = new StatLong[]{
+ 181         stat_cache_rowAA,
+ 182         stat_cache_rowAAChunk,
+ 183         stat_cache_tiles,
+ 184         stat_rdr_addLine,
+ 185         stat_rdr_addLine_skip,
+ 186         stat_rdr_curveBreak,
+ 187         stat_rdr_curveBreak_dec,
+ 188         stat_rdr_curveBreak_inc,
+ 189         stat_rdr_quadBreak,
+ 190         stat_rdr_quadBreak_dec,
+ 191         stat_rdr_edges,
+ 192         stat_rdr_edges_count,
+ 193         stat_rdr_edges_resizes,
+ 194         stat_rdr_activeEdges,
+ 195         stat_rdr_activeEdges_updates,
+ 196         stat_rdr_activeEdges_adds,
+ 197         stat_rdr_activeEdges_adds_high,
+ 198         stat_rdr_crossings_updates,
+ 199         stat_rdr_crossings_sorts,
+ 200         stat_rdr_crossings_bsearch,
+ 201         stat_rdr_crossings_msorts,
+ 202         stat_str_polystack_types,
+ 203         stat_str_polystack_curves,
+ 204         stat_cpd_polystack_curves,
+ 205         stat_cpd_polystack_types,
+ 206         stat_pcf_idxstack_indices,
+ 207         hist_rdr_edges_count,
+ 208         hist_rdr_crossings,
+ 209         hist_rdr_crossings_ratio,
+ 210         hist_rdr_crossings_adds,
+ 211         hist_rdr_crossings_msorts,
+ 212         hist_rdr_crossings_msorts_adds,
+ 213         hist_tile_generator_alpha,
+ 214         hist_tile_generator_encoding,
+ 215         hist_tile_generator_encoding_dist,
+ 216         hist_tile_generator_encoding_ratio,
+ 217         hist_tile_generator_encoding_runLen,
+ 218         hist_str_polystack_curves,
+ 219         hist_cpd_polystack_curves,
+ 220         hist_pcf_idxstack_indices,
+ 221         stat_array_dasher_dasher,
+ 222         stat_array_dasher_firstSegmentsBuffer,
+ 223         stat_array_marlincache_rowAAChunk,
+ 224         stat_array_marlincache_touchedTile,
+ 225         stat_array_renderer_alphaline,
+ 226         stat_array_renderer_crossings,
+ 227         stat_array_renderer_aux_crossings,
+ 228         stat_array_renderer_edgeBuckets,
+ 229         stat_array_renderer_edgeBucketCounts,
+ 230         stat_array_renderer_edgePtrs,
+ 231         stat_array_renderer_aux_edgePtrs,
+ 232         stat_array_str_polystack_curves,
+ 233         stat_array_str_polystack_types,
+ 234         stat_array_cpd_polystack_curves,
+ 235         stat_array_cpd_polystack_types,
+ 236         stat_array_pcf_idxstack_indices
+ 237     };
+ 238     // monitors
+ 239     final Monitor mon_pre_getAATileGenerator
+ 240         = new Monitor("MarlinRenderingEngine.getAATileGenerator()");
+ 241     final Monitor mon_rdr_addLine
+ 242         = new Monitor("Renderer.addLine()");
+ 243     final Monitor mon_rdr_endRendering
+ 244         = new Monitor("Renderer.endRendering()");
+ 245     final Monitor mon_rdr_endRendering_Y
+ 246         = new Monitor("Renderer._endRendering(Y)");
+ 247     final Monitor mon_rdr_copyAARow
+ 248         = new Monitor("Renderer.copyAARow()");
+ 249     final Monitor mon_pipe_renderTiles
+ 250         = new Monitor("AAShapePipe.renderTiles()");
+ 251     final Monitor mon_ptg_getAlpha
+ 252         = new Monitor("MarlinTileGenerator.getAlpha()");
+ 253     final Monitor mon_debug
+ 254         = new Monitor("DEBUG()");
+ 255     // all monitors
+ 256     final Monitor[] monitors = new Monitor[]{
+ 257         mon_pre_getAATileGenerator,
+ 258         mon_rdr_addLine,
+ 259         mon_rdr_endRendering,
+ 260         mon_rdr_endRendering_Y,
+ 261         mon_rdr_copyAARow,
+ 262         mon_pipe_renderTiles,
+ 263         mon_ptg_getAlpha,
+ 264         mon_debug
+ 265     };
+ 266     // offheap stats
+ 267     long totalOffHeapInitial = 0L;
+ 268      // live accumulator
+ 269     long totalOffHeap = 0L;
+ 270     long totalOffHeapMax = 0L;
+ 271     // cache stats
+ 272     CacheStats[] cacheStats = null;
+ 273 
+ 274     private RendererStats(final String name) {
+ 275         this.name = name;
+ 276     }
+ 277 
+ 278     void dump() {
+ 279         logInfo("RendererContext: " + name);
+ 280 
+ 281         if (DO_MONITORS) {
+ 282             for (Monitor monitor : monitors) {
+ 283                 if (monitor.count != 0) {
+ 284                     logInfo(monitor.toString());
+ 285                 }
+ 286             }
+ 287             // As getAATileGenerator percents:
+ 288             final long total = mon_pre_getAATileGenerator.sum;
+ 289             if (total != 0L) {
+ 290                 for (Monitor monitor : monitors) {
+ 291                     logInfo(monitor.name + " : "
+ 292                             + ((100d * monitor.sum) / total) + " %");
+ 293                 }
+ 294             }
+ 295             if (DO_FLUSH_MONITORS) {
+ 296                 for (Monitor m : monitors) {
+ 297                     m.reset();
+ 298                 }
+ 299             }
+ 300         }
+ 301 
+ 302         if (DO_STATS) {
+ 303             for (StatLong stat : statistics) {
+ 304                 if (stat.count != 0) {
+ 305                     logInfo(stat.toString());
+ 306                     if (DO_FLUSH_STATS) {
+ 307                         stat.reset();
+ 308                     }
+ 309                 }
+ 310             }
+ 311 
+ 312             logInfo("OffHeap footprint: initial: " + totalOffHeapInitial
+ 313                 + " bytes - max: " + totalOffHeapMax + " bytes");
+ 314             if (DO_FLUSH_STATS) {
+ 315                 totalOffHeapMax = 0L;
+ 316             }
+ 317 
+ 318             logInfo("Array caches for RendererContext: " + name);
+ 319 
+ 320             long totalInitialBytes = totalOffHeapInitial;
+ 321             long totalCacheBytes   = 0L;
+ 322 
+ 323             if (cacheStats != null) {
+ 324                 for (CacheStats stat : cacheStats) {
+ 325                     totalCacheBytes   += stat.dumpStats();
+ 326                     totalInitialBytes += stat.getTotalInitialBytes();
+ 327                     if (DO_FLUSH_STATS) {
+ 328                         stat.reset();
+ 329                     }
+ 330                 }
+ 331             }
+ 332             logInfo("Heap footprint: initial: " + totalInitialBytes
+ 333                     + " bytes - cache: " + totalCacheBytes + " bytes");
+ 334         }
+ 335     }
+ 336 
+ 337     static final class RendererStatsHolder {
+ 338 
+ 339         // singleton
+ 340         private static volatile RendererStatsHolder SINGLETON = null;
+ 341 
+ 342         static synchronized RendererStatsHolder getInstance() {
+ 343             if (SINGLETON == null) {
+ 344                 SINGLETON = new RendererStatsHolder();
+ 345             }
+ 346             return SINGLETON;
+ 347         }
+ 348 
+ 349         static void dumpStats() {
+ 350             if (SINGLETON != null) {
+ 351                 SINGLETON.dump();
+ 352             }
+ 353         }
+ 354 
+ 355         /* RendererStats collection as hard references
+ 356            (only used for debugging purposes) */
+ 357         private final ConcurrentLinkedQueue&lt;RendererStats&gt; allStats
+ 358             = new ConcurrentLinkedQueue&lt;RendererStats&gt;();
+ 359 
+ 360         private RendererStatsHolder() {
+ 361             AccessController.doPrivileged(
+ 362                 (PrivilegedAction&lt;Void&gt;) () -&gt; {
+ 363                     /*
+ 364                      * The thread must be a member of a thread group
+ 365                      * which will not get GCed before VM exit.
+ 366                      * Make its parent the top-level thread group.
+ 367                      */
+ 368                     final ThreadGroup rootTG
+<a name="2" id="anc2"></a><span class="changed"> 369                             = ThreadGroupUtils.getRootThreadGroup();</span>
+ 370                     final Thread t = new Thread(rootTG, new RendererStatsDisposer(),
+ 371                             "MarlinRenderer Disposer");
+ 372                     t.setContextClassLoader(null);
+ 373                     t.setDaemon(true);
+ 374                     t.setPriority(Thread.MAX_PRIORITY - 2);
+ 375                     t.start();
+ 376                     return null;
+ 377                 }
+ 378             );
+ 379         }
+ 380 
+ 381         void add(final Object parent, final RendererStats stats) {
+ 382             allStats.add(stats);
+ 383 
+ 384             // Create the phantom reference to ensure removing dead entries:
+ 385             REF_LIST.add(new RendererStatsReference(parent, stats));
+ 386         }
+ 387 
+ 388         void remove(final RendererStats stats) {
+ 389             stats.dump(); // dump anyway
+ 390             allStats.remove(stats);
+ 391         }
+ 392 
+ 393         void dump() {
+ 394             for (RendererStats stats : allStats) {
+ 395                 stats.dump();
+ 396             }
+ 397         }
+ 398 
+ 399         // Parent reference queue
+ 400         private static final ReferenceQueue&lt;Object&gt; REF_QUEUE
+ 401                 = new ReferenceQueue&lt;Object&gt;();
+ 402         // reference list
+ 403         private static final Vector&lt;RendererStatsReference&gt; REF_LIST
+ 404                 = new Vector&lt;RendererStatsReference&gt;(32);
+ 405 
+ 406         static final class RendererStatsReference extends PhantomReference&lt;Object&gt; {
+ 407 
+ 408             private final RendererStats stats;
+ 409 
+ 410             RendererStatsReference(final Object parent, final RendererStats stats) {
+ 411                 super(parent, REF_QUEUE);
+ 412                 this.stats = stats;
+ 413             }
+ 414 
+ 415             void dispose() {
+ 416                 // remove stats from allRdrStats
+ 417                 RendererStatsHolder.getInstance().remove(this.stats);
+ 418             }
+ 419         }
+ 420 
+ 421         static final class RendererStatsDisposer implements Runnable {
+ 422             @Override
+ 423             public void run() {
+ 424                 final Thread currentThread = Thread.currentThread();
+ 425                 RendererStatsReference ref;
+ 426 
+ 427                 // check interrupted:
+ 428                 for (; !currentThread.isInterrupted();) {
+ 429                     try {
+ 430                         ref = (RendererStatsReference)REF_QUEUE.remove();
+ 431                         ref.dispose();
+ 432 
+ 433                         REF_LIST.remove(ref);
+ 434 
+ 435                     } catch (InterruptedException ie) {
+ 436                         MarlinUtils.logException("RendererStatsDisposer interrupted:",
+ 437                                 ie);
+ 438                     }
+ 439                 }
+ 440             }
+ 441         }
+ 442     }
+ 443 }
+<a name="3" id="anc3"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="3" type="hidden" /></form></body></html>

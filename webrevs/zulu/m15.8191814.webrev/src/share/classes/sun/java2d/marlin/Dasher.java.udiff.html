@@ -1,0 +1,530 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Udiff src/share/classes/sun/java2d/marlin/Dasher.java</title>
+
+<style type="text/css" media="screen">
+span.new {
+    color: blue;
+    font-weight: normal;
+}
+</style>
+
+</head>
+<body id="SUNWwebrev">
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Helpers.java.udiff.html' target='_top'>next &gt</a></center>
+<h2>src/share/classes/sun/java2d/marlin/Dasher.java</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre>rev <a href="https://bugs.openjdk.java.net/browse/JDK-13694">13694</a> : <a href="https://bugs.openjdk.java.net/browse/JDK-8191814">8191814</a>: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
+Summary: upgrade to Marlin 0.8.2 providing efficient path clipping (Stroker and Filler)
+Reviewed-by: prr, serb</pre>
+        <pre>
+</pre><hr /><pre>
+<span class="newmarker">@@ -136,11 +136,11 @@</span>
+                     }
+                     phase += dash[sidx];
+                     dashOn = !dashOn;
+                 }
+             }
+<span class="removed">-        } else if (phase &gt; 0) {</span>
+<span class="new">+        } else if (phase &gt; 0.0f) {</span>
+             if (cycles &gt;= MAX_CYCLES) {
+                 phase = 0.0f;
+             } else {
+                 int fullcycles = FloatMath.floor_int(cycles);
+                 if ((fullcycles &amp; dash.length &amp; 1) != 0) {
+</pre><hr /><pre>
+<span class="newmarker">@@ -156,16 +156,17 @@</span>
+             }
+         }
+ 
+         this.dash = dash;
+         this.dashLen = dashLen;
+<span class="removed">-        this.startPhase = this.phase = phase;</span>
+<span class="new">+        this.phase = phase;</span>
+<span class="new">+        this.startPhase = phase;</span>
+         this.startDashOn = dashOn;
+         this.startIdx = sidx;
+         this.starting = true;
+<span class="removed">-        needsMoveTo = false;</span>
+<span class="removed">-        firstSegidx = 0;</span>
+<span class="new">+        this.needsMoveTo = false;</span>
+<span class="new">+        this.firstSegidx = 0;</span>
+ 
+         this.recycleDashes = recycleDashes;
+ 
+         return this; // fluent API
+     }
+</pre><hr /><pre>
+<span class="newmarker">@@ -200,21 +201,23 @@</span>
+         System.arraycopy(dashes, 0, newDashes, 0, len);
+         return newDashes;
+     }
+ 
+     @Override
+<span class="removed">-    public void moveTo(float x0, float y0) {</span>
+<span class="removed">-        if (firstSegidx &gt; 0) {</span>
+<span class="new">+    public void moveTo(final float x0, final float y0) {</span>
+<span class="new">+        if (firstSegidx != 0) {</span>
+             out.moveTo(sx, sy);
+             emitFirstSegments();
+         }
+         needsMoveTo = true;
+         this.idx = startIdx;
+         this.dashOn = this.startDashOn;
+         this.phase = this.startPhase;
+<span class="removed">-        this.sx = this.x0 = x0;</span>
+<span class="removed">-        this.sy = this.y0 = y0;</span>
+<span class="new">+        this.sx = x0;</span>
+<span class="new">+        this.sy = y0;</span>
+<span class="new">+        this.x0 = x0;</span>
+<span class="new">+        this.y0 = y0;</span>
+         this.starting = true;
+     }
+ 
+     private void emitSeg(float[] buf, int off, int type) {
+         switch (type) {
+</pre><hr /><pre>
+<span class="newmarker">@@ -235,11 +238,11 @@</span>
+     }
+ 
+     private void emitFirstSegments() {
+         final float[] fSegBuf = firstSegmentsBuffer;
+ 
+<span class="removed">-        for (int i = 0; i &lt; firstSegidx; ) {</span>
+<span class="new">+        for (int i = 0, len = firstSegidx; i &lt; len; ) {</span>
+             int type = (int)fSegBuf[i];
+             emitSeg(fSegBuf, i + 1, type);
+             i += (type - 1);
+         }
+         firstSegidx = 0;
+</pre><hr /><pre>
+<span class="newmarker">@@ -250,18 +253,43 @@</span>
+     // buffer below.
+     private float[] firstSegmentsBuffer; // dynamic array
+     private int firstSegidx;
+ 
+     // precondition: pts must be in relative coordinates (relative to x0,y0)
+<span class="removed">-    private void goTo(float[] pts, int off, final int type) {</span>
+<span class="removed">-        float x = pts[off + type - 4];</span>
+<span class="removed">-        float y = pts[off + type - 3];</span>
+<span class="removed">-        if (dashOn) {</span>
+<span class="new">+    private void goTo(final float[] pts, final int off, final int type,</span>
+<span class="new">+                      final boolean on)</span>
+<span class="new">+    {</span>
+<span class="new">+        final int index = off + type;</span>
+<span class="new">+        final float x = pts[index - 4];</span>
+<span class="new">+        final float y = pts[index - 3];</span>
+<span class="new">+</span>
+<span class="new">+        if (on) {</span>
+<span class="new">+            if (starting) {</span>
+<span class="new">+                goTo_starting(pts, off, type);</span>
+<span class="new">+            } else {</span>
+<span class="new">+                if (needsMoveTo) {</span>
+<span class="new">+                    needsMoveTo = false;</span>
+<span class="new">+                    out.moveTo(x0, y0);</span>
+<span class="new">+                }</span>
+<span class="new">+                emitSeg(pts, off, type);</span>
+<span class="new">+            }</span>
+<span class="new">+        } else {</span>
+             if (starting) {
+<span class="new">+                // low probability test (hotspot)</span>
+<span class="new">+                starting = false;</span>
+<span class="new">+            }</span>
+<span class="new">+            needsMoveTo = true;</span>
+<span class="new">+        }</span>
+<span class="new">+        this.x0 = x;</span>
+<span class="new">+        this.y0 = y;</span>
+<span class="new">+    }</span>
+<span class="new">+</span>
+<span class="new">+    private void goTo_starting(final float[] pts, final int off, final int type) {</span>
+                 int len = type - 1; // - 2 + 1
+                 int segIdx = firstSegidx;
+                 float[] buf = firstSegmentsBuffer;
+<span class="new">+</span>
+                 if (segIdx + len  &gt; buf.length) {
+                     if (DO_STATS) {
+                         rdrCtx.stats.stat_array_dasher_firstSegmentsBuffer
+                             .add(segIdx + len);
+                     }
+</pre><hr /><pre>
+<span class="newmarker">@@ -271,31 +299,17 @@</span>
+                 }
+                 buf[segIdx++] = type;
+                 len--;
+                 // small arraycopy (2, 4 or 6) but with offset:
+                 System.arraycopy(pts, off, buf, segIdx, len);
+<span class="removed">-                segIdx += len;</span>
+<span class="removed">-                firstSegidx = segIdx;</span>
+<span class="removed">-            } else {</span>
+<span class="removed">-                if (needsMoveTo) {</span>
+<span class="removed">-                    out.moveTo(x0, y0);</span>
+<span class="removed">-                    needsMoveTo = false;</span>
+<span class="removed">-                }</span>
+<span class="removed">-                emitSeg(pts, off, type);</span>
+<span class="removed">-            }</span>
+<span class="removed">-        } else {</span>
+<span class="removed">-            starting = false;</span>
+<span class="removed">-            needsMoveTo = true;</span>
+<span class="removed">-        }</span>
+<span class="removed">-        this.x0 = x;</span>
+<span class="removed">-        this.y0 = y;</span>
+<span class="new">+        firstSegidx = segIdx + len;</span>
+     }
+ 
+     @Override
+<span class="removed">-    public void lineTo(float x1, float y1) {</span>
+<span class="removed">-        float dx = x1 - x0;</span>
+<span class="removed">-        float dy = y1 - y0;</span>
+<span class="new">+    public void lineTo(final float x1, final float y1) {</span>
+<span class="new">+        final float dx = x1 - x0;</span>
+<span class="new">+        final float dy = y1 - y0;</span>
+ 
+         float len = dx*dx + dy*dy;
+         if (len == 0.0f) {
+             return;
+         }
+</pre><hr /><pre>
+<span class="newmarker">@@ -306,97 +320,126 @@</span>
+         final float cx = dx / len;
+         final float cy = dy / len;
+ 
+         final float[] _curCurvepts = curCurvepts;
+         final float[] _dash = dash;
+<span class="new">+        final int _dashLen = this.dashLen;</span>
+<span class="new">+</span>
+<span class="new">+        int _idx = idx;</span>
+<span class="new">+        boolean _dashOn = dashOn;</span>
+<span class="new">+        float _phase = phase;</span>
+ 
+         float leftInThisDashSegment;
+<span class="removed">-        float dashdx, dashdy, p;</span>
+<span class="new">+        float d, dashdx, dashdy, p;</span>
+ 
+         while (true) {
+<span class="removed">-            leftInThisDashSegment = _dash[idx] - phase;</span>
+<span class="new">+            d = _dash[_idx];</span>
+<span class="new">+            leftInThisDashSegment = d - _phase;</span>
+ 
+             if (len &lt;= leftInThisDashSegment) {
+                 _curCurvepts[0] = x1;
+                 _curCurvepts[1] = y1;
+<span class="removed">-                goTo(_curCurvepts, 0, 4);</span>
+<span class="new">+</span>
+<span class="new">+                goTo(_curCurvepts, 0, 4, _dashOn);</span>
+ 
+                 // Advance phase within current dash segment
+<span class="removed">-                phase += len;</span>
+<span class="new">+                _phase += len;</span>
+<span class="new">+</span>
+                 // TODO: compare float values using epsilon:
+                 if (len == leftInThisDashSegment) {
+<span class="removed">-                    phase = 0.0f;</span>
+<span class="removed">-                    idx = (idx + 1) % dashLen;</span>
+<span class="removed">-                    dashOn = !dashOn;</span>
+<span class="new">+                    _phase = 0.0f;</span>
+<span class="new">+                    _idx = (_idx + 1) % _dashLen;</span>
+<span class="new">+                    _dashOn = !_dashOn;</span>
+                 }
+<span class="new">+</span>
+<span class="new">+                // Save local state:</span>
+<span class="new">+                idx = _idx;</span>
+<span class="new">+                dashOn = _dashOn;</span>
+<span class="new">+                phase = _phase;</span>
+                 return;
+             }
+ 
+<span class="removed">-            dashdx = _dash[idx] * cx;</span>
+<span class="removed">-            dashdy = _dash[idx] * cy;</span>
+<span class="new">+            dashdx = d * cx;</span>
+<span class="new">+            dashdy = d * cy;</span>
+ 
+<span class="removed">-            if (phase == 0.0f) {</span>
+<span class="new">+            if (_phase == 0.0f) {</span>
+                 _curCurvepts[0] = x0 + dashdx;
+                 _curCurvepts[1] = y0 + dashdy;
+             } else {
+<span class="removed">-                p = leftInThisDashSegment / _dash[idx];</span>
+<span class="new">+                p = leftInThisDashSegment / d;</span>
+                 _curCurvepts[0] = x0 + p * dashdx;
+                 _curCurvepts[1] = y0 + p * dashdy;
+             }
+ 
+<span class="removed">-            goTo(_curCurvepts, 0, 4);</span>
+<span class="new">+            goTo(_curCurvepts, 0, 4, _dashOn);</span>
+ 
+             len -= leftInThisDashSegment;
+             // Advance to next dash segment
+<span class="removed">-            idx = (idx + 1) % dashLen;</span>
+<span class="removed">-            dashOn = !dashOn;</span>
+<span class="removed">-            phase = 0.0f;</span>
+<span class="new">+            _idx = (_idx + 1) % _dashLen;</span>
+<span class="new">+            _dashOn = !_dashOn;</span>
+<span class="new">+            _phase = 0.0f;</span>
+         }
+     }
+ 
+     // shared instance in Dasher
+     private final LengthIterator li = new LengthIterator();
+ 
+     // preconditions: curCurvepts must be an array of length at least 2 * type,
+     // that contains the curve we want to dash in the first type elements
+<span class="removed">-    private void somethingTo(int type) {</span>
+<span class="new">+    private void somethingTo(final int type) {</span>
+         if (pointCurve(curCurvepts, type)) {
+             return;
+         }
+<span class="removed">-        li.initializeIterationOnCurve(curCurvepts, type);</span>
+<span class="new">+        final LengthIterator _li = li;</span>
+<span class="new">+        final float[] _curCurvepts = curCurvepts;</span>
+<span class="new">+        final float[] _dash = dash;</span>
+<span class="new">+        final int _dashLen = this.dashLen;</span>
+<span class="new">+</span>
+<span class="new">+        _li.initializeIterationOnCurve(_curCurvepts, type);</span>
+<span class="new">+</span>
+<span class="new">+        int _idx = idx;</span>
+<span class="new">+        boolean _dashOn = dashOn;</span>
+<span class="new">+        float _phase = phase;</span>
+ 
+         // initially the current curve is at curCurvepts[0...type]
+         int curCurveoff = 0;
+         float lastSplitT = 0.0f;
+         float t;
+<span class="removed">-        float leftInThisDashSegment = dash[idx] - phase;</span>
+<span class="new">+        float leftInThisDashSegment = _dash[_idx] - _phase;</span>
+ 
+<span class="removed">-        while ((t = li.next(leftInThisDashSegment)) &lt; 1.0f) {</span>
+<span class="new">+        while ((t = _li.next(leftInThisDashSegment)) &lt; 1.0f) {</span>
+             if (t != 0.0f) {
+                 Helpers.subdivideAt((t - lastSplitT) / (1.0f - lastSplitT),
+<span class="removed">-                                    curCurvepts, curCurveoff,</span>
+<span class="removed">-                                    curCurvepts, 0,</span>
+<span class="removed">-                                    curCurvepts, type, type);</span>
+<span class="new">+                                    _curCurvepts, curCurveoff,</span>
+<span class="new">+                                    _curCurvepts, 0,</span>
+<span class="new">+                                    _curCurvepts, type, type);</span>
+                 lastSplitT = t;
+<span class="removed">-                goTo(curCurvepts, 2, type);</span>
+<span class="new">+                goTo(_curCurvepts, 2, type, _dashOn);</span>
+                 curCurveoff = type;
+             }
+             // Advance to next dash segment
+<span class="removed">-            idx = (idx + 1) % dashLen;</span>
+<span class="removed">-            dashOn = !dashOn;</span>
+<span class="removed">-            phase = 0.0f;</span>
+<span class="removed">-            leftInThisDashSegment = dash[idx];</span>
+<span class="removed">-        }</span>
+<span class="removed">-        goTo(curCurvepts, curCurveoff+2, type);</span>
+<span class="removed">-        phase += li.lastSegLen();</span>
+<span class="removed">-        if (phase &gt;= dash[idx]) {</span>
+<span class="removed">-            phase = 0.0f;</span>
+<span class="removed">-            idx = (idx + 1) % dashLen;</span>
+<span class="removed">-            dashOn = !dashOn;</span>
+<span class="removed">-        }</span>
+<span class="new">+            _idx = (_idx + 1) % _dashLen;</span>
+<span class="new">+            _dashOn = !_dashOn;</span>
+<span class="new">+            _phase = 0.0f;</span>
+<span class="new">+            leftInThisDashSegment = _dash[_idx];</span>
+<span class="new">+        }</span>
+<span class="new">+</span>
+<span class="new">+        goTo(_curCurvepts, curCurveoff + 2, type, _dashOn);</span>
+<span class="new">+</span>
+<span class="new">+        _phase += _li.lastSegLen();</span>
+<span class="new">+        if (_phase &gt;= _dash[_idx]) {</span>
+<span class="new">+            _phase = 0.0f;</span>
+<span class="new">+            _idx = (_idx + 1) % _dashLen;</span>
+<span class="new">+            _dashOn = !_dashOn;</span>
+<span class="new">+        }</span>
+<span class="new">+        // Save local state:</span>
+<span class="new">+        idx = _idx;</span>
+<span class="new">+        dashOn = _dashOn;</span>
+<span class="new">+        phase = _phase;</span>
+<span class="new">+</span>
+         // reset LengthIterator:
+<span class="removed">-        li.reset();</span>
+<span class="new">+        _li.reset();</span>
+     }
+ 
+     private static boolean pointCurve(float[] curve, int type) {
+         for (int i = 2; i &lt; type; i++) {
+             if (curve[i] != curve[i-2]) {
+</pre><hr /><pre>
+<span class="newmarker">@@ -418,11 +461,11 @@</span>
+     // limit+1 curves - one for each level of the tree + 1.
+     // NOTE: the way we do things here is not enough to traverse a general
+     // tree; however, the trees we are interested in have the property that
+     // every non leaf node has exactly 2 children
+     static final class LengthIterator {
+<span class="removed">-        private enum Side {LEFT, RIGHT};</span>
+<span class="new">+        private enum Side {LEFT, RIGHT}</span>
+         // Holds the curves at various levels of the recursion. The root
+         // (i.e. the original curve) is at recCurveStack[0] (but then it
+         // gets subdivided, the left half is put at 1, so most of the time
+         // only the right half of the original curve is at 0)
+         private final float[][] recCurveStack; // dirty
+</pre><hr /><pre>
+<span class="newmarker">@@ -668,70 +711,73 @@</span>
+         }
+ 
+         // this is a bit of a hack. It returns -1 if we're not on a leaf, and
+         // the length of the leaf if we are on a leaf.
+         private float onLeaf() {
+<span class="removed">-            float[] curve = recCurveStack[recLevel];</span>
+<span class="new">+            final float[] curve = recCurveStack[recLevel];</span>
+<span class="new">+            final int _curveType = curveType;</span>
+             float polyLen = 0.0f;
+ 
+             float x0 = curve[0], y0 = curve[1];
+<span class="removed">-            for (int i = 2; i &lt; curveType; i += 2) {</span>
+<span class="new">+            for (int i = 2; i &lt; _curveType; i += 2) {</span>
+                 final float x1 = curve[i], y1 = curve[i+1];
+                 final float len = Helpers.linelen(x0, y0, x1, y1);
+                 polyLen += len;
+<span class="removed">-                curLeafCtrlPolyLengths[i/2 - 1] = len;</span>
+<span class="new">+                curLeafCtrlPolyLengths[(i &gt;&gt; 1) - 1] = len;</span>
+                 x0 = x1;
+                 y0 = y1;
+             }
+ 
+             final float lineLen = Helpers.linelen(curve[0], curve[1],
+<span class="removed">-                                                  curve[curveType-2],</span>
+<span class="removed">-                                                  curve[curveType-1]);</span>
+<span class="new">+                                                  curve[_curveType-2],</span>
+<span class="new">+                                                  curve[_curveType-1]);</span>
+             if ((polyLen - lineLen) &lt; ERR || recLevel == REC_LIMIT) {
+                 return (polyLen + lineLen) / 2.0f;
+             }
+             return -1.0f;
+         }
+     }
+ 
+     @Override
+<span class="removed">-    public void curveTo(float x1, float y1,</span>
+<span class="removed">-                        float x2, float y2,</span>
+<span class="removed">-                        float x3, float y3)</span>
+<span class="new">+    public void curveTo(final float x1, final float y1,</span>
+<span class="new">+                        final float x2, final float y2,</span>
+<span class="new">+                        final float x3, final float y3)</span>
+     {
+         final float[] _curCurvepts = curCurvepts;
+         _curCurvepts[0] = x0;        _curCurvepts[1] = y0;
+         _curCurvepts[2] = x1;        _curCurvepts[3] = y1;
+         _curCurvepts[4] = x2;        _curCurvepts[5] = y2;
+         _curCurvepts[6] = x3;        _curCurvepts[7] = y3;
+         somethingTo(8);
+     }
+ 
+     @Override
+<span class="removed">-    public void quadTo(float x1, float y1, float x2, float y2) {</span>
+<span class="new">+    public void quadTo(final float x1, final float y1,</span>
+<span class="new">+                       final float x2, final float y2)</span>
+<span class="new">+    {</span>
+         final float[] _curCurvepts = curCurvepts;
+         _curCurvepts[0] = x0;        _curCurvepts[1] = y0;
+         _curCurvepts[2] = x1;        _curCurvepts[3] = y1;
+         _curCurvepts[4] = x2;        _curCurvepts[5] = y2;
+         somethingTo(6);
+     }
+ 
+     @Override
+     public void closePath() {
+         lineTo(sx, sy);
+<span class="removed">-        if (firstSegidx &gt; 0) {</span>
+<span class="new">+        if (firstSegidx != 0) {</span>
+             if (!dashOn || needsMoveTo) {
+                 out.moveTo(sx, sy);
+             }
+             emitFirstSegments();
+         }
+         moveTo(sx, sy);
+     }
+ 
+     @Override
+     public void pathDone() {
+<span class="removed">-        if (firstSegidx &gt; 0) {</span>
+<span class="new">+        if (firstSegidx != 0) {</span>
+             out.moveTo(sx, sy);
+             emitFirstSegments();
+         }
+         out.pathDone();
+ 
+</pre>
+<center><a href='../../../../../../src/share/classes/sun/java2d/marlin/DTransformingPathConsumer2D.java.udiff.html' target='_top'>&lt prev</a> <a href='../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../src/share/classes/sun/java2d/marlin/Helpers.java.udiff.html' target='_top'>next &gt</a></center>
+</body></html>
+

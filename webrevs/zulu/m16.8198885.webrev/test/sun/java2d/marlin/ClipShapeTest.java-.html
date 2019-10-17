@@ -1,0 +1,948 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>Old test/sun/java2d/marlin/ClipShapeTest.java</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 2017, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  */
+  23 import java.awt.BasicStroke;
+  24 import java.awt.Color;
+  25 import java.awt.Graphics2D;
+  26 import java.awt.RenderingHints;
+  27 import java.awt.Shape;
+  28 import java.awt.Stroke;
+  29 import java.awt.geom.Ellipse2D;
+  30 import java.awt.geom.Path2D;
+  31 import java.awt.geom.PathIterator;
+  32 import java.awt.image.BufferedImage;
+  33 import java.awt.image.DataBufferInt;
+  34 import java.io.File;
+  35 import java.io.FileOutputStream;
+  36 import java.io.IOException;
+  37 import java.util.Arrays;
+  38 import java.util.Iterator;
+  39 import java.util.Locale;
+  40 import java.util.Random;
+  41 import java.util.concurrent.atomic.AtomicBoolean;
+  42 import java.util.concurrent.atomic.AtomicInteger;
+  43 import java.util.logging.Handler;
+  44 import java.util.logging.LogRecord;
+  45 import java.util.logging.Logger;
+  46 import javax.imageio.IIOImage;
+  47 import javax.imageio.ImageIO;
+  48 import javax.imageio.ImageWriteParam;
+  49 import javax.imageio.ImageWriter;
+  50 import javax.imageio.stream.ImageOutputStream;
+  51 
+  52 /**
+  53  * @test
+  54  * @bug 8191814
+  55  * @summary Verifies that Marlin rendering generates the same
+  56  * images with and without clipping optimization with all possible
+  57  * stroke (cap/join) and fill modes (EO rules)
+  58  * Note: Use the argument -slow to run more intensive tests (too much time)
+  59  * @run main/othervm/timeout=120 -Dsun.java2d.renderer=sun.java2d.marlin.MarlinRenderingEngine ClipShapeTest
+  60  * @run main/othervm/timeout=120 -Dsun.java2d.renderer=sun.java2d.marlin.DMarlinRenderingEngine ClipShapeTest
+  61  */
+  62 public final class ClipShapeTest {
+  63 
+  64     static final boolean TEST_STROKER = true;
+  65     static final boolean TEST_FILLER = true;
+  66 
+  67     // complementary tests in slow mode:
+  68     static boolean USE_DASHES = false;
+  69     static boolean USE_VAR_STROKE = false;
+  70 
+  71     static int NUM_TESTS = 5000;
+  72     static final int TESTW = 100;
+  73     static final int TESTH = 100;
+  74 
+  75     // shape settings:
+  76     static final ShapeMode SHAPE_MODE = ShapeMode.NINE_LINE_POLYS;
+  77     static final boolean SHAPE_REPEAT = true;
+  78 
+  79     // dump path on console:
+  80     static final boolean DUMP_SHAPE = true;
+  81 
+  82     static final boolean SHOW_DETAILS = true;
+  83     static final boolean SHOW_OUTLINE = true;
+  84     static final boolean SHOW_POINTS = true;
+  85     static final boolean SHOW_INFO = false;
+  86 
+  87     static final int MAX_SHOW_FRAMES = 10;
+  88 
+  89     // use fixed seed to reproduce always same polygons between tests
+  90     static final boolean FIXED_SEED = false;
+  91     static final double RAND_SCALE = 3.0;
+  92     static final double RANDW = TESTW * RAND_SCALE;
+  93     static final double OFFW = (TESTW - RANDW) / 2.0;
+  94     static final double RANDH = TESTH * RAND_SCALE;
+  95     static final double OFFH = (TESTH - RANDH) / 2.0;
+  96 
+  97     static enum ShapeMode {
+  98         TWO_CUBICS,
+  99         FOUR_QUADS,
+ 100         FIVE_LINE_POLYS,
+ 101         NINE_LINE_POLYS,
+ 102         FIFTY_LINE_POLYS,
+ 103         MIXED
+ 104     }
+ 105 
+ 106     static final long SEED = 1666133789L;
+ 107     // Fixed seed to avoid any difference between runs:
+ 108     static final Random RANDOM = new Random(SEED);
+ 109 
+ 110     static final File OUTPUT_DIR = new File(".");
+ 111 
+ 112     /**
+ 113      * Test
+ 114      * @param args
+ 115      */
+ 116     public static void main(String[] args) {
+ 117         boolean runSlowTests = (args.length != 0 &amp;&amp; "-slow".equals(args[0]));
+ 118 
+ 119         if (runSlowTests) {
+ 120             NUM_TESTS = 20000; // or 100000 (very slow)
+ 121             USE_DASHES = true;
+ 122             USE_VAR_STROKE = true;
+ 123         }
+ 124 
+ 125         Locale.setDefault(Locale.US);
+ 126 
+ 127         // Get Marlin runtime state from its log:
+ 128         final AtomicBoolean isMarlin = new AtomicBoolean();
+ 129         final AtomicBoolean isClipRuntime = new AtomicBoolean();
+ 130 
+ 131         // initialize j.u.l Looger:
+ 132         final Logger log = Logger.getLogger("sun.java2d.marlin");
+ 133         log.addHandler(new Handler() {
+ 134             @Override
+ 135             public void publish(LogRecord record) {
+ 136                 final String msg = record.getMessage();
+ 137                 if (msg != null) {
+ 138                     // last space to avoid matching other settings:
+ 139                     if (msg.startsWith("sun.java2d.renderer ")) {
+ 140                         isMarlin.set(msg.contains("MarlinRenderingEngine"));
+ 141                     }
+ 142                     if (msg.startsWith("sun.java2d.renderer.clip.runtime.enable")) {
+ 143                         isClipRuntime.set(msg.contains("true"));
+ 144                     }
+ 145                 }
+ 146 
+ 147                 final Throwable th = record.getThrown();
+ 148                 // detect any Throwable:
+ 149                 if (th != null) {
+ 150                     System.out.println("Test failed:\n" + record.getMessage());
+ 151                     th.printStackTrace(System.out);
+ 152 
+ 153                     throw new RuntimeException("Test failed: ", th);
+ 154                 }
+ 155             }
+ 156 
+ 157             @Override
+ 158             public void flush() {
+ 159             }
+ 160 
+ 161             @Override
+ 162             public void close() throws SecurityException {
+ 163             }
+ 164         });
+ 165 
+ 166         // enable Marlin logging &amp; internal checks:
+ 167         System.setProperty("sun.java2d.renderer.log", "true");
+ 168         System.setProperty("sun.java2d.renderer.useLogger", "true");
+ 169 
+ 170         // disable static clipping setting:
+ 171         System.setProperty("sun.java2d.renderer.clip", "false");
+ 172         System.setProperty("sun.java2d.renderer.clip.runtime.enable", "true");
+ 173 
+ 174         System.out.println("ClipShapeTests: image = " + TESTW + " x " + TESTH);
+ 175 
+ 176         int failures = 0;
+ 177         final long start = System.nanoTime();
+ 178         try {
+ 179             // TODO: test affine transforms ?
+ 180 
+ 181             if (TEST_STROKER) {
+ 182                 final float[][] dashArrays = (USE_DASHES)
+ 183                         ? new float[][]{null, new float[]{1f, 2f}}
+ 184                         : new float[][]{null};
+ 185 
+ 186                 System.out.println("dashes: " + Arrays.toString(dashArrays));
+ 187 
+ 188                 final float[] strokeWidths = (USE_VAR_STROKE)
+ 189                         ? new float[5] : new float[]{8f};
+ 190 
+ 191                 int nsw = 0;
+ 192                 if (USE_VAR_STROKE) {
+ 193                     for (float width = 0.1f; width &lt; 110f; width *= 5f) {
+ 194                         strokeWidths[nsw++] = width;
+ 195                     }
+ 196                 } else {
+ 197                     nsw = 1;
+ 198                 }
+ 199 
+ 200                 System.out.println("stroke widths: " + Arrays.toString(strokeWidths));
+ 201 
+ 202                 // Stroker tests:
+ 203                 for (int w = 0; w &lt; nsw; w++) {
+ 204                     final float width = strokeWidths[w];
+ 205 
+ 206                     for (float[] dashes : dashArrays) {
+ 207 
+ 208                         for (int cap = 0; cap &lt;= 2; cap++) {
+ 209 
+ 210                             for (int join = 0; join &lt;= 2; join++) {
+ 211 
+ 212                                 failures += paintPaths(new TestSetup(SHAPE_MODE, false, width, cap, join, dashes));
+ 213                                 failures += paintPaths(new TestSetup(SHAPE_MODE, true, width, cap, join, dashes));
+ 214                             }
+ 215                         }
+ 216                     }
+ 217                 }
+ 218             }
+ 219 
+ 220             if (TEST_FILLER) {
+ 221                 // Filler tests:
+ 222                 failures += paintPaths(new TestSetup(SHAPE_MODE, false, Path2D.WIND_NON_ZERO));
+ 223                 failures += paintPaths(new TestSetup(SHAPE_MODE, true, Path2D.WIND_NON_ZERO));
+ 224 
+ 225                 failures += paintPaths(new TestSetup(SHAPE_MODE, false, Path2D.WIND_EVEN_ODD));
+ 226                 failures += paintPaths(new TestSetup(SHAPE_MODE, true, Path2D.WIND_EVEN_ODD));
+ 227             }
+ 228         } catch (IOException ioe) {
+ 229             throw new RuntimeException(ioe);
+ 230         }
+ 231         System.out.println("main: duration= " + (1e-6 * (System.nanoTime() - start)) + " ms.");
+ 232 
+ 233         if (!isMarlin.get()) {
+ 234             throw new RuntimeException("Marlin renderer not used at runtime !");
+ 235         }
+ 236         if (!isClipRuntime.get()) {
+ 237             throw new RuntimeException("Marlin clipping not enabled at runtime !");
+ 238         }
+ 239         if (failures != 0) {
+ 240             throw new RuntimeException("Clip test failures : " + failures);
+ 241         }
+ 242     }
+ 243 
+ 244     static int paintPaths(final TestSetup ts) throws IOException {
+ 245         final long start = System.nanoTime();
+ 246 
+ 247         if (FIXED_SEED) {
+ 248             // Reset seed for random numbers:
+ 249             RANDOM.setSeed(SEED);
+ 250         }
+ 251 
+ 252         System.out.println("paintPaths: " + NUM_TESTS
+ 253                 + " paths (" + SHAPE_MODE + ") - setup: " + ts);
+ 254 
+ 255         final boolean fill = !ts.isStroke();
+ 256         final Path2D p2d = new Path2D.Double(ts.windingRule);
+ 257 
+ 258         final BufferedImage imgOn = newImage(TESTW, TESTH);
+ 259         final Graphics2D g2dOn = initialize(imgOn, ts);
+ 260 
+ 261         final BufferedImage imgOff = newImage(TESTW, TESTH);
+ 262         final Graphics2D g2dOff = initialize(imgOff, ts);
+ 263 
+ 264         final BufferedImage imgDiff = newImage(TESTW, TESTH);
+ 265 
+ 266         final DiffContext globalCtx = new DiffContext("All tests");
+ 267 
+ 268         int nd = 0;
+ 269         try {
+ 270             final DiffContext testCtx = new DiffContext("Test");
+ 271             BufferedImage diffImage;
+ 272 
+ 273             for (int n = 0; n &lt; NUM_TESTS; n++) {
+ 274                 genShape(p2d, ts);
+ 275 
+ 276                 // Runtime clip setting OFF:
+ 277                 paintShape(p2d, g2dOff, fill, false);
+ 278 
+ 279                 // Runtime clip setting ON:
+ 280                 paintShape(p2d, g2dOn, fill, true);
+ 281 
+ 282                 /* compute image difference if possible */
+ 283                 diffImage = computeDiffImage(testCtx, imgOn, imgOff, imgDiff, globalCtx);
+ 284 
+ 285                 final String testName = "Setup_" + ts.id + "_test_" + n;
+ 286 
+ 287                 if (diffImage != null) {
+ 288                     nd++;
+ 289 
+ 290                     final double ratio = (100.0 * testCtx.histPix.count) / testCtx.histAll.count;
+ 291                     System.out.println("Diff ratio: " + testName + " = " + trimTo3Digits(ratio) + " %");
+ 292 
+ 293                     if (false) {
+ 294                         saveImage(diffImage, OUTPUT_DIR, testName + "-diff.png");
+ 295                     }
+ 296 
+ 297                     if (DUMP_SHAPE) {
+ 298                         dumpShape(p2d);
+ 299                     }
+ 300                     if (nd &lt; MAX_SHOW_FRAMES) {
+ 301                         if (SHOW_DETAILS) {
+ 302                             paintShapeDetails(g2dOff, p2d);
+ 303                             paintShapeDetails(g2dOn, p2d);
+ 304                         }
+ 305 
+ 306                         saveImage(imgOff, OUTPUT_DIR, testName + "-off.png");
+ 307                         saveImage(imgOn, OUTPUT_DIR, testName + "-on.png");
+ 308                         saveImage(diffImage, OUTPUT_DIR, testName + "-diff.png");
+ 309                     }
+ 310                 }
+ 311             }
+ 312         } finally {
+ 313             g2dOff.dispose();
+ 314             g2dOn.dispose();
+ 315 
+ 316             if (nd != 0) {
+ 317                 System.out.println("paintPaths: " + NUM_TESTS + " paths - "
+ 318                         + "Number of differences = " + nd
+ 319                         + " ratio = " + (100f * nd) / NUM_TESTS + " %");
+ 320             }
+ 321 
+ 322             globalCtx.dump();
+ 323         }
+ 324         System.out.println("paintPaths: duration= " + (1e-6 * (System.nanoTime() - start)) + " ms.");
+ 325         return nd;
+ 326     }
+ 327 
+ 328     private static void paintShape(final Path2D p2d, final Graphics2D g2d,
+ 329                                    final boolean fill, final boolean clip) {
+ 330         reset(g2d);
+ 331 
+ 332         setClip(g2d, clip);
+ 333 
+ 334         if (fill) {
+ 335             g2d.fill(p2d);
+ 336         } else {
+ 337             g2d.draw(p2d);
+ 338         }
+ 339     }
+ 340 
+ 341     private static Graphics2D initialize(final BufferedImage img,
+ 342                                          final TestSetup ts) {
+ 343         final Graphics2D g2d = (Graphics2D) img.getGraphics();
+ 344         g2d.setRenderingHint(RenderingHints.KEY_RENDERING,
+ 345                 RenderingHints.VALUE_RENDER_QUALITY);
+ 346         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL,
+ 347                 RenderingHints.VALUE_STROKE_PURE);
+ 348 
+ 349         if (ts.isStroke()) {
+ 350             g2d.setStroke(createStroke(ts));
+ 351         }
+ 352         g2d.setColor(Color.GRAY);
+ 353 
+ 354         return g2d;
+ 355     }
+ 356 
+ 357     private static void reset(final Graphics2D g2d) {
+ 358         // Disable antialiasing:
+ 359         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+ 360                 RenderingHints.VALUE_ANTIALIAS_OFF);
+ 361         g2d.setBackground(Color.WHITE);
+ 362         g2d.clearRect(0, 0, TESTW, TESTH);
+ 363     }
+ 364 
+ 365     private static void setClip(final Graphics2D g2d, final boolean clip) {
+ 366         // Enable antialiasing:
+ 367         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+ 368                 RenderingHints.VALUE_ANTIALIAS_ON);
+ 369 
+ 370         // Enable or Disable clipping:
+ 371         System.setProperty("sun.java2d.renderer.clip.runtime", (clip) ? "true" : "false");
+ 372     }
+ 373 
+ 374     static void genShape(final Path2D p2d, final TestSetup ts) {
+ 375         p2d.reset();
+ 376 
+ 377         final int end = (SHAPE_REPEAT) ? 2 : 1;
+ 378 
+ 379         for (int p = 0; p &lt; end; p++) {
+ 380             p2d.moveTo(randX(), randY());
+ 381 
+ 382             switch (ts.shapeMode) {
+ 383                 case MIXED:
+ 384                 case FIFTY_LINE_POLYS:
+ 385                 case NINE_LINE_POLYS:
+ 386                 case FIVE_LINE_POLYS:
+ 387                     p2d.lineTo(randX(), randY());
+ 388                     p2d.lineTo(randX(), randY());
+ 389                     p2d.lineTo(randX(), randY());
+ 390                     p2d.lineTo(randX(), randY());
+ 391                     if (ts.shapeMode == ShapeMode.FIVE_LINE_POLYS) {
+ 392                         // And an implicit close makes 5 lines
+ 393                         break;
+ 394                     }
+ 395                     p2d.lineTo(randX(), randY());
+ 396                     p2d.lineTo(randX(), randY());
+ 397                     p2d.lineTo(randX(), randY());
+ 398                     p2d.lineTo(randX(), randY());
+ 399                     if (ts.shapeMode == ShapeMode.NINE_LINE_POLYS) {
+ 400                         // And an implicit close makes 9 lines
+ 401                         break;
+ 402                     }
+ 403                     if (ts.shapeMode == ShapeMode.FIFTY_LINE_POLYS) {
+ 404                         for (int i = 0; i &lt; 41; i++) {
+ 405                             p2d.lineTo(randX(), randY());
+ 406                         }
+ 407                         // And an implicit close makes 50 lines
+ 408                         break;
+ 409                     }
+ 410                 case TWO_CUBICS:
+ 411                     p2d.curveTo(randX(), randY(), randX(), randY(), randX(), randY());
+ 412                     p2d.curveTo(randX(), randY(), randX(), randY(), randX(), randY());
+ 413                     if (ts.shapeMode == ShapeMode.TWO_CUBICS) {
+ 414                         break;
+ 415                     }
+ 416                 case FOUR_QUADS:
+ 417                     p2d.quadTo(randX(), randY(), randX(), randY());
+ 418                     p2d.quadTo(randX(), randY(), randX(), randY());
+ 419                     p2d.quadTo(randX(), randY(), randX(), randY());
+ 420                     p2d.quadTo(randX(), randY(), randX(), randY());
+ 421                     if (ts.shapeMode == ShapeMode.FOUR_QUADS) {
+ 422                         break;
+ 423                     }
+ 424                 default:
+ 425             }
+ 426 
+ 427             if (ts.closed) {
+ 428                 p2d.closePath();
+ 429             }
+ 430         }
+ 431     }
+ 432 
+ 433     static final float POINT_RADIUS = 2f;
+ 434     static final float LINE_WIDTH = 1f;
+ 435 
+ 436     static final Stroke OUTLINE_STROKE = new BasicStroke(LINE_WIDTH);
+ 437     static final int COLOR_ALPHA = 128;
+ 438     static final Color COLOR_MOVETO = new Color(255, 0, 0, COLOR_ALPHA);
+ 439     static final Color COLOR_LINETO_ODD = new Color(0, 0, 255, COLOR_ALPHA);
+ 440     static final Color COLOR_LINETO_EVEN = new Color(0, 255, 0, COLOR_ALPHA);
+ 441 
+ 442     static final Ellipse2D.Float ELL_POINT = new Ellipse2D.Float();
+ 443 
+ 444     private static void paintShapeDetails(final Graphics2D g2d, final Shape shape) {
+ 445 
+ 446         final Stroke oldStroke = g2d.getStroke();
+ 447         final Color oldColor = g2d.getColor();
+ 448 
+ 449         setClip(g2d, false);
+ 450 
+ 451         if (SHOW_OUTLINE) {
+ 452             g2d.setStroke(OUTLINE_STROKE);
+ 453             g2d.setColor(COLOR_LINETO_ODD);
+ 454             g2d.draw(shape);
+ 455         }
+ 456 
+ 457         final float[] coords = new float[6];
+ 458         float px, py;
+ 459 
+ 460         int nMove = 0;
+ 461         int nLine = 0;
+ 462         int n = 0;
+ 463 
+ 464         for (final PathIterator it = shape.getPathIterator(null); !it.isDone(); it.next()) {
+ 465             int type = it.currentSegment(coords);
+ 466             switch (type) {
+ 467                 case PathIterator.SEG_MOVETO:
+ 468                     if (SHOW_POINTS) {
+ 469                         g2d.setColor(COLOR_MOVETO);
+ 470                     }
+ 471                     break;
+ 472                 case PathIterator.SEG_LINETO:
+ 473                     if (SHOW_POINTS) {
+ 474                         g2d.setColor((nLine % 2 == 0) ? COLOR_LINETO_ODD : COLOR_LINETO_EVEN);
+ 475                     }
+ 476                     nLine++;
+ 477                     break;
+ 478                 case PathIterator.SEG_CLOSE:
+ 479                     continue;
+ 480                 default:
+ 481                     System.out.println("unsupported segment type= " + type);
+ 482                     continue;
+ 483             }
+ 484             px = coords[0];
+ 485             py = coords[1];
+ 486 
+ 487             if (SHOW_INFO) {
+ 488                 System.out.println("point[" + (n++) + "|seg=" + type + "]: " + px + " " + py);
+ 489             }
+ 490 
+ 491             if (SHOW_POINTS) {
+ 492                 ELL_POINT.setFrame(px - POINT_RADIUS, py - POINT_RADIUS,
+ 493                         POINT_RADIUS * 2f, POINT_RADIUS * 2f);
+ 494                 g2d.fill(ELL_POINT);
+ 495             }
+ 496         }
+ 497         if (SHOW_INFO) {
+ 498             System.out.println("Path moveTo=" + nMove + ", lineTo=" + nLine);
+ 499             System.out.println("--------------------------------------------------");
+ 500         }
+ 501 
+ 502         g2d.setStroke(oldStroke);
+ 503         g2d.setColor(oldColor);
+ 504     }
+ 505 
+ 506     private static void dumpShape(final Shape shape) {
+ 507         final float[] coords = new float[6];
+ 508 
+ 509         for (final PathIterator it = shape.getPathIterator(null); !it.isDone(); it.next()) {
+ 510             final int type = it.currentSegment(coords);
+ 511             switch (type) {
+ 512                 case PathIterator.SEG_MOVETO:
+ 513                     System.out.println("p2d.moveTo(" + coords[0] + ", " + coords[1] + ");");
+ 514                     break;
+ 515                 case PathIterator.SEG_LINETO:
+ 516                     System.out.println("p2d.lineTo(" + coords[0] + ", " + coords[1] + ");");
+ 517                     break;
+ 518                 case PathIterator.SEG_CLOSE:
+ 519                     System.out.println("p2d.closePath();");
+ 520                     break;
+ 521                 default:
+ 522                     System.out.println("// Unsupported segment type= " + type);
+ 523             }
+ 524         }
+ 525         System.out.println("--------------------------------------------------");
+ 526     }
+ 527 
+ 528     static double randX() {
+ 529         return RANDOM.nextDouble() * RANDW + OFFW;
+ 530     }
+ 531 
+ 532     static double randY() {
+ 533         return RANDOM.nextDouble() * RANDH + OFFH;
+ 534     }
+ 535 
+ 536     private static BasicStroke createStroke(final TestSetup ts) {
+ 537         return new BasicStroke(ts.strokeWidth, ts.strokeCap, ts.strokeJoin, 10.0f, ts.dashes, 0.0f);
+ 538     }
+ 539 
+ 540     private final static class TestSetup {
+ 541 
+ 542         static final AtomicInteger COUNT = new AtomicInteger();
+ 543 
+ 544         final int id;
+ 545         final ShapeMode shapeMode;
+ 546         final boolean closed;
+ 547         // stroke
+ 548         final float strokeWidth;
+ 549         final int strokeCap;
+ 550         final int strokeJoin;
+ 551         final float[] dashes;
+ 552         // fill
+ 553         final int windingRule;
+ 554 
+ 555         TestSetup(ShapeMode shapeMode, final boolean closed,
+ 556                   final float strokeWidth, final int strokeCap, final int strokeJoin, final float[] dashes) {
+ 557             this.id = COUNT.incrementAndGet();
+ 558             this.shapeMode = shapeMode;
+ 559             this.closed = closed;
+ 560             this.strokeWidth = strokeWidth;
+ 561             this.strokeCap = strokeCap;
+ 562             this.strokeJoin = strokeJoin;
+ 563             this.dashes = dashes;
+ 564             this.windingRule = Path2D.WIND_NON_ZERO;
+ 565         }
+ 566 
+ 567         TestSetup(ShapeMode shapeMode, final boolean closed, final int windingRule) {
+ 568             this.id = COUNT.incrementAndGet();
+ 569             this.shapeMode = shapeMode;
+ 570             this.closed = closed;
+ 571             this.strokeWidth = 0f;
+ 572             this.strokeCap = this.strokeJoin = -1; // invalid
+ 573             this.dashes = null;
+ 574             this.windingRule = windingRule;
+ 575         }
+ 576 
+ 577         boolean isStroke() {
+ 578             return this.strokeWidth &gt; 0f;
+ 579         }
+ 580 
+ 581         @Override
+ 582         public String toString() {
+ 583             return "TestSetup{id=" + id + ", shapeMode=" + shapeMode + ", closed=" + closed
+ 584                     + ", strokeWidth=" + strokeWidth + ", strokeCap=" + strokeCap + ", strokeJoin=" + strokeJoin
+ 585                     + ((dashes != null) ? ", dashes: " + Arrays.toString(dashes) : "")
+ 586                     + ", windingRule=" + windingRule + '}';
+ 587         }
+ 588     }
+ 589 
+ 590     // --- utilities ---
+ 591     private static final int DCM_ALPHA_MASK = 0xff000000;
+ 592 
+ 593     public static BufferedImage newImage(final int w, final int h) {
+ 594         return new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
+ 595     }
+ 596 
+ 597     public static BufferedImage computeDiffImage(final DiffContext localCtx,
+ 598                                                  final BufferedImage tstImage,
+ 599                                                  final BufferedImage refImage,
+ 600                                                  final BufferedImage diffImage,
+ 601                                                  final DiffContext globalCtx) {
+ 602 
+ 603         final int[] aRefPix = ((DataBufferInt) refImage.getRaster().getDataBuffer()).getData();
+ 604         final int[] aTstPix = ((DataBufferInt) tstImage.getRaster().getDataBuffer()).getData();
+ 605         final int[] aDifPix = ((DataBufferInt) diffImage.getRaster().getDataBuffer()).getData();
+ 606 
+ 607         // reset local diff context:
+ 608         localCtx.reset();
+ 609 
+ 610         int ref, tst, dg, v;
+ 611         for (int i = 0, len = aRefPix.length; i &lt; len; i++) {
+ 612             ref = aRefPix[i];
+ 613             tst = aTstPix[i];
+ 614 
+ 615             // grayscale diff:
+ 616             dg = (r(ref) + g(ref) + b(ref)) - (r(tst) + g(tst) + b(tst));
+ 617 
+ 618             // max difference on grayscale values:
+ 619             v = (int) Math.ceil(Math.abs(dg / 3.0));
+ 620 
+ 621             aDifPix[i] = toInt(v, v, v);
+ 622 
+ 623             localCtx.add(v);
+ 624             globalCtx.add(v);
+ 625         }
+ 626 
+ 627         if (!localCtx.isDiff()) {
+ 628             return null;
+ 629         }
+ 630 
+ 631         return diffImage;
+ 632     }
+ 633 
+ 634     static void saveImage(final BufferedImage image, final File resDirectory, final String imageFileName) throws IOException {
+ 635         final Iterator&lt;ImageWriter&gt; itWriters = ImageIO.getImageWritersByFormatName("PNG");
+ 636         if (itWriters.hasNext()) {
+ 637             final ImageWriter writer = itWriters.next();
+ 638 
+ 639             final ImageWriteParam writerParams = writer.getDefaultWriteParam();
+ 640             writerParams.setProgressiveMode(ImageWriteParam.MODE_DISABLED);
+ 641 
+ 642             final File imgFile = new File(resDirectory, imageFileName);
+ 643 
+ 644             if (!imgFile.exists() || imgFile.canWrite()) {
+ 645                 System.out.println("saveImage: saving image as PNG [" + imgFile + "]...");
+ 646                 imgFile.delete();
+ 647 
+ 648                 // disable cache in temporary files:
+ 649                 ImageIO.setUseCache(false);
+ 650 
+ 651                 final long start = System.nanoTime();
+ 652 
+ 653                 // PNG uses already buffering:
+ 654                 final ImageOutputStream imgOutStream = ImageIO.createImageOutputStream(new FileOutputStream(imgFile));
+ 655 
+ 656                 writer.setOutput(imgOutStream);
+ 657                 try {
+ 658                     writer.write(null, new IIOImage(image, null, null), writerParams);
+ 659                 } finally {
+ 660                     imgOutStream.close();
+ 661 
+ 662                     final long time = System.nanoTime() - start;
+ 663                     System.out.println("saveImage: duration= " + (time / 1000000l) + " ms.");
+ 664                 }
+ 665             }
+ 666         }
+ 667     }
+ 668 
+ 669     static int r(final int v) {
+ 670         return (v &gt;&gt; 16 &amp; 0xff);
+ 671     }
+ 672 
+ 673     static int g(final int v) {
+ 674         return (v &gt;&gt; 8 &amp; 0xff);
+ 675     }
+ 676 
+ 677     static int b(final int v) {
+ 678         return (v &amp; 0xff);
+ 679     }
+ 680 
+ 681     static int clamp127(final int v) {
+ 682         return (v &lt; 128) ? (v &gt; -127 ? (v + 127) : 0) : 255;
+ 683     }
+ 684 
+ 685     static int toInt(final int r, final int g, final int b) {
+ 686         return DCM_ALPHA_MASK | (r &lt;&lt; 16) | (g &lt;&lt; 8) | b;
+ 687     }
+ 688 
+ 689     /* stats */
+ 690     static class StatInteger {
+ 691 
+ 692         public final String name;
+ 693         public long count = 0l;
+ 694         public long sum = 0l;
+ 695         public long min = Integer.MAX_VALUE;
+ 696         public long max = Integer.MIN_VALUE;
+ 697 
+ 698         StatInteger(String name) {
+ 699             this.name = name;
+ 700         }
+ 701 
+ 702         void reset() {
+ 703             count = 0l;
+ 704             sum = 0l;
+ 705             min = Integer.MAX_VALUE;
+ 706             max = Integer.MIN_VALUE;
+ 707         }
+ 708 
+ 709         void add(int val) {
+ 710             count++;
+ 711             sum += val;
+ 712             if (val &lt; min) {
+ 713                 min = val;
+ 714             }
+ 715             if (val &gt; max) {
+ 716                 max = val;
+ 717             }
+ 718         }
+ 719 
+ 720         void add(long val) {
+ 721             count++;
+ 722             sum += val;
+ 723             if (val &lt; min) {
+ 724                 min = val;
+ 725             }
+ 726             if (val &gt; max) {
+ 727                 max = val;
+ 728             }
+ 729         }
+ 730 
+ 731         public final double average() {
+ 732             return ((double) sum) / count;
+ 733         }
+ 734 
+ 735         @Override
+ 736         public String toString() {
+ 737             final StringBuilder sb = new StringBuilder(128);
+ 738             toString(sb);
+ 739             return sb.toString();
+ 740         }
+ 741 
+ 742         public final StringBuilder toString(final StringBuilder sb) {
+ 743             sb.append(name).append("[n: ").append(count);
+ 744             sb.append("] sum: ").append(sum).append(" avg: ").append(trimTo3Digits(average()));
+ 745             sb.append(" [").append(min).append(" | ").append(max).append("]");
+ 746             return sb;
+ 747         }
+ 748 
+ 749     }
+ 750 
+ 751     final static class Histogram extends StatInteger {
+ 752 
+ 753         static final int BUCKET = 2;
+ 754         static final int MAX = 20;
+ 755         static final int LAST = MAX - 1;
+ 756         static final int[] STEPS = new int[MAX];
+ 757 
+ 758         static {
+ 759             STEPS[0] = 0;
+ 760             STEPS[1] = 1;
+ 761 
+ 762             for (int i = 2; i &lt; MAX; i++) {
+ 763                 STEPS[i] = STEPS[i - 1] * BUCKET;
+ 764             }
+ 765 //            System.out.println("Histogram.STEPS = " + Arrays.toString(STEPS));
+ 766         }
+ 767 
+ 768         static int bucket(int val) {
+ 769             for (int i = 1; i &lt; MAX; i++) {
+ 770                 if (val &lt; STEPS[i]) {
+ 771                     return i - 1;
+ 772                 }
+ 773             }
+ 774             return LAST;
+ 775         }
+ 776 
+ 777         private final StatInteger[] stats = new StatInteger[MAX];
+ 778 
+ 779         public Histogram(String name) {
+ 780             super(name);
+ 781             for (int i = 0; i &lt; MAX; i++) {
+ 782                 stats[i] = new StatInteger(String.format("%5s .. %5s", STEPS[i], ((i + 1 &lt; MAX) ? STEPS[i + 1] : "~")));
+ 783             }
+ 784         }
+ 785 
+ 786         @Override
+ 787         final void reset() {
+ 788             super.reset();
+ 789             for (int i = 0; i &lt; MAX; i++) {
+ 790                 stats[i].reset();
+ 791             }
+ 792         }
+ 793 
+ 794         @Override
+ 795         final void add(int val) {
+ 796             super.add(val);
+ 797             stats[bucket(val)].add(val);
+ 798         }
+ 799 
+ 800         @Override
+ 801         final void add(long val) {
+ 802             add((int) val);
+ 803         }
+ 804 
+ 805         @Override
+ 806         public final String toString() {
+ 807             final StringBuilder sb = new StringBuilder(2048);
+ 808             super.toString(sb).append(" { ");
+ 809 
+ 810             for (int i = 0; i &lt; MAX; i++) {
+ 811                 if (stats[i].count != 0l) {
+ 812                     sb.append("\n        ").append(stats[i].toString());
+ 813                 }
+ 814             }
+ 815 
+ 816             return sb.append(" }").toString();
+ 817         }
+ 818     }
+ 819 
+ 820     /**
+ 821      * Adjust the given double value to keep only 3 decimal digits
+ 822      * @param value value to adjust
+ 823      * @return double value with only 3 decimal digits
+ 824      */
+ 825     static double trimTo3Digits(final double value) {
+ 826         return ((long) (1e3d * value)) / 1e3d;
+ 827     }
+ 828 
+ 829     static final class DiffContext {
+ 830 
+ 831         public final Histogram histAll;
+ 832         public final Histogram histPix;
+ 833 
+ 834         DiffContext(String name) {
+ 835             histAll = new Histogram("All  Pixels [" + name + "]");
+ 836             histPix = new Histogram("Diff Pixels [" + name + "]");
+ 837         }
+ 838 
+ 839         void reset() {
+ 840             histAll.reset();
+ 841             histPix.reset();
+ 842         }
+ 843 
+ 844         void dump() {
+ 845             if (isDiff()) {
+ 846                 System.out.println("Differences [" + histAll.name + "]:");
+ 847                 System.out.println("Total [all pixels]:\n" + histAll.toString());
+ 848                 System.out.println("Total [different pixels]:\n" + histPix.toString());
+ 849             } else {
+ 850                 System.out.println("No difference for [" + histAll.name + "].");
+ 851             }
+ 852         }
+ 853 
+ 854         void add(int val) {
+ 855             histAll.add(val);
+ 856             if (val != 0) {
+ 857                 histPix.add(val);
+ 858             }
+ 859         }
+ 860 
+ 861         boolean isDiff() {
+ 862             return histAll.sum != 0l;
+ 863         }
+ 864     }
+ 865 }
+</pre></body></html>
