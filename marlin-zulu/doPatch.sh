@@ -24,5 +24,4 @@ patch -p1 < ${PATCH_PATH}/m16.8198885.patch
 patch -p1 < ${PATCH_PATH}/m17.8200526.patch 
 patch -p1 < ${PATCH_PATH}/m18.8202580.patch 
 patch -p1 < ${PATCH_PATH}/m19.8210335.patch 
-patch -p1 < ${PATCH_PATH}/m20.8180055.patch 
 

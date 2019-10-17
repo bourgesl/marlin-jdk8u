@@ -1,0 +1,238 @@
+--- old/src/java.desktop/share/classes/sun/java2d/marlin/ByteArrayCache.java	2015-12-05 17:45:35.150570902 +0100
++++ new/src/java.desktop/share/classes/sun/java2d/marlin/ByteArrayCache.java	2015-12-05 17:45:35.006570897 +0100
+@@ -74,7 +74,7 @@
+     void putDirtyArray(final byte[] array, final int length) {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+@@ -98,7 +98,7 @@
+     {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+--- old/src/java.desktop/share/classes/sun/java2d/marlin/FloatArrayCache.java	2015-12-05 17:45:35.510570915 +0100
++++ new/src/java.desktop/share/classes/sun/java2d/marlin/FloatArrayCache.java	2015-12-05 17:45:35.362570910 +0100
+@@ -75,7 +75,7 @@
+     void putDirtyArray(final float[] array, final int length) {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+@@ -99,7 +99,7 @@
+     {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+--- old/src/java.desktop/share/classes/sun/java2d/marlin/IntArrayCache.java	2015-12-05 17:45:35.874570928 +0100
++++ new/src/java.desktop/share/classes/sun/java2d/marlin/IntArrayCache.java	2015-12-05 17:45:35.730570923 +0100
+@@ -74,7 +74,7 @@
+     void putDirtyArray(final int[] array, final int length) {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+@@ -98,7 +98,7 @@
+     {
+         if (length != arraySize) {
+             if (doChecks) {
+-                System.out.println("ArrayCache: bad length = " + length);
++                MarlinUtils.logInfo("ArrayCache: bad length = " + length);
+             }
+             return;
+         }
+--- old/src/java.desktop/share/classes/sun/java2d/marlin/MarlinConst.java	2015-12-05 17:45:36.230570941 +0100
++++ new/src/java.desktop/share/classes/sun/java2d/marlin/MarlinConst.java	2015-12-05 17:45:36.082570935 +0100
+@@ -30,8 +30,8 @@
+  */
+ interface MarlinConst {
+     // enable Logs (logger or stdout)
+-    static final boolean enableLogs = false;
+-    // enable Logger
++    static final boolean enableLogs = MarlinProperties.isLoggingEnabled();
++    // use Logger instead of stdout
+     static final boolean useLogger = enableLogs && MarlinProperties.isUseLogger();
+ 
+     // log new RendererContext
+@@ -45,9 +45,10 @@
+     static final boolean doStats = enableLogs && MarlinProperties.isDoStats();
+     // do monitors
+     // disabled to reduce byte-code size a bit...
+-    static final boolean doMonitors = enableLogs && false; // MarlinProperties.isDoMonitors();
++    static final boolean doMonitors = false;
++//    static final boolean doMonitors = enableLogs && MarlinProperties.isDoMonitors();
+     // do checks
+-    static final boolean doChecks = false; // MarlinProperties.isDoChecks();
++    static final boolean doChecks = enableLogs && MarlinProperties.isDoChecks();
+ 
+     // do AA range checks: disable when algorithm / code is stable
+     static final boolean DO_AA_RANGE_CHECK = false;
+--- old/src/java.desktop/share/classes/sun/java2d/marlin/MarlinProperties.java	2015-12-05 17:45:36.578570953 +0100
++++ new/src/java.desktop/share/classes/sun/java2d/marlin/MarlinProperties.java	2015-12-05 17:45:36.430570948 +0100
+@@ -136,6 +136,10 @@
+ 
+     // logging parameters
+ 
++    public static boolean isLoggingEnabled() {
++        return getBoolean("sun.java2d.renderer.log", "false");
++    }
++
+     public static boolean isUseLogger() {
+         return getBoolean("sun.java2d.renderer.useLogger", "false");
+     }
+--- old/src/java.desktop/share/classes/sun/java2d/marlin/MarlinUtils.java	2015-12-05 17:45:36.942570966 +0100
++++ new/src/java.desktop/share/classes/sun/java2d/marlin/MarlinUtils.java	2015-12-05 17:45:36.794570961 +0100
+@@ -27,12 +27,12 @@
+ 
+ 
+ public final class MarlinUtils {
+-    // TODO: use sun.util.logging.PlatformLogger once in JDK9
+-    private static final java.util.logging.Logger log;
++    // Marlin logger
++    private static final sun.util.logging.PlatformLogger log;
+ 
+     static {
+         if (MarlinConst.useLogger) {
+-            log = java.util.logging.Logger.getLogger("sun.java2d.marlin");
++            log = sun.util.logging.PlatformLogger.getLogger("sun.java2d.marlin");
+         } else {
+             log = null;
+         }
+@@ -53,25 +53,11 @@
+ 
+     public static void logException(final String msg, final Throwable th) {
+         if (MarlinConst.useLogger) {
+-//            log.warning(msg, th);
+-            log.log(java.util.logging.Level.WARNING, msg, th);
++            log.warning(msg, th);
+         } else if (MarlinConst.enableLogs) {
+             System.out.print("WARNING: ");
+             System.out.println(msg);
+             th.printStackTrace(System.err);
+         }
+     }
+-
+-    // Returns the caller's class and method's name; best effort
+-    // if cannot infer, return the logger's name.
+-    static String getCallerInfo(String className) {
+-        String sourceClassName = null;
+-        String sourceMethodName = null;
+-
+-        if (sourceClassName != null) {
+-            return sourceClassName + " " + sourceMethodName;
+-        } else {
+-            return "unknown";
+-        }
+-    }
+ }
+--- old/src/java.desktop/share/classes/sun/java2d/marlin/RendererContext.java	2015-12-05 17:45:37.290570978 +0100
++++ new/src/java.desktop/share/classes/sun/java2d/marlin/RendererContext.java	2015-12-05 17:45:37.142570973 +0100
+@@ -31,7 +31,6 @@
+ import java.util.concurrent.atomic.AtomicInteger;
+ import static sun.java2d.marlin.ArrayCache.*;
+ import sun.java2d.marlin.MarlinRenderingEngine.NormalizingPathIterator;
+-import static sun.java2d.marlin.MarlinUtils.getCallerInfo;
+ import static sun.java2d.marlin.MarlinUtils.logInfo;
+ 
+ /**
+@@ -39,7 +38,6 @@
+  */
+ final class RendererContext implements MarlinConst {
+ 
+-    private static final String className = RendererContext.class.getName();
+     // RendererContext creation counter
+     private static final AtomicInteger contextCount = new AtomicInteger(1);
+     // RendererContext statistics
+@@ -214,8 +212,7 @@
+         }
+ 
+         if (doLogOverSize) {
+-            logInfo("getDirtyByteArray[oversize]: length=\t" + length
+-                    + "\tfrom=\t" + getCallerInfo(className));
++            logInfo("getDirtyByteArray[oversize]: length=\t" + length);
+         }
+ 
+         return new byte[length];
+@@ -254,7 +251,7 @@
+         if (doLogWidenArray) {
+             logInfo("widenDirtyByteArray[" + res.length + "]: usedSize=\t"
+                     + usedSize + "\tlength=\t" + length + "\tneeded length=\t"
+-                    + needSize + "\tfrom=\t" + getCallerInfo(className));
++                    + needSize);
+         }
+         return res;
+     }
+@@ -275,8 +272,7 @@
+         }
+ 
+         if (doLogOverSize) {
+-            logInfo("getIntArray[oversize]: length=\t" + length + "\tfrom=\t"
+-                    + getCallerInfo(className));
++            logInfo("getIntArray[oversize]: length=\t" + length);
+         }
+ 
+         return new int[length];
+@@ -306,7 +302,7 @@
+         if (doLogWidenArray) {
+             logInfo("widenIntArray[" + res.length + "]: usedSize=\t"
+                     + usedSize + "\tlength=\t" + length + "\tneeded length=\t"
+-                    + needSize + "\tfrom=\t" + getCallerInfo(className));
++                    + needSize);
+         }
+         return res;
+     }
+@@ -338,8 +334,7 @@
+         }
+ 
+         if (doLogOverSize) {
+-            logInfo("getDirtyIntArray[oversize]: length=\t" + length
+-                    + "\tfrom=\t" + getCallerInfo(className));
++            logInfo("getDirtyIntArray[oversize]: length=\t" + length);
+         }
+ 
+         return new int[length];
+@@ -369,7 +364,7 @@
+         if (doLogWidenArray) {
+             logInfo("widenDirtyIntArray[" + res.length + "]: usedSize=\t"
+                     + usedSize + "\tlength=\t" + length + "\tneeded length=\t"
+-                    + needSize + "\tfrom=\t" + getCallerInfo(className));
++                    + needSize);
+         }
+         return res;
+     }
+@@ -399,8 +394,7 @@
+         }
+ 
+         if (doLogOverSize) {
+-            logInfo("getDirtyFloatArray[oversize]: length=\t" + length
+-                    + "\tfrom=\t" + getCallerInfo(className));
++            logInfo("getDirtyFloatArray[oversize]: length=\t" + length);
+         }
+ 
+         return new float[length];
+@@ -430,7 +424,7 @@
+         if (doLogWidenArray) {
+             logInfo("widenDirtyFloatArray[" + res.length + "]: usedSize=\t"
+                     + usedSize + "\tlength=\t" + length + "\tneeded length=\t"
+-                    + needSize + "\tfrom=\t" + getCallerInfo(className));
++                    + needSize);
+         }
+         return res;
+     }

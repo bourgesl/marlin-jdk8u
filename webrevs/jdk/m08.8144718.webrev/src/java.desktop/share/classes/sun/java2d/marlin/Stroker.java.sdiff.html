@@ -1,0 +1,479 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>jdk Sdiff src/java.desktop/share/classes/sun/java2d/marlin </title>
+</head><body id="SUNWwebrev">
+<center>&lt prev <a href='../../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../../src/java.desktop/share/classes/sun/java2d/pisces/Stroker.java.sdiff.html' target='_top'>next &gt</a></center>
+<h2>src/java.desktop/share/classes/sun/java2d/marlin/Stroker.java</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  70     /**
+  71      * Constant value for end cap style.
+  72      */
+  73     public static final int CAP_SQUARE = 2;
+  74 
+  75     // pisces used to use fixed point arithmetic with 16 decimal digits. I
+  76     // didn't want to change the values of the constant below when I converted
+  77     // it to floating point, so that's why the divisions by 2^16 are there.
+  78     private static final float ROUND_JOIN_THRESHOLD = 1000/65536f;
+  79 
+  80     private static final float C = 0.5522847498307933f;
+  81 
+  82     private static final int MAX_N_CURVES = 11;
+  83 
+  84     private PathConsumer2D out;
+  85 
+  86     private int capStyle;
+  87     private int joinStyle;
+  88 
+  89     private float lineWidth2;
+
+  90 
+  91     private final float[] offset0 = new float[2];
+  92     private final float[] offset1 = new float[2];
+  93     private final float[] offset2 = new float[2];
+  94     private final float[] miter = new float[2];
+  95     private float miterLimitSq;
+  96 
+  97     private int prev;
+  98 
+  99     // The starting point of the path, and the slope there.
+ 100     private float sx0, sy0, sdx, sdy;
+ 101     // the current point and the slope there.
+ 102     private float cx0, cy0, cdx, cdy; // c stands for current
+ 103     // vectors that when added to (sx0,sy0) and (cx0,cy0) respectively yield the
+ 104     // first and last points on the left parallel path. Since this path is
+ 105     // parallel, it's slope at any point is parallel to the slope of the
+ 106     // original path (thought they may have different directions), so these
+ 107     // could be computed from sdx,sdy and cdx,cdy (and vice versa), but that
+ 108     // would be error prone and hard to read, so we keep these anyway.
+ 109     private float smx, smy, cmx, cmy;
+
+</pre><hr></hr><pre>
+ 141      * @param pc2d an output &lt;code&gt;PathConsumer2D&lt;/code&gt;.
+ 142      * @param lineWidth the desired line width in pixels
+ 143      * @param capStyle the desired end cap style, one of
+ 144      * &lt;code&gt;CAP_BUTT&lt;/code&gt;, &lt;code&gt;CAP_ROUND&lt;/code&gt; or
+ 145      * &lt;code&gt;CAP_SQUARE&lt;/code&gt;.
+ 146      * @param joinStyle the desired line join style, one of
+ 147      * &lt;code&gt;JOIN_MITER&lt;/code&gt;, &lt;code&gt;JOIN_ROUND&lt;/code&gt; or
+ 148      * &lt;code&gt;JOIN_BEVEL&lt;/code&gt;.
+ 149      * @param miterLimit the desired miter limit
+ 150      * @return this instance
+ 151      */
+ 152     Stroker init(PathConsumer2D pc2d,
+ 153               float lineWidth,
+ 154               int capStyle,
+ 155               int joinStyle,
+ 156               float miterLimit)
+ 157     {
+ 158         this.out = pc2d;
+ 159 
+ 160         this.lineWidth2 = lineWidth / 2f;
+
+ 161         this.capStyle = capStyle;
+ 162         this.joinStyle = joinStyle;
+ 163 
+ 164         float limit = miterLimit * lineWidth2;
+ 165         this.miterLimitSq = limit * limit;
+ 166 
+ 167         this.prev = CLOSE;
+ 168 
+ 169         rdrCtx.stroking = 1;
+ 170 
+ 171         return this; // fluent API
+ 172     }
+ 173 
+ 174     /**
+ 175      * Disposes this stroker:
+ 176      * clean up before reusing this instance
+ 177      */
+ 178     void dispose() {
+ 179         reverse.dispose();
+ 180 
+
+</pre><hr></hr><pre>
+ 235             return;
+ 236         }
+ 237 
+ 238         if (rev) {
+ 239             omx = -omx;
+ 240             omy = -omy;
+ 241             mx  = -mx;
+ 242             my  = -my;
+ 243         }
+ 244         drawRoundJoin(x, y, omx, omy, mx, my, rev);
+ 245     }
+ 246 
+ 247     private void drawRoundJoin(float cx, float cy,
+ 248                                float omx, float omy,
+ 249                                float mx, float my,
+ 250                                boolean rev)
+ 251     {
+ 252         // The sign of the dot product of mx,my and omx,omy is equal to the
+ 253         // the sign of the cosine of ext
+ 254         // (ext is the angle between omx,omy and mx,my).
+<span class="changed"> 255         double cosext = omx * mx + omy * my;</span>
+ 256         // If it is &gt;=0, we know that abs(ext) is &lt;= 90 degrees, so we only
+ 257         // need 1 curve to approximate the circle section that joins omx,omy
+ 258         // and mx,my.
+<span class="changed"> 259         final int numCurves = cosext &gt;= 0 ? 1 : 2;</span>
+ 260 
+ 261         switch (numCurves) {
+ 262         case 1:
+ 263             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+ 264             break;
+ 265         case 2:
+ 266             // we need to split the arc into 2 arcs spanning the same angle.
+ 267             // The point we want will be one of the 2 intersections of the
+ 268             // perpendicular bisector of the chord (omx,omy)-&gt;(mx,my) and the
+ 269             // circle. We could find this by scaling the vector
+ 270             // (omx+mx, omy+my)/2 so that it has length=lineWidth2 (and thus lies
+ 271             // on the circle), but that can have numerical problems when the angle
+ 272             // between omx,omy and mx,my is close to 180 degrees. So we compute a
+ 273             // normal of (omx,omy)-(mx,my). This will be the direction of the
+ 274             // perpendicular bisector. To get one of the intersections, we just scale
+ 275             // this vector that its length is lineWidth2 (this works because the
+ 276             // perpendicular bisector goes through the origin). This scaling doesn't
+ 277             // have numerical problems because we know that lineWidth2 divided by
+ 278             // this normal's length is at least 0.5 and at most sqrt(2)/2 (because
+ 279             // we know the angle of the arc is &gt; 90 degrees).
+
+</pre><hr></hr><pre>
+ 285             // if (isCW(omx, omy, mx, my) != isCW(mmx, mmy, mx, my)) then we've
+ 286             // computed the wrong intersection so we get the other one.
+ 287             // The test above is equivalent to if (rev).
+ 288             if (rev) {
+ 289                 mmx = -mmx;
+ 290                 mmy = -mmy;
+ 291             }
+ 292             drawBezApproxForArc(cx, cy, omx, omy, mmx, mmy, rev);
+ 293             drawBezApproxForArc(cx, cy, mmx, mmy, mx, my, rev);
+ 294             break;
+ 295         default:
+ 296         }
+ 297     }
+ 298 
+ 299     // the input arc defined by omx,omy and mx,my must span &lt;= 90 degrees.
+ 300     private void drawBezApproxForArc(final float cx, final float cy,
+ 301                                      final float omx, final float omy,
+ 302                                      final float mx, final float my,
+ 303                                      boolean rev)
+ 304     {
+<span class="changed"> 305         float cosext2 = (omx * mx + omy * my) / (2f * lineWidth2 * lineWidth2);</span>
+
+
+
+
+
+
+
+
+ 306         // cv is the length of P1-P0 and P2-P3 divided by the radius of the arc
+ 307         // (so, cv assumes the arc has radius 1). P0, P1, P2, P3 are the points that
+ 308         // define the bezier curve we're computing.
+ 309         // It is computed using the constraints that P1-P0 and P3-P2 are parallel
+ 310         // to the arc tangents at the endpoints, and that |P1-P0|=|P3-P2|.
+<span class="changed"> 311         float cv = (float) ((4.0 / 3.0) * sqrt(0.5-cosext2) /</span>
+<span class="changed"> 312                             (1.0 + sqrt(cosext2+0.5)));</span>
+ 313         // if clockwise, we need to negate cv.
+ 314         if (rev) { // rev is equivalent to isCW(omx, omy, mx, my)
+ 315             cv = -cv;
+ 316         }
+ 317         final float x1 = cx + omx;
+ 318         final float y1 = cy + omy;
+ 319         final float x2 = x1 - cv * omy;
+ 320         final float y2 = y1 + cv * omx;
+ 321 
+ 322         final float x4 = cx + mx;
+ 323         final float y4 = cy + my;
+ 324         final float x3 = x4 + cv * my;
+ 325         final float y3 = y4 - cv * mx;
+ 326 
+ 327         emitCurveTo(x1, y1, x2, y2, x3, y3, x4, y4, rev);
+ 328     }
+ 329 
+ 330     private void drawRoundCap(float cx, float cy, float mx, float my) {
+ 331         // the first and second arguments of the following two calls
+ 332         // are really will be ignored by emitCurveTo (because of the false),
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  70     /**
+  71      * Constant value for end cap style.
+  72      */
+  73     public static final int CAP_SQUARE = 2;
+  74 
+  75     // pisces used to use fixed point arithmetic with 16 decimal digits. I
+  76     // didn't want to change the values of the constant below when I converted
+  77     // it to floating point, so that's why the divisions by 2^16 are there.
+  78     private static final float ROUND_JOIN_THRESHOLD = 1000/65536f;
+  79 
+  80     private static final float C = 0.5522847498307933f;
+  81 
+  82     private static final int MAX_N_CURVES = 11;
+  83 
+  84     private PathConsumer2D out;
+  85 
+  86     private int capStyle;
+  87     private int joinStyle;
+  88 
+  89     private float lineWidth2;
+<span class="new">  90     private float invHalfLineWidth2Sq;</span>
+  91 
+  92     private final float[] offset0 = new float[2];
+  93     private final float[] offset1 = new float[2];
+  94     private final float[] offset2 = new float[2];
+  95     private final float[] miter = new float[2];
+  96     private float miterLimitSq;
+  97 
+  98     private int prev;
+  99 
+ 100     // The starting point of the path, and the slope there.
+ 101     private float sx0, sy0, sdx, sdy;
+ 102     // the current point and the slope there.
+ 103     private float cx0, cy0, cdx, cdy; // c stands for current
+ 104     // vectors that when added to (sx0,sy0) and (cx0,cy0) respectively yield the
+ 105     // first and last points on the left parallel path. Since this path is
+ 106     // parallel, it's slope at any point is parallel to the slope of the
+ 107     // original path (thought they may have different directions), so these
+ 108     // could be computed from sdx,sdy and cdx,cdy (and vice versa), but that
+ 109     // would be error prone and hard to read, so we keep these anyway.
+ 110     private float smx, smy, cmx, cmy;
+
+</pre><hr></hr><pre>
+ 142      * @param pc2d an output &lt;code&gt;PathConsumer2D&lt;/code&gt;.
+ 143      * @param lineWidth the desired line width in pixels
+ 144      * @param capStyle the desired end cap style, one of
+ 145      * &lt;code&gt;CAP_BUTT&lt;/code&gt;, &lt;code&gt;CAP_ROUND&lt;/code&gt; or
+ 146      * &lt;code&gt;CAP_SQUARE&lt;/code&gt;.
+ 147      * @param joinStyle the desired line join style, one of
+ 148      * &lt;code&gt;JOIN_MITER&lt;/code&gt;, &lt;code&gt;JOIN_ROUND&lt;/code&gt; or
+ 149      * &lt;code&gt;JOIN_BEVEL&lt;/code&gt;.
+ 150      * @param miterLimit the desired miter limit
+ 151      * @return this instance
+ 152      */
+ 153     Stroker init(PathConsumer2D pc2d,
+ 154               float lineWidth,
+ 155               int capStyle,
+ 156               int joinStyle,
+ 157               float miterLimit)
+ 158     {
+ 159         this.out = pc2d;
+ 160 
+ 161         this.lineWidth2 = lineWidth / 2f;
+<span class="new"> 162         this.invHalfLineWidth2Sq = 1f / (2f * lineWidth2 * lineWidth2);</span>
+ 163         this.capStyle = capStyle;
+ 164         this.joinStyle = joinStyle;
+ 165 
+ 166         float limit = miterLimit * lineWidth2;
+ 167         this.miterLimitSq = limit * limit;
+ 168 
+ 169         this.prev = CLOSE;
+ 170 
+ 171         rdrCtx.stroking = 1;
+ 172 
+ 173         return this; // fluent API
+ 174     }
+ 175 
+ 176     /**
+ 177      * Disposes this stroker:
+ 178      * clean up before reusing this instance
+ 179      */
+ 180     void dispose() {
+ 181         reverse.dispose();
+ 182 
+
+</pre><hr></hr><pre>
+ 237             return;
+ 238         }
+ 239 
+ 240         if (rev) {
+ 241             omx = -omx;
+ 242             omy = -omy;
+ 243             mx  = -mx;
+ 244             my  = -my;
+ 245         }
+ 246         drawRoundJoin(x, y, omx, omy, mx, my, rev);
+ 247     }
+ 248 
+ 249     private void drawRoundJoin(float cx, float cy,
+ 250                                float omx, float omy,
+ 251                                float mx, float my,
+ 252                                boolean rev)
+ 253     {
+ 254         // The sign of the dot product of mx,my and omx,omy is equal to the
+ 255         // the sign of the cosine of ext
+ 256         // (ext is the angle between omx,omy and mx,my).
+<span class="changed"> 257         final float cosext = omx * mx + omy * my;</span>
+ 258         // If it is &gt;=0, we know that abs(ext) is &lt;= 90 degrees, so we only
+ 259         // need 1 curve to approximate the circle section that joins omx,omy
+ 260         // and mx,my.
+<span class="changed"> 261         final int numCurves = (cosext &gt;= 0f) ? 1 : 2;</span>
+ 262 
+ 263         switch (numCurves) {
+ 264         case 1:
+ 265             drawBezApproxForArc(cx, cy, omx, omy, mx, my, rev);
+ 266             break;
+ 267         case 2:
+ 268             // we need to split the arc into 2 arcs spanning the same angle.
+ 269             // The point we want will be one of the 2 intersections of the
+ 270             // perpendicular bisector of the chord (omx,omy)-&gt;(mx,my) and the
+ 271             // circle. We could find this by scaling the vector
+ 272             // (omx+mx, omy+my)/2 so that it has length=lineWidth2 (and thus lies
+ 273             // on the circle), but that can have numerical problems when the angle
+ 274             // between omx,omy and mx,my is close to 180 degrees. So we compute a
+ 275             // normal of (omx,omy)-(mx,my). This will be the direction of the
+ 276             // perpendicular bisector. To get one of the intersections, we just scale
+ 277             // this vector that its length is lineWidth2 (this works because the
+ 278             // perpendicular bisector goes through the origin). This scaling doesn't
+ 279             // have numerical problems because we know that lineWidth2 divided by
+ 280             // this normal's length is at least 0.5 and at most sqrt(2)/2 (because
+ 281             // we know the angle of the arc is &gt; 90 degrees).
+
+</pre><hr></hr><pre>
+ 287             // if (isCW(omx, omy, mx, my) != isCW(mmx, mmy, mx, my)) then we've
+ 288             // computed the wrong intersection so we get the other one.
+ 289             // The test above is equivalent to if (rev).
+ 290             if (rev) {
+ 291                 mmx = -mmx;
+ 292                 mmy = -mmy;
+ 293             }
+ 294             drawBezApproxForArc(cx, cy, omx, omy, mmx, mmy, rev);
+ 295             drawBezApproxForArc(cx, cy, mmx, mmy, mx, my, rev);
+ 296             break;
+ 297         default:
+ 298         }
+ 299     }
+ 300 
+ 301     // the input arc defined by omx,omy and mx,my must span &lt;= 90 degrees.
+ 302     private void drawBezApproxForArc(final float cx, final float cy,
+ 303                                      final float omx, final float omy,
+ 304                                      final float mx, final float my,
+ 305                                      boolean rev)
+ 306     {
+<span class="changed"> 307         final float cosext2 = (omx * mx + omy * my) * invHalfLineWidth2Sq;</span>
+<span class="changed"> 308 </span>
+<span class="changed"> 309         // check round off errors producing cos(ext) &gt; 1 and a NaN below</span>
+<span class="changed"> 310         // cos(ext) == 1 implies colinear segments and an empty join anyway</span>
+<span class="changed"> 311         if (cosext2 &gt;= 0.5f) {</span>
+<span class="changed"> 312             // just return to avoid generating a flat curve:</span>
+<span class="changed"> 313             return;</span>
+<span class="changed"> 314         }</span>
+<span class="changed"> 315 </span>
+ 316         // cv is the length of P1-P0 and P2-P3 divided by the radius of the arc
+ 317         // (so, cv assumes the arc has radius 1). P0, P1, P2, P3 are the points that
+ 318         // define the bezier curve we're computing.
+ 319         // It is computed using the constraints that P1-P0 and P3-P2 are parallel
+ 320         // to the arc tangents at the endpoints, and that |P1-P0|=|P3-P2|.
+<span class="changed"> 321         float cv = (float) ((4.0 / 3.0) * sqrt(0.5 - cosext2) /</span>
+<span class="changed"> 322                             (1.0 + sqrt(cosext2 + 0.5)));</span>
+ 323         // if clockwise, we need to negate cv.
+ 324         if (rev) { // rev is equivalent to isCW(omx, omy, mx, my)
+ 325             cv = -cv;
+ 326         }
+ 327         final float x1 = cx + omx;
+ 328         final float y1 = cy + omy;
+ 329         final float x2 = x1 - cv * omy;
+ 330         final float y2 = y1 + cv * omx;
+ 331 
+ 332         final float x4 = cx + mx;
+ 333         final float y4 = cy + my;
+ 334         final float x3 = x4 + cv * my;
+ 335         final float y3 = y4 - cv * mx;
+ 336 
+ 337         emitCurveTo(x1, y1, x2, y2, x3, y3, x4, y4, rev);
+ 338     }
+ 339 
+ 340     private void drawRoundCap(float cx, float cy, float mx, float my) {
+ 341         // the first and second arguments of the following two calls
+ 342         // are really will be ignored by emitCurveTo (because of the false),
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+<center>&lt prev <a href='../../../../../../../index.html' target='_top'>index</a> <a href='../../../../../../../src/java.desktop/share/classes/sun/java2d/pisces/Stroker.java.sdiff.html' target='_top'>next &gt</a></center>
+</body></html>
