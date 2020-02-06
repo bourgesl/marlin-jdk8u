@@ -6,7 +6,7 @@ Patches to integrate the Marlin renderer into OpenJDK 8 Updates
 ```̀
 * 2015
 34419:14108cfd0823			m01.8143849.patch			8143849: Integrate Marlin renderer per JEP 265
-35979:4462913d471a			NEW m01b.8149896.patch		8149896: Remove unnecessary values in FloatConsts and DoubleConsts		=> Merge with m01.8143849.patch
+35979:4462913d471a			SKIP						8149896: Remove unnecessary values in FloatConsts and DoubleConsts		=> Merged with m01.8143849.patch
 
 34689:4b5bf9f960c8			m02.8145055.patch			8145055: Marlin renderer causes unaligned write accesses
 34801:a7740dae1f3a			m03.8144630.patch			8144630: Use PrivilegedAction to create Thread in Marlin RendererStats
@@ -27,7 +27,6 @@ Patches to integrate the Marlin renderer into OpenJDK 8 Updates
 
 * 2017
 47126:188ef162f019			m14.8180055.patch			8180055: Upgrade the Marlin renderer in Java2D  => verify zulu patch m20.8180055.patch
-
 48258:fd7fbc929001			m15.8191814.patch			8191814: Marlin rasterizer spends time computing geometry for stroked segments that do not intersect the clip
 
 * 2018

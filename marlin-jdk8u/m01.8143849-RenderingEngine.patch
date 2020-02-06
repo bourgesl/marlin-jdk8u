@@ -1,0 +1,60 @@
+# HG changeset patch
+# User lbourges
+# Date 1448319739 28800
+#      Mon Nov 23 15:02:19 2015 -0800
+# Branch zulu8-marlin
+# Node ID 52a6785e245aef94598b01fc6433ffd7b225f6a8
+# Parent  eac304a8a13a8c291eb7f4a24fcf27a5e6aaaf83
+8143849: Integrate Marlin renderer per JEP 265
+Reviewed-by: flar, prr
+
+diff --git a/src/share/classes/sun/java2d/pipe/RenderingEngine.java b/src/share/classes/sun/java2d/pipe/RenderingEngine.java
+--- a/src/share/classes/sun/java2d/pipe/RenderingEngine.java
++++ b/src/share/classes/sun/java2d/pipe/RenderingEngine.java
+@@ -121,9 +121,10 @@
+             AccessController.doPrivileged(new PrivilegedAction<RenderingEngine>() {
+                 public RenderingEngine run() {
+                     final String ductusREClass = "sun.dc.DuctusRenderingEngine";
+-                    String reClass =
+-                        System.getProperty("sun.java2d.renderer", ductusREClass);
+-                    if (reClass.equals(ductusREClass)) {
++                    final String marlinREClass = "sun.java2d.marlin.MarlinRenderingEngine";
++
++                    String reClass = System.getProperty("sun.java2d.renderer");
++                    if (reClass == null || reClass.equals(ductusREClass)) {
+                         try {
+                             Class<?> cls = Class.forName(ductusREClass);
+                             return (RenderingEngine) cls.newInstance();
+@@ -133,17 +134,27 @@
+                     }
+ 
+                     ServiceLoader<RenderingEngine> reLoader =
+-                        ServiceLoader.loadInstalled(RenderingEngine.class);
++                            ServiceLoader.loadInstalled(RenderingEngine.class);
+ 
+                     RenderingEngine service = null;
++                    RenderingEngine marlinService = null;
+ 
+                     for (RenderingEngine re : reLoader) {
+                         service = re;
+-                        if (re.getClass().getName().equals(reClass)) {
+-                            break;
++                        String serviceName = re.getClass().getName();
++                        if (serviceName.equals(reClass)) {
++                            return service;
++                        }
++                        if (serviceName.equals(marlinREClass)) {
++                            marlinService = service;
+                         }
+                     }
+-                    return service;
++                    // use Marlin as default renderer
++                    if (marlinService != null) {
++                        return marlinService;
++                    } else {
++                        return service;
++                    }
+                 }
+             });
+ 
+
