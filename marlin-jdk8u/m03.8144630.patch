@@ -1,0 +1,79 @@
+# HG changeset patch
+# User lbourges
+# Date 1449337723 28800
+#      Sat Dec 05 09:48:43 2015 -0800
+# Branch zulu8-marlin
+# Node ID 16b38c56dba4f9e4bec16d1848f43e697875dd0d
+# Parent  07a98e143c9285996aff8c2f1b613ebcada25e1a
+8144630: Use PrivilegedAction to create Thread in Marlin RendererStats
+Reviewed-by: prr, flar
+
+diff --git a/src/share/classes/sun/java2d/marlin/RendererStats.java b/src/share/classes/sun/java2d/marlin/RendererStats.java
+--- a/src/share/classes/sun/java2d/marlin/RendererStats.java
++++ b/src/share/classes/sun/java2d/marlin/RendererStats.java
+@@ -25,6 +25,8 @@
+ 
+ package sun.java2d.marlin;
+ 
++import java.security.AccessController;
++import java.security.PrivilegedAction;
+ import java.util.Timer;
+ import java.util.TimerTask;
+ import java.util.concurrent.ConcurrentLinkedQueue;
+@@ -32,6 +34,7 @@
+ import sun.java2d.marlin.stats.Histogram;
+ import sun.java2d.marlin.stats.Monitor;
+ import sun.java2d.marlin.stats.StatLong;
++import sun.misc.ThreadGroupUtils;
+ 
+ /**
+  * This class gathers global rendering statistics for debugging purposes only
+@@ -237,22 +240,33 @@
+     private RendererStats() {
+         super();
+ 
+-        Runtime.getRuntime().addShutdownHook(new Thread() {
+-            @Override
+-            public void run() {
+-                dump();
++        AccessController.doPrivileged(
++            (PrivilegedAction<Void>) () -> {
++                final Thread hook = new Thread(
++                    ThreadGroupUtils.getRootThreadGroup(),
++                    new Runnable() {
++                        @Override
++                        public void run() {
++                            dump();
++                        }
++                    },
++                    "MarlinStatsHook"
++                );
++                hook.setContextClassLoader(null);
++                Runtime.getRuntime().addShutdownHook(hook);
++
++                if (useDumpThread) {
++                    final Timer statTimer = new Timer("RendererStats");
++                    statTimer.scheduleAtFixedRate(new TimerTask() {
++                        @Override
++                        public void run() {
++                            dump();
++                        }
++                    }, statDump, statDump);
++                }
++                return null;
+             }
+-        });
+-
+-        if (useDumpThread) {
+-            final Timer statTimer = new Timer("RendererStats");
+-            statTimer.scheduleAtFixedRate(new TimerTask() {
+-                @Override
+-                public void run() {
+-                    dump();
+-                }
+-            }, statDump, statDump);
+-        }
++        );
+     }
+ 
+     void dump() {
