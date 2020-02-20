@@ -5,14 +5,14 @@ Patches to integrate the Marlin renderer into OpenJDK 8 Updates
 # Marlin renderer patches history (jdk/client)
 ```̀
 * 2015
-34419:14108cfd0823			m01.8143849.patch			8143849: Integrate Marlin renderer per JEP 265
+34419:14108cfd0823  [x]     m01.8143849.patch			8143849: Integrate Marlin renderer per JEP 265
 35979:4462913d471a			SKIP						8149896: Remove unnecessary values in FloatConsts and DoubleConsts		=> Merged with m01.8143849.patch
 
-34689:4b5bf9f960c8			m02.8145055.patch			8145055: Marlin renderer causes unaligned write accesses
-34801:a7740dae1f3a			m03.8144630.patch			8144630: Use PrivilegedAction to create Thread in Marlin RendererStats
-34814:09435f7f0013			m04.8144446.patch			8144446: Automate the Marlin crash test
-34815:81e87daa9876			m05.8144445.patch			8144445: Maximum size checking in Marlin ArrayCache utility methods is not optimal
-34422:438c2710ab20			m06.8144526.patch			8144526: Remove Marlin logging use of deleted internal API
+34689:4b5bf9f960c8  [x]		m02.8145055.patch			8145055: Marlin renderer causes unaligned write accesses
+34801:a7740dae1f3a  [x]		m03.8144630.patch			8144630: Use PrivilegedAction to create Thread in Marlin RendererStats
+34814:09435f7f0013  [x]		m04.8144446.patch			8144446: Automate the Marlin crash test
+34815:81e87daa9876  [x]		m05.8144445.patch			8144445: Maximum size checking in Marlin ArrayCache utility methods is not optimal
+34422:438c2710ab20  [ ]		m06.8144526.patch			8144526: Remove Marlin logging use of deleted internal API
 34816:5ff696b1bbac			m07.8144654.patch			8144654: Improve Marlin logging
 
 * 2016
