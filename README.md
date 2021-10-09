@@ -40,4 +40,5 @@ Patches to integrate the Marlin renderer into OpenJDK 8 Updates
 56131:7f55aad34ac4	[x]		NEW m21.8230728.patch		8230728: Thin stroked shapes are not rendered if affine transform has flip bit : backport JDK-8269509 - 8ub311
 ```̀
 
-OpenJDK 8u b311 has latest Marlin renderer (0.9.1.3) !
+OracleJDK 8u b311 has latest Marlin renderer (0.9.1.3) !
+But OpenJDK8u b312 is still at patch 10 (0.7.3.2) !
